@@ -1,0 +1,44 @@
+My Questions for the Students:
+1. Does any of you have experience coding firmware or software, or 
+work on projects involving MCUs and sensors?
+2. Do you guys know how to solder or are at least willing to learn?
+3. Are we working with jumpers or do you want more permanent hardware setup? 
+(Though since it just needs to be a prototype, jumpers are fine so long as we secure them properly)
+4. Do you have access to to a sensorized manikin?
+5. Have you read this paper? https://pmc.ncbi.nlm.nih.gov/articles/PMC5143701/#sec2 
+
+
+Other notes:
+I don't think they've finalized the power setup, but it should be relatively simple,
+only needing a parallel 18650 setup for more capacity, a hardware switch, and a volt
+regulator, likely 5V to enter the VIN pin of the ESP32. Since it's using a dual-MPU
+setup, I also need to know how to change the hardware I2C address of the MPUs otherwise
+they'll need a multiplexer.
+
+I'm a little concerned with their desire to use BLE since I'm not exactly familiar
+with how to create an android or desktop app that gets data via BLE, and how reliable
+BLE is exactly, and their choice of using Dart/Flutter.
+
+They also plan on using EVA foam, which is alright but I reckon the electronics should
+still be enclosed in plastic or something so that the crushing force from the CPR.
+
+I suppose only the MPUs will be in threat of getting crushed since it'll be in the front of
+the torso, so I suppose we can just create a small box for it on the front, layer EVA in the top and bottom
+then have the wires run to the other components through the gaps. The main ESP32 and other hardware
+can be in the box on the side.
+
+Other services they might need:
+- CAD/3D design for the enclosure
+- PCB layout
+- PCB fabrication
+- Schematic design
+
+I could also refer them to kuya Ariel if they ever need anything 3D printed.
+
+
+Other concerns of mine:
+I'm a little worried about their scope of work, how accurate they want it to be, and 
+also what exactly their research goals are. I'm going to compile some questions to ask them
+when I see them again specifically about their paper. I'm specifically concerned about
+how exactly they'll quantify accuracy since that entails having some sort of "ground truth"
+CPR program for them to compare against. If they don't have one, visual inspection would also work.
