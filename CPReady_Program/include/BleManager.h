@@ -20,13 +20,18 @@ private:
     volatile bool hasCommandFlag;
     char mailboxString[64];
 
+    // Single-thread bridge flag for disconnection events
+    volatile bool hasDisconnectedFlag;
+
     void onConnect(BLEServer* pServer) override {
         isClientConnected = true;
+        hasDisconnectedFlag = false;
     }
 
     void onDisconnect(BLEServer* pServer) override {
         isClientConnected = false;
-        pServer->startAdvertising(); // Resume advertising immediately
+        hasDisconnectedFlag = true; // Signal main thread to abort any active session
+        pServer->startAdvertising(); // Resume advertising immediately for re-pairing
     }
 
     // Executed in FreeRTOS background task context when Flutter writes a command
@@ -44,7 +49,7 @@ private:
 public:
     BleManager() 
         : pServer(nullptr), pNotifyChar(nullptr), pCommandChar(nullptr),
-          isClientConnected(false), hasCommandFlag(false) {
+          isClientConnected(false), hasCommandFlag(false), hasDisconnectedFlag(false) {
         mailboxString[0] = '\0';
     }
 
@@ -55,7 +60,7 @@ public:
 
         BLEService* pService = pServer->createService(CPReadyConfig::BLE_SERVICE_UUID);
 
-        // Notify Characteristic: pushes 8-byte CPRMetricsPacket
+        // Notify Characteristic: pushes 11-byte CPRMetricsPacket
         pNotifyChar = pService->createCharacteristic(
             CPReadyConfig::BLE_CHAR_NOTIFY_UUID,
             BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
@@ -77,11 +82,17 @@ public:
         BLEDevice::startAdvertising();
     }
 
-    bool sendMetrics(const CPRMetricsPacket& packet) {
+    // Transmits an 11-byte binary packet (realtime, calibration, or final summary)
+    bool sendPacket(const CPRMetricsPacket& packet) {
         if (!isClientConnected || pNotifyChar == nullptr) return false;
         pNotifyChar->setValue((uint8_t*)&packet, sizeof(CPRMetricsPacket));
         pNotifyChar->notify();
         return true;
+    }
+
+    // Backwards-compatible alias for existing code
+    bool sendMetrics(const CPRMetricsPacket& packet) {
+        return sendPacket(packet);
     }
 
     // Checked inside main single-threaded loop()
@@ -91,6 +102,15 @@ public:
         String msg = String((char*)mailboxString);
         hasCommandFlag = false; // Reset mailbox
         return msg;
+    }
+
+    // Checked inside main loop() to abort active session on disconnection
+    bool checkAndClearDisconnectionEvent() {
+        if (hasDisconnectedFlag) {
+            hasDisconnectedFlag = false;
+            return true;
+        }
+        return false;
     }
 
     bool isConnected() const { return isClientConnected; }

@@ -17,16 +17,42 @@ FeedbackController feedback;
 DeviceState state = DeviceState::STANDBY;
 uint32_t calibrationStartMillis = 0;
 uint32_t lastBleNotifyMillis = 0;
+uint32_t lastCalibProgressNotifyMillis = 0;
 
 // Configurable target duration (in seconds, default set in CPReadyConfig; 0 = manual stop)
 uint32_t practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC; 
 
+// Helper: Finalizes the active session, broadcasts final summary packet, and plays 3 beeps
+void endAndFinalizeSession(uint32_t now) {
+    Serial.println("[FLOW] Finalizing CPR practice session...");
+    state = DeviceState::STANDBY;
+
+    #if ENABLE_DEMO_MODE
+    CPRSessionSummary summary;
+    summary.avg_rate_cpm = DEMO_RATE_CPM;
+    summary.avg_depth_cm = (float)DEMO_DEPTH_MM / 10.0f;
+    summary.recoil_compliance_percent = DEMO_RECOIL_OK ? 100.0f : 50.0f;
+    summary.final_ccf_percent = DEMO_CCF_PERCENT;
+    summary.total_compressions = (uint16_t)((now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS) / 550);
+    summary.total_duration_sec = (uint16_t)((now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS) / 1000);
+    #else
+    CPRSessionSummary summary = tracker.finalizeSession(now);
+    #endif
+
+    // Transmit finalized results packet (Packet Type 4) to Flutter
+    CPRMetricsPacket finalPacket = summary.toPacket(PKT_TYPE_FINAL_SUMMARY);
+    ble.sendPacket(finalPacket);
+    Serial.printf("[FINAL TX] Rate: %.0f cpm | Depth: %.2f cm | Recoil: %.0f%% | CCF: %.0f%% | Total: %d\n",
+        summary.avg_rate_cpm, summary.avg_depth_cm, summary.recoil_compliance_percent, summary.final_ccf_percent, summary.total_compressions);
+
+    // Protocol Step 3: Buzzer buzzes THREE times indicating practice is complete
+    feedback.playSessionComplete();
+}
+
 /**
  * Standardized BLE Message / Command Dispatcher
  * 
- * Takes an incoming text message from the Flutter/mobile app.
- * If software developers add new UI buttons, they simply configure the app
- * to send a text string over BLE, and insert their corresponding logic below.
+ * Receives incoming text commands from the mobile application.
  */
 void onReceiveMessage_BLE(String message) {
     message.trim();
@@ -34,20 +60,27 @@ void onReceiveMessage_BLE(String message) {
     Serial.println("[BLE CMD] Received: " + message);
 
     if (message == "START") {
-        Serial.println("[FLOW] Start received. Initiating 2-second idle calibration...");
+        Serial.println("[FLOW] Start received. Initiating stationary baseline calibration...");
         sensors.resetCalibration();
         calibrationStartMillis = millis();
+        lastCalibProgressNotifyMillis = calibrationStartMillis;
         state = DeviceState::CALIBRATING;
+
+        // Broadcast initial calibration progress packet (Packet Type 2)
+        CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
+        ble.sendPacket(calibPkt);
 
         // Protocol Step 1: Buzzer buzzes ONCE indicating calibration is underway
         feedback.playCalibrationStart();
     }
     else if (message == "STOP") {
-        Serial.println("[FLOW] Stop received. Practice session ended.");
-        state = DeviceState::STANDBY;
-
-        // Protocol Step 3: Buzzer buzzes THREE times indicating practice is complete
-        feedback.playSessionComplete();
+        Serial.println("[FLOW] Stop received from app.");
+        endAndFinalizeSession(millis());
+    }
+    else if (message == "GET_RESULTS") {
+        Serial.println("[FLOW] Retransmission requested via GET_RESULTS.");
+        CPRMetricsPacket finalPacket = tracker.getLastSummary().toPacket(PKT_TYPE_FINAL_SUMMARY);
+        ble.sendPacket(finalPacket);
     }
     else if (message == "PAUSE") {
         Serial.println("[FLOW] Pause received.");
@@ -57,7 +90,6 @@ void onReceiveMessage_BLE(String message) {
         Serial.println("[FLOW] Resume received.");
         state = DeviceState::ACTIVE_SESSION;
     }
-    // Extensibility Example: Setting practice duration dynamically
     else if (message.startsWith("SET_TIME:")) {
         int sec = message.substring(9).toInt();
         if (sec > 0) {
@@ -66,7 +98,7 @@ void onReceiveMessage_BLE(String message) {
         }
     }
     else {
-        Serial.println("[BLE CMD] Unhandled custom command: " + message);
+        Serial.println("[BLE CMD] Unhandled command: " + message);
     }
 }
 
@@ -98,16 +130,26 @@ void loop() {
     uint32_t now = millis();
     uint32_t nowMicros = micros();
 
-    // 1. Process incoming BLE string commands safely in the main thread
+    // 1. Check for Bluetooth Disconnection during active operation
+    if (ble.checkAndClearDisconnectionEvent()) {
+        if (state == DeviceState::CALIBRATING || state == DeviceState::ACTIVE_SESSION || state == DeviceState::SESSION_PAUSED) {
+            Serial.println("[BLE WARN] Disconnected during active session! Immediately aborting.");
+            feedback.abort();
+            tracker.reset();
+            state = DeviceState::STANDBY;
+        }
+    }
+
+    // 2. Process incoming BLE string commands safely in the main thread
     if (ble.hasPendingCommand()) {
         String cmd = ble.consumeCommand();
         onReceiveMessage_BLE(cmd);
     }
 
-    // 2. Non-blocking audio sequencer update (handles 1, 2, or 3 beep patterns)
+    // 3. Non-blocking audio sequencer update (handles 1, 2, or 3 beep patterns)
     feedback.update(now);
 
-    // 3. State: CALIBRATING (Trainee rests hands idle on chest for configured duration)
+    // 4. State: CALIBRATING (Trainee rests hands idle on chest for configured duration)
     if (state == DeviceState::CALIBRATING) {
         #if !ENABLE_DEMO_MODE
         float dummyAccel;
@@ -116,12 +158,24 @@ void loop() {
         }
         #endif
 
+        // Periodically broadcast calibration progress packet (Packet Type 2)
+        if (now - lastCalibProgressNotifyMillis >= 500) {
+            lastCalibProgressNotifyMillis = now;
+            uint16_t elapsedCalib = (uint16_t)((now - calibrationStartMillis) / 1000);
+            CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, elapsedCalib};
+            ble.sendPacket(calibPkt);
+        }
+
         // Check if calibration window has elapsed
         if (now - calibrationStartMillis >= CPReadyConfig::CALIBRATION_DURATION_MS) {
             #if !ENABLE_DEMO_MODE
             sensors.finalizeCalibration();
             #endif
             Serial.println("[FLOW] Calibration finished. Baselines stored.");
+
+            // Signal Flutter that calibration succeeded (Packet Type 3)
+            CPRMetricsPacket successPkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
+            ble.sendPacket(successPkt);
 
             // Protocol Step 2: Buzzer buzzes TWICE indicating compressions should begin!
             feedback.playCompressionsBegin();
@@ -132,7 +186,7 @@ void loop() {
         }
     }
 
-    // 4. State: ACTIVE_SESSION (Active CPR compression monitoring)
+    // 5. State: ACTIVE_SESSION (Active CPR compression monitoring)
     else if (state == DeviceState::ACTIVE_SESSION) {
         #if ENABLE_DEMO_MODE
         // Broadcast synthetic demo metrics at configured update rate (default 5 Hz)
@@ -140,19 +194,20 @@ void loop() {
             lastBleNotifyMillis = now;
 
             CPRReading demoReading;
-            demoReading.rate_cpm = DEMO_RATE_CPM;
-            demoReading.depth_cm = (float)DEMO_DEPTH_MM / 10.0f; // mm to cm
-            demoReading.recoil_complete = DEMO_RECOIL_OK;
-            demoReading.ccf_percentage = DEMO_CCF_PERCENT;
-            demoReading.elapsed_seconds = (now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS) / 1000;
+            demoReading.rate_cpm          = DEMO_RATE_CPM;
+            demoReading.depth_cm          = (float)DEMO_DEPTH_MM / 10.0f; // mm to cm
+            demoReading.recoil_complete   = DEMO_RECOIL_OK;
+            demoReading.ccf_percentage    = DEMO_CCF_PERCENT;
+            demoReading.elapsed_seconds   = (now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS) / 1000;
+            demoReading.audio_prompt_code = PROMPT_NONE;
+            demoReading.stroke_count      = (uint16_t)(demoReading.elapsed_seconds * 1.8f);
 
-            ble.sendMetrics(demoReading.toPacket());
+            ble.sendPacket(demoReading.toPacket(PKT_TYPE_REALTIME));
             Serial.println("[DEMO TX] " + demoReading.toDebugString());
 
             if (practiceDurationSec > 0 && demoReading.elapsed_seconds >= practiceDurationSec) {
-                Serial.println("[FLOW] Practice time limit reached.");
-                state = DeviceState::STANDBY;
-                feedback.playSessionComplete();
+                Serial.println("[FLOW] Practice time limit reached in demo mode.");
+                endAndFinalizeSession(now);
             }
         }
         #else
@@ -166,9 +221,9 @@ void loop() {
                 lastBleNotifyMillis = now;
 
                 const CPRReading& reading = tracker.getReading();
-                CPRMetricsPacket packet = reading.toPacket();
+                CPRMetricsPacket packet = reading.toPacket(PKT_TYPE_REALTIME);
 
-                ble.sendMetrics(packet);
+                ble.sendPacket(packet);
 
                 if (strokeCompleted) {
                     Serial.println("[STROKE] " + reading.toDebugString());
@@ -178,10 +233,7 @@ void loop() {
             // Auto-stop if session exceeds configured practice duration
             if (practiceDurationSec > 0 && tracker.getReading().elapsed_seconds >= practiceDurationSec) {
                 Serial.println("[FLOW] Practice time limit reached.");
-                state = DeviceState::STANDBY;
-
-                // Protocol Step 3: Buzzer buzzes THREE times indicating practice is complete
-                feedback.playSessionComplete();
+                endAndFinalizeSession(now);
             }
         }
         #endif

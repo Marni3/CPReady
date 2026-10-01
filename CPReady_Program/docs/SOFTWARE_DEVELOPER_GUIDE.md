@@ -1,145 +1,293 @@
 # CPReady Software Developer Integration Guide
 
 **Target Audience**: Flutter / Mobile Application Developers & Firmware Contributors  
-**Hardware Platform**: ESP32 Dev Module (Dual MPU6050 Sensors via I2C, Piezo Buzzer)  
-**Primary Communication**: Bluetooth Low Energy (BLE)  
+**Hardware Platform**: ESP32 Dev Module (Dual MPU6050 Accelerometers, Piezo Buzzer)  
+**Primary Communication**: Bluetooth Low Energy (Nordic UART Service GATT Profile)  
+**Document Status**: Official Protocol Specification (Aligned with Capstone Proposal)  
 
 ---
 
-## 1. Quick Overview
+## 1. System Overview
 
-The **CPReady** firmware turns an ESP32 into a smart CPR training vest worn over a training manikin. It tracks the four core American Heart Association (AHA) quality metrics:
+The **CPReady** firmware turns an ESP32 into a smart CPR training vest worn over a resuscitation manikin. It tracks the four core American Heart Association (AHA) quality metrics:
 - **Compression Rate**: Target 100–120 compressions per minute (cpm).
 - **Compression Depth**: Target 50–60 mm (5.0–6.0 cm).
 - **Chest Recoil**: Verification of complete upward chest release between downstrokes (flags rescuer leaning).
 - **Chest Compression Fraction (CCF)**: Target $\ge 60\%$, ideally $> 80\%$ active compression time.
 
-The system uses a single-threaded, non-blocking execution model. All time-sensitive tasks (100 Hz kinematic sampling, debounce lockouts, buzzer beep sequences, and 5 Hz BLE telemetry updates) are governed by millisecond software timers without using blocking `delay()` calls.
+### Audio Separation of Concerns
+- **ESP32 Hardware Buzzer**: Handles physical device state beeps:
+  - 1 beep: Calibration baseline window underway.
+  - 2 beeps: Baseline captured, compressions begin now!
+  - 3 beeps: Practice session finalized / completed.
+- **Smartphone Speaker (Flutter App)**: Delivers all spoken voice coaching (*"Push harder"*, *"Release completely"*, *"Speed up"*, *"Slow down"*, *"Good compressions"*) and sound effects.
 
 ---
 
-## 2. Codebase Map (What Each File Does)
+## 2. Technical Verification Resolutions (Hardware to Software Agreement)
 
-| File | Purpose | What You Need to Know |
-| :--- | :--- | :--- |
-| **`include/CPReadyConfig.h`** | Master Configuration File | Central file for all parameters. Toggle demo mode, adjust test duration, set BLE device name, or tune sensitivity without touching code. |
-| **`include/BLEReadings.h`** | BLE Packet & Data Model | Defines the packed 8-byte binary packet structure and provides a ready-to-use Dart/Flutter decoder. |
-| **`include/BleManager.h`** | BLE GATT Server & Mailbox | Implements the Nordic UART GATT profile and a thread-safe string command mailbox. |
-| **`src/main.cpp`** / **`CPReady_Program.ino`** | Main Application Loop | Orchestrates the state machine, updates non-blocking timers, and dispatches text commands in `onReceiveMessage_BLE()`. |
-| **`include/CompressionTracker.h`** | Harmonic Pedometer Engine | Implements peak/trough detection, refractory bounce lockout, and cycle period integration for depth and rate. |
-| **`include/SensorManager.h`** | Dual MPU6050 Driver | Reads top (chest) and bottom (base) accelerometers over I2C Fast Mode (400 kHz) and subtracts bed motion. |
-| **`include/FeedbackController.h`** | Acoustic Buzzer Sequencer | Drives the 1-2-3 acoustic protocol completely non-blockingly. |
-| **`include/CPRTypes.h`** | System Enums | Defines device states (`STANDBY`, `CALIBRATING`, `ACTIVE_SESSION`, `SESSION_PAUSED`, `FAULT_ERROR`). |
+Below are the explicit engineering agreements answering the **"For Technical Verification"** requirements in the student team's protocol specification:
+
+### 1. Bluetooth Disconnection Handling
+- **Firmware Behavior**: The ESP32 detects client disconnection instantly via `onDisconnect()`. On the very next tick, the firmware calls `feedback.abort()` (silencing the buzzer), clears `tracker.reset()`, and resets `state = DeviceState::STANDBY`.
+- **Flutter Behavior**: When disconnection occurs, Flutter immediately terminates the active session, clears displayed live metrics to avoid showing stale data, and displays the *"Session Interrupted"* notification screen. Interrupted sessions are **not** saved to History.
+- **Reconnection**: The ESP32 resumes advertising immediately. Once re-paired, the instructor can initiate a clean new practice session.
+
+### 2. STOP Command & Final Results Finalization
+- **Sequence**:
+  1. Instructor presses and holds "End Session" in Flutter.
+  2. Flutter transmits the text string `"STOP"` to the Command Characteristic (`6e400003-...`).
+  3. The ESP32 closes the measurement period, computes session averages (average depth, average rate, recoil compliance %, final CCF %, total compressions), and broadcasts an 11-byte summary packet with `packet_type = 4 (PKT_TYPE_FINAL_SUMMARY)`.
+  4. The ESP32 plays 3 beeps and transitions to `STANDBY`.
+  5. Flutter validates the packet, saves the session to local SQLite/Hive storage, and opens the Results screen.
+
+### 3. Distinguishing Real-Time Telemetry from Finalized Results
+- **Byte 0 of the packet** is an explicit `packet_type`:
+  - `1`: Real-time streaming metrics (updated per stroke or at 5 Hz).
+  - `2`: Baseline calibration in progress.
+  - `3`: Calibration successfully completed (trigger for app to say *"Begin Compressions"*).
+  - `4`: Finalized session summary results (trigger for app to auto-save and open Results).
+  - `5`: Error / calibration failed.
+
+### 4. Response Timeout & Validation Rules
+- **Agreed Timeout**: **2.0 seconds** (2000 ms). If Flutter sends `"STOP"` and does not receive a Type 4 packet within 2.0s, it displays the *"Results Unavailable"* screen.
+- **Validation Criteria**: Flutter verifies `bytes.length == 11`, `rate <= 250`, `depth_tenths_mm <= 1000` (10.0 cm), and `ccf <= 100`.
+
+### 5. Final Results Retransmission (`"GET_RESULTS"`)
+- The ESP32 retains `lastFinalSummary` in RAM.
+- If Flutter fails to save or missed the Type 4 packet, writing `"GET_RESULTS"` causes the ESP32 to immediately re-notify the Type 4 summary packet.
+
+### 6. Pre-Session Neutral-Position Calibration
+- Instructor verifies hand placement; trainee rests hands still on the chest.
+- Flutter sends `"START"`.
+- ESP32 buzzes 1 time and sends `packet_type = 2`.
+- After 2.0 seconds (200 samples of resting baseline captured), ESP32 buzzes 2 times, transmits `packet_type = 3 (CALIB_SUCCESS)`, and starts live monitoring. Flutter transitions its UI from *"Calibrating..."* to *"Begin Compressions Now!"*.
 
 ---
 
-## 3. What the Software Developer Must Check Out
+## 3. Telemetry Packet Specification (11 Bytes Packed)
 
-### 3.1 BLE Service & Characteristic UUIDs
-The firmware implements the standard **Nordic UART Service (NUS)** layout:
+```
+SERVICE UUID:        6e400001-b5a3-f393-e0a9-e50e24dcca9e
+METRICS CHAR UUID:   6e400002-b5a3-f393-e0a9-e50e24dcca9e  (Notify)
+COMMAND CHAR UUID:   6e400003-b5a3-f393-e0a9-e50e24dcca9e  (Write)
+```
 
-- **Advertised Device Name**: `CPReady`
-- **Service UUID**: `6e400001-b5a3-f393-e0a9-e50e24dcca9e`
-- **Metrics Telemetry (Notify)**: `6e400002-b5a3-f393-e0a9-e50e24dcca9e`
-- **Command Control (Write)**: `6e400003-b5a3-f393-e0a9-e50e24dcca9e`
+| Byte Offset | Field Name | Type | Real-Time Meaning (`type=1`) | Final Summary Meaning (`type=4`) |
+| :---: | :--- | :---: | :--- | :--- |
+| **0** | `packet_type` | `uint8` | `1` (Live Stream) | `4` (Finalized Session Results) |
+| **1** | `recoil_status` | `uint8` | `1` = Full Recoil, `0` = Leaning | Overall Recoil Compliance % (`0..100`) |
+| **2..3** | `rate_cpm` | `uint16` | Instantaneous cadence (cpm) | Session Average Cadence (cpm) |
+| **4..5** | `depth_tenths_mm` | `uint16` | Stroke depth in 0.1 mm (e.g. 550 = 55mm) | Session Average Depth in 0.1 mm |
+| **6** | `ccf_percent` | `uint8` | Current cumulative CCF % (`0..100`) | Final Session CCF % (`0..100`) |
+| **7** | `audio_prompt_code` | `uint8` | Audio Guidance Cue Code (`0..6`) | `0` (Unused in summary) |
+| **8** | `total_compressions`| `uint8` | Current stroke sequence count | Total compressions delivered in session |
+| **9..10** | `session_elapsed_sec`| `uint16`| Elapsed session duration (seconds) | Total final session duration (seconds) |
 
-### 3.2 Parsing the 8-Byte Binary Packet
-Telemetry is broadcast as an exact **8-byte packed binary struct** (little-endian) to minimize latency and packet overhead:
+### Audio Guidance Cue Codes (`audio_prompt_code`)
 
-| Byte Offset | Field Name | Data Type | Units & Interpretation |
-| :---: | :--- | :---: | :--- |
-| **0..1** | `rate_cpm` | `uint16` | Instantaneous cadence in compressions/min (e.g., `110`) |
-| **2..3** | `depth_tenths_mm` | `uint16` | Compression depth in tenths of a millimeter. Divide by `100.0` for centimeters or by `10.0` for millimeters (e.g., `550` = `55.0 mm` = `5.50 cm`) |
-| **4** | `recoil_status` | `uint8` | `1` = Full recoil achieved (good), `0` = Incomplete recoil (rescuer is leaning) |
-| **5** | `ccf_percent` | `uint8` | Cumulative chest compression fraction percentage `0..100` (e.g., `74` = `74%`) |
-| **6..7** | `session_elapsed_sec`| `uint16` | Total practice time elapsed in seconds (e.g., `120`) |
+The firmware contains a smart coaching engine with **3.5-second error persistence windowing** and a **5.0-second silence cooldown**. When a non-zero code is received, Flutter simply plays the corresponding voice prompt through the phone speaker:
 
-#### Ready-to-Use Dart Parser (Copy-Paste for Flutter)
+| Code | Constant | Spoken Voice Prompt Phrase | Trigger Condition |
+| :---: | :--- | :--- | :--- |
+| **0** | `PROMPT_NONE` | *(Silence)* | Technique is compliant or prompt cooldown active |
+| **1** | `PROMPT_PUSH_HARDER` | *"Push harder"* | Depth < 50 mm sustained for $\ge 3.5\text{ s}$ |
+| **2** | `PROMPT_PUSH_LESS` | *"Push shallower"* | Depth > 60 mm sustained for $\ge 3.5\text{ s}$ |
+| **3** | `PROMPT_RELEASE_FULLY` | *"Release chest completely"* | Recoil < -0.35g (leaning) sustained for $\ge 3.5\text{ s}$ |
+| **4** | `PROMPT_SPEED_UP` | *"Speed up"* | Rate < 100 cpm sustained for $\ge 3.5\text{ s}$ |
+| **5** | `PROMPT_SLOW_DOWN` | *"Slow down"* | Rate > 120 cpm sustained for $\ge 3.5\text{ s}$ |
+| **6** | `PROMPT_GOOD_JOB` | *"Good compressions"* | Target metrics maintained continuously for $\ge 15\text{ s}$ |
+
+---
+
+## 4. Flutter / Dart Integration Code
+
+Copy-paste this complete parser and handler directly into your Flutter project:
+
 ```dart
 import 'dart:typed_data';
+import 'package:flutter_tts/flutter_tts.dart';
 
 class CPRMetrics {
-  final int rateCpm;
-  final double depthCm;
-  final double depthMm;
-  final bool recoilComplete;
-  final int ccfPercent;
-  final int elapsedSeconds;
+  final int packetType;         // 1=Live, 2=Calib Progress, 3=Calib Done, 4=Final Summary, 5=Error
+  final bool recoilComplete;    // (If packetType == 1)
+  final int recoilPercentage;   // 0..100% (If packetType == 4)
+  final int rateCpm;            // Current or average rate
+  final double depthCm;         // Current or average depth in cm
+  final double depthMm;         // Current or average depth in mm
+  final int ccfPercent;         // Cumulative CCF %
+  final int audioPromptCode;    // 0..6
+  final int totalCompressions;  // Total stroke count
+  final int elapsedSeconds;     // Total duration in seconds
 
   CPRMetrics({
+    required this.packetType,
+    required this.recoilComplete,
+    required this.recoilPercentage,
     required this.rateCpm,
     required this.depthCm,
     required this.depthMm,
-    required this.recoilComplete,
     required this.ccfPercent,
+    required this.audioPromptCode,
+    required this.totalCompressions,
     required this.elapsedSeconds,
   });
 
   factory CPRMetrics.fromBytes(List<int> bytes) {
-    if (bytes.length < 8) {
-      throw ArgumentError("Expected 8 bytes, got ${bytes.length}");
+    if (bytes.length < 11) {
+      throw ArgumentError("Expected 11 bytes, got ${bytes.length}");
     }
     final byteData = ByteData.sublistView(Uint8List.fromList(bytes));
 
-    final rate = byteData.getUint16(0, Endian.little);
-    final depthTenthsMm = byteData.getUint16(2, Endian.little);
-    final recoil = byteData.getUint8(4) == 1;
-    final ccf = byteData.getUint8(5);
-    final elapsed = byteData.getUint16(6, Endian.little);
+    final type = byteData.getUint8(0);
+    final recoilVal = byteData.getUint8(1);
+    final rate = byteData.getUint16(2, Endian.little);
+    final depthTenths = byteData.getUint16(4, Endian.little);
+    final ccf = byteData.getUint8(6);
+    final audioCue = byteData.getUint8(7);
+    final totalCount = byteData.getUint8(8);
+    final elapsed = byteData.getUint16(9, Endian.little);
 
     return CPRMetrics(
+      packetType: type,
+      recoilComplete: recoilVal == 1,
+      recoilPercentage: recoilVal,
       rateCpm: rate,
-      depthCm: depthTenthsMm / 100.0,
-      depthMm: depthTenthsMm / 10.0,
-      recoilComplete: recoil,
+      depthCm: depthTenths / 100.0,
+      depthMm: depthTenths / 10.0,
       ccfPercent: ccf,
+      audioPromptCode: audioCue,
+      totalCompressions: totalCount,
       elapsedSeconds: elapsed,
     );
   }
 }
-```
 
----
+// -----------------------------------------------------------------------------
+// BLE Telemetry Stream Listener Example
+// -----------------------------------------------------------------------------
+class CPRSessionManager {
+  final FlutterTts tts = FlutterTts();
 
-## 4. Sending Commands from the App to the Firmware
+  void onCharacteristicChanged(List<int> rawBytes) {
+    if (rawBytes.length < 11) return;
+    final metrics = CPRMetrics.fromBytes(rawBytes);
 
-Write UTF-8 strings to the **Command Characteristic** (`6e400003-b5a3-f393-e0a9-e50e24dcca9e`). The firmware dispatches these in `onReceiveMessage_BLE()` in `main.cpp`:
+    switch (metrics.packetType) {
+      case 1: // REAL-TIME LIVE TELEMETRY
+        updateLiveGauges(metrics);
+        handleAudioCue(metrics.audioPromptCode);
+        break;
 
-| Command String | Behavior | Hardware & Buzzer Reaction |
-| :--- | :--- | :--- |
-| `"START"` | Begins session | Buzzer buzzes **1 time** for 2.0s hands-still calibration; then buzzes **2 times** to signal compressions begin. |
-| `"STOP"` | Terminates session | Buzzer buzzes **3 times** signaling trial is over; resets state to `STANDBY`. |
-| `"PAUSE"` | Pauses practice | Halts active compression tracking without resetting timers. |
-| `"RESUME"` | Resumes practice | Resumes live tracking. |
-| `"SET_TIME:60"` | Dynamic trial duration | Sets trial duration to 60 seconds (or any integer in seconds; `0` runs indefinitely). |
+      case 2: // CALIBRATION IN PROGRESS
+        showCalibrationProgress(metrics.elapsedSeconds);
+        break;
 
-### Adding New Commands
-If you add a new UI button in Flutter (for example, a buzzer mute or reset button), simply add an `else if` branch inside `onReceiveMessage_BLE()` in `src/main.cpp`:
-```cpp
-else if (message == "MUTE") {
-    // Custom logic here
+      case 3: // CALIBRATION COMPLETE
+        tts.speak("Begin compressions now");
+        transitionToLivePractice();
+        break;
+
+      case 4: // FINALIZED SESSION SUMMARY
+        saveToLocalHistory(metrics);
+        navigateToResultsScreen(metrics);
+        break;
+
+      case 5: // ERROR
+        showInterruptionError("Calibration failed. Keep hands stationary.");
+        break;
+    }
+  }
+
+  void handleAudioCue(int code) {
+    switch (code) {
+      case 1: tts.speak("Push harder"); break;
+      case 2: tts.speak("Push shallower"); break;
+      case 3: tts.speak("Release chest completely"); break;
+      case 4: tts.speak("Speed up"); break;
+      case 5: tts.speak("Slow down"); break;
+      case 6: tts.speak("Good compressions"); break;
+    }
+  }
+
+  void updateLiveGauges(CPRMetrics m) { /* update visual charts */ }
+  void showCalibrationProgress(int sec) { /* show 2-second countdown */ }
+  void transitionToLivePractice() { /* open live pumping UI */ }
+  void saveToLocalHistory(CPRMetrics m) { /* persist to SQLite / Hive */ }
+  void navigateToResultsScreen(CPRMetrics m) { /* open Results page */ }
+  void showInterruptionError(String msg) { /* display error notification */ }
 }
 ```
 
 ---
 
-## 5. Demo / Simulation Mode (Develop Without Hardware)
+## 5. Interaction Sequence Diagrams
 
-You do **not** need the physical manikin or sensors connected to build and test the mobile application.
+### 5.1 Normal Practice Session & Auto-Saving
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Instructor
+    actor Trainee
+    participant App as Flutter App
+    participant PhoneSPK as Phone Speaker
+    participant ESP32 as ESP32 Vest
+    participant Buzzer as Onboard Buzzer
 
-1. Open `include/CPReadyConfig.h`.
-2. Set `#define ENABLE_DEMO_MODE true`.
-3. Flash the ESP32.
+    Instructor->>App: Tap "Begin Session"
+    App->>ESP32: Write "START" to Command Char
+    ESP32->>Buzzer: Beep 1x (Calibration Start)
+    ESP32->>App: Notify Packet Type 2 (Calibrating)
+    App->>Instructor: Show "Calibrating... Keep hands still"
+    Note over Trainee,ESP32: 2.0s Baseline Calibration (200 samples)
+    ESP32->>Buzzer: Beep 2x (Compressions Begin)
+    ESP32->>App: Notify Packet Type 3 (Calib Success)
+    App->>PhoneSPK: "Begin compressions now!"
+    App->>Instructor: Open Live Practice Gauges
+    
+    loop Live CPR Compressions
+        Trainee->>ESP32: Performs Compressions
+        ESP32->>App: Notify Packet Type 1 (Live metrics + Audio Cue)
+        opt Audio Cue > 0
+            App->>PhoneSPK: Speaks Voice Prompt ("Push harder", etc.)
+        end
+    end
 
-The device will immediately bypass sensor checks and stream realistic AHA metrics (`55 mm` depth, `110 cpm` rate, full recoil, `74%` CCF) at 5 Hz directly to your mobile app. This makes designing Flutter graphs, real-time gauges, and session summary screens completely independent of physical testing.
+    Instructor->>App: Press & Hold "End Session"
+    App->>ESP32: Write "STOP" to Command Char
+    ESP32->>ESP32: Close Window & Aggregate Summary
+    ESP32->>App: Notify Packet Type 4 (Final Summary Results)
+    ESP32->>Buzzer: Beep 3x (Session Complete)
+    App->>App: Validate & Save to Local History
+    App->>Instructor: Automatically Open Results Screen
+```
+
+### 5.2 Bluetooth Disconnection Abort
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Flutter App
+    participant ESP32 as ESP32 Vest
+    participant Buzzer as Onboard Buzzer
+
+    Note over App,ESP32: Active Session Running
+    App-xESP32: Bluetooth Connection Lost (Out of range / Battery / OS Kill)
+    ESP32->>Buzzer: abort() (Immediate silence)
+    ESP32->>ESP32: tracker.reset() & state = STANDBY
+    ESP32->>ESP32: Start Advertising Immediately
+    App->>App: Clear displayed metrics
+    App->>App: Classify session as Incomplete (Exclude from History)
+    App->>App: Open "Session Interrupted" Screen
+```
 
 ---
 
-## 6. How to Tune Values for Physical Testing
+## 6. Demo & Simulation Mode (Test Without Hardware)
 
-If you are running physical trials on a manikin and need to calibrate without touching C++ code:
-- **Depth Discrepancy**: If a physical ruler measures 5.0 cm but the app displays 4.2 cm, open `include/CPReadyConfig.h` and update `DEPTH_CALIBRATION_K` using the formula:  
-  $$\text{New } K = \text{Current } K \times \left(\frac{\text{Ruler Depth}}{\text{App Depth}}\right) = 11.2 \times \left(\frac{5.0}{4.2}\right) = 13.3$$
-- **Compression Sensitivity**: If light presses do not register, lower `COMPRESSION_THRESH_G` (e.g., from `0.45` to `0.35`). If table vibrations trigger false strokes, raise it (e.g., to `0.60`).
-- **Chest Recoil / Leaning**: If the rescuer leans but the app does not flag it, make `RECOIL_THRESH_G` more negative (e.g., from `-0.35` to `-0.45`).
-- **Trial Duration**: Change `PRACTICE_DURATION_SEC` to `30` or `60` for rapid testing, or `120` for standard AHA evaluations.
+You do **not** need the physical sensors or manikin connected to build and test the mobile application:
+
+1. Open [include/CPReadyConfig.h](file:///c:/Users/reynq/OneDrive/Documents/CPReady/CPReady_Program/include/CPReadyConfig.h).
+2. Set `#define ENABLE_DEMO_MODE true`.
+3. Flash the ESP32.
+
+When you send `"START"`, the device beeps once, sends `type=2`, beeps twice after 2s, sends `type=3`, streams realistic live AHA metrics (`55 mm` depth, `110 cpm`, recoil OK, `74%` CCF) at 5 Hz, and transmits a finalized `type=4` summary upon `"STOP"`.

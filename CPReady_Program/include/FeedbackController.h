@@ -75,6 +75,14 @@ public:
             playBeeps(1, CPReadyConfig::BEEP_METRONOME_CLICK_MS, CPReadyConfig::BEEP_METRONOME_CLICK_MS);
         }
     }
+
+    // Immediately stop buzzer and clear pending beep queue (e.g. on disconnect or reset)
+    void abort() {
+        digitalWrite(pin, LOW);
+        isBuzzerHigh = false;
+        beepsRemaining = 0;
+        nextToggleMillis = 0;
+    }
 };
 
 #endif // FEEDBACK_CONTROLLER_H

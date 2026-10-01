@@ -31,6 +31,14 @@
 #define COMPRESSION_THRESH_G   0.45f     // Downward sensitivity (lower = more sensitive; higher = rejects bumps)
 #define RECOIL_THRESH_G        -0.35f    // Recoil / leaning threshold (more negative = stricter recoil check)
 
+// ---- Audio Guidance & Coaching (Phone Speaker) ----
+#define ENABLE_AUDIO_COACHING  true      // Set true to generate phone voice guidance cue codes
+#define AUDIO_PROMPT_WINDOW_MS 3500      // Error persistence duration (ms): errors must persist this long (3-5s)
+#define AUDIO_PROMPT_MIN_ERRS  6         // Minimum consecutive bad strokes before voice prompt triggers
+#define AUDIO_PROMPT_COOLDOWN  5000      // Silence lockout between voice prompts (ms): prevents speech overlap
+#define AUDIO_PRAISE_INTERVAL  15000     // Minimum duration of perfect compressions before 'Good job' praise (ms)
+#define BLE_STOP_TIMEOUT_MS    2000      // Agreed Flutter timeout waiting for final summary after STOP (ms)
+
 // ---- Hardware Pins ----
 #define BUZZER_PIN             25        // Piezo buzzer GPIO pin
 #define I2C_SDA_PIN            21        // ESP32 default I2C Data pin
@@ -45,7 +53,7 @@ namespace CPReadyConfig {
     // BLE & Identity Aliases
     constexpr const char* BLE_DEVICE_NAME               = ::BLE_DEVICE_NAME;        // Advertised name in BLE scan
     constexpr const char* BLE_SERVICE_UUID              = ::SERVICE_UUID;           // Primary GATT service UUID
-    constexpr const char* BLE_CHAR_NOTIFY_UUID          = ::METRICS_CHAR_UUID;      // 8-byte telemetry notification characteristic
+    constexpr const char* BLE_CHAR_NOTIFY_UUID          = ::METRICS_CHAR_UUID;      // 11-byte telemetry notification characteristic
     constexpr const char* BLE_CHAR_COMMAND_UUID         = ::COMMAND_CHAR_UUID;      // Mobile app command write characteristic
 
     // Session & Tuning Aliases
@@ -55,6 +63,14 @@ namespace CPReadyConfig {
     constexpr float       DEPTH_CALIBRATION_K           = ::DEPTH_CALIBRATION_K;    // Harmonic depth scalar (depth = K * da * T^2)
     constexpr float       COMPRESSION_START_THRESHOLD_G = COMPRESSION_THRESH_G;     // Downstroke acceleration trigger threshold
     constexpr float       RECOIL_THRESHOLD_G            = RECOIL_THRESH_G;          // Upward rebound threshold to confirm release
+
+    // Audio Guidance Aliases
+    constexpr bool        ENABLE_AUDIO_COACHING_PROMPTS = ::ENABLE_AUDIO_COACHING;  // Master toggle for phone audio cue codes
+    constexpr uint32_t    AUDIO_PROMPT_WINDOW_MS        = ::AUDIO_PROMPT_WINDOW_MS; // Sustained error window in milliseconds (3.5s)
+    constexpr uint8_t     AUDIO_PROMPT_CONSECUTIVE_ERR  = ::AUDIO_PROMPT_MIN_ERRS;  // Minimum error strokes required to trigger voice
+    constexpr uint32_t    AUDIO_PROMPT_COOLDOWN_MS      = ::AUDIO_PROMPT_COOLDOWN;  // Lockout duration between voice prompts (5.0s)
+    constexpr uint32_t    AUDIO_PROMPT_PRAISE_INTERVAL  = ::AUDIO_PRAISE_INTERVAL;  // Interval before positive reinforcement
+    constexpr uint32_t    BLE_FINAL_RESULT_TIMEOUT_MS   = ::BLE_STOP_TIMEOUT_MS;    // Timeout waiting for final results packet
 
     // Hardware Pin Aliases
     constexpr uint8_t     BUZZER_PIN                    = ::BUZZER_PIN;             // ESP32 GPIO pin driving the buzzer
@@ -85,7 +101,7 @@ namespace CPReadyConfig {
     constexpr float       DEPTH_MIN_LIMIT_CM            = 0.0f;    // Minimum allowable depth clamp to reject negative outliers
     constexpr float       DEPTH_MAX_LIMIT_CM            = 10.0f;   // Maximum allowable depth clamp to reject physical artifacts
 
-    // Acoustic Protocol Timings
+    // Acoustic Protocol Timings (ESP32 Onboard Buzzer)
     constexpr uint16_t    BEEP_CALIB_START_ON_MS        = 200;     // Step 1: Calibration start tone duration (1 beep)
     constexpr uint16_t    BEEP_CALIB_START_OFF_MS       = 100;     // Step 1: Post-beep silence duration
     constexpr uint16_t    BEEP_COMPRESS_BEGIN_ON_MS     = 120;     // Step 2: Compressions begin tone duration (2 beeps)
