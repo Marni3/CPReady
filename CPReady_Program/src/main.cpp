@@ -33,8 +33,14 @@ void endAndFinalizeSession(uint32_t now) {
     summary.avg_depth_cm = (float)DEMO_DEPTH_MM / 10.0f;
     summary.recoil_compliance_percent = DEMO_RECOIL_OK ? 100.0f : 50.0f;
     summary.final_ccf_percent = DEMO_CCF_PERCENT;
-    summary.total_compressions = (uint16_t)((now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS) / 550);
-    summary.total_duration_sec = (uint16_t)((now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS) / 1000);
+    if (now > calibrationStartMillis + CPReadyConfig::CALIBRATION_DURATION_MS) {
+        uint32_t activeMs = now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS;
+        summary.total_compressions = (uint16_t)(activeMs / 550);
+        summary.total_duration_sec = (uint16_t)(activeMs / 1000);
+    } else {
+        summary.total_compressions = 0;
+        summary.total_duration_sec = 0;
+    }
     #else
     CPRSessionSummary summary = tracker.finalizeSession(now);
     #endif
@@ -170,19 +176,29 @@ void loop() {
         if (now - calibrationStartMillis >= CPReadyConfig::CALIBRATION_DURATION_MS) {
             #if !ENABLE_DEMO_MODE
             sensors.finalizeCalibration();
+            if (!sensors.isCalibrationStable()) {
+                Serial.println("[ERROR] Calibration aborted: excessive hand motion detected.");
+                CPRMetricsPacket errorPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0};
+                ble.sendPacket(errorPkt);
+                sensors.resetCalibration();
+                state = DeviceState::STANDBY;
+            } else {
             #endif
-            Serial.println("[FLOW] Calibration finished. Baselines stored.");
+                Serial.println("[FLOW] Calibration finished. Baselines stored.");
 
-            // Signal Flutter that calibration succeeded (Packet Type 3)
-            CPRMetricsPacket successPkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
-            ble.sendPacket(successPkt);
+                // Signal Flutter that calibration succeeded (Packet Type 3)
+                CPRMetricsPacket successPkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
+                ble.sendPacket(successPkt);
 
-            // Protocol Step 2: Buzzer buzzes TWICE indicating compressions should begin!
-            feedback.playCompressionsBegin();
+                // Protocol Step 2: Buzzer buzzes TWICE indicating compressions should begin!
+                feedback.playCompressionsBegin();
 
-            tracker.startSession(now);
-            state = DeviceState::ACTIVE_SESSION;
-            Serial.println("[FLOW] Live practice session started! Ready for compressions.");
+                tracker.startSession(now);
+                state = DeviceState::ACTIVE_SESSION;
+                Serial.println("[FLOW] Live practice session started! Ready for compressions.");
+            #if !ENABLE_DEMO_MODE
+            }
+            #endif
         }
     }
 

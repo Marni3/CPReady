@@ -80,6 +80,8 @@ public:
     void startSession(uint32_t currentMillis) {
         reset();
         sessionStartMillis = currentMillis;
+        lastStrokePeakMillis = currentMillis;          // Fix: prevents first-stroke cycle period explosion
+        lastCompressionDetectedMillis = currentMillis;
         lastAudioPromptMillis = currentMillis; // Grace period at start
         lastTargetPraiseMillis = currentMillis;
         targetStartTime = currentMillis;
@@ -90,6 +92,14 @@ public:
         if (sessionStartMillis == 0) return false;
 
         reading.elapsed_seconds = (currentMillis - sessionStartMillis) / 1000;
+
+        // Stroke timeout watchdog: recover from a stalled or incomplete stroke state
+        if ((state == StrokeState::COMPRESSING || state == StrokeState::RECOILING) &&
+            strokeStartMillis > 0 && (currentMillis - strokeStartMillis > 2000)) {
+            state = StrokeState::WAITING_FOR_DOWNSLICK;
+            peakAccel = 0.0f;
+            troughAccel = 0.0f;
+        }
 
         switch (state) {
             case StrokeState::WAITING_FOR_DOWNSLICK:
@@ -162,6 +172,14 @@ public:
                     cumulativeRateSum += reading.rate_cpm;
 
                     // 6. Audio Coaching Engine Evaluation
+                    // Clear stale error streaks if the inter-stroke gap exceeded the pause threshold
+                    if (cyclePeriodMs > CPReadyConfig::PAUSE_DETECTION_TIMEOUT_MS) {
+                        shallowStreak = 0;   shallowStartTime = 0;
+                        deepStreak = 0;      deepStartTime = 0;
+                        leaningStreak = 0;   leaningStartTime = 0;
+                        slowRateStreak = 0;  slowRateStartTime = 0;
+                        fastRateStreak = 0;  fastRateStartTime = 0;
+                    }
                     reading.audio_prompt_code = PROMPT_NONE;
                     evaluateAudioGuidance(currentMillis);
 
@@ -314,7 +332,10 @@ public:
             s.recoil_compliance_percent = 100.0f;
         }
 
-        s.final_ccf_percent = reading.ccf_percentage;
+        // Recompute CCF using true total session duration at the moment of finalization
+        uint32_t totalSessionMs = (sessionStartMillis > 0) ? (endMillis - sessionStartMillis) : 0;
+        s.final_ccf_percent = (totalSessionMs > 0) ?
+            min(100.0f, ((float)totalActiveCompressionMillis / (float)totalSessionMs) * 100.0f) : 0.0f;
         lastFinalSummary = s;
         return s;
     }

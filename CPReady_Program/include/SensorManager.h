@@ -20,6 +20,8 @@ private:
     float calBaseSum;
     uint16_t calSampleCount;
     bool isCalibrated;
+    float calNetMin;          // Minimum raw net differential during calibration (for stability check)
+    float calNetMax;          // Maximum raw net differential during calibration (for stability check)
 
 public:
     SensorManager() 
@@ -27,7 +29,8 @@ public:
           baseSensor(CPReadyConfig::BASE_MPU_I2C_ADDR), 
           chestGravityOffset(0.0f), baseGravityOffset(0.0f),
           lastFilteredNetAccel(0.0f), lastSampleMicros(0),
-          calChestSum(0.0f), calBaseSum(0.0f), calSampleCount(0), isCalibrated(false) {}
+          calChestSum(0.0f), calBaseSum(0.0f), calSampleCount(0), isCalibrated(false),
+          calNetMin(999.0f), calNetMax(-999.0f) {}
 
     bool begin() {
         Wire.begin(CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN);
@@ -54,6 +57,8 @@ public:
         calBaseSum = 0.0f;
         calSampleCount = 0;
         isCalibrated = false;
+        calNetMin = 999.0f;
+        calNetMax = -999.0f;
     }
 
     // Called periodically during the idle baseline window
@@ -66,6 +71,11 @@ public:
         calChestSum += (float)az1 / 8192.0f; // Scale factor for +/- 4g is 8192 LSB/g
         calBaseSum  += (float)az2 / 8192.0f;
         calSampleCount++;
+
+        // Track raw differential spread for motion stability validation
+        float netSample = ((float)az1 - (float)az2) / 8192.0f;
+        if (netSample < calNetMin) calNetMin = netSample;
+        if (netSample > calNetMax) calNetMax = netSample;
     }
 
     // Finalize calculated static gravity baseline
@@ -75,6 +85,12 @@ public:
             baseGravityOffset  = calBaseSum  / (float)calSampleCount;
             isCalibrated = true;
         }
+    }
+
+    // Returns true if hand motion during calibration stayed within the stability threshold (0.30g P-P)
+    bool isCalibrationStable() const {
+        if (calSampleCount < 10) return false;
+        return (calNetMax - calNetMin) <= 0.30f;
     }
 
     // Primary sampling function intended to run at configured rate (default 100 Hz)
