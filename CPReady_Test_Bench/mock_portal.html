@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>CPReady Medical Test Bench (Interactive Voice Mock)</title>
+<style>
+:root {
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --card-border: #e2e8f0;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --primary: #0284c7;
+  --primary-light: #e0f2fe;
+  --primary-hover: #0369a1;
+  --teal-accent: #0d9488;
+  --teal-light: #ccfbf1;
+  --success: #16a34a;
+  --success-light: #dcfce7;
+  --warning: #d97706;
+  --warning-light: #fef3c7;
+  --danger: #dc2626;
+  --danger-light: #fee2e2;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 16px -2px rgba(2, 132, 199, 0.08);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+body { background: var(--bg); color: var(--text-main); padding: 12px; min-height: 100vh; }
+.container { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+
+/* Top Clinical Header */
+header { background: var(--card); border: 1px solid var(--card-border); padding: 16px; border-radius: 20px; box-shadow: var(--shadow-md); display: flex; justify-content: space-between; align-items: center; }
+.brand h1 { font-size: 1.25rem; font-weight: 800; color: var(--primary); letter-spacing: -0.02em; }
+.brand p { font-size: 0.75rem; color: var(--text-muted); font-weight: 500; }
+.status-pill-group { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.pill { padding: 3px 8px; border-radius: 20px; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+.pill-green { background: var(--success-light); color: var(--success); }
+.pill-amber { background: var(--warning-light); color: var(--warning); }
+.pill-red { background: var(--danger-light); color: var(--danger); }
+.pill-mock { background: #fef3c7; color: #b45309; border: 1px dashed #d97706; }
+
+/* Voice Coach Banner */
+.voice-banner { background: #0284c7; color: #ffffff; padding: 10px 16px; border-radius: 16px; display: none; align-items: center; justify-content: space-between; box-shadow: 0 4px 15px rgba(2, 132, 199, 0.3); animation: slideDown 0.3s ease; }
+@keyframes slideDown { from { transform: translateY(-10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.voice-banner .cue-text { font-size: 0.85rem; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.sound-wave { display: inline-flex; align-items: center; gap: 2px; }
+.sound-wave span { width: 3px; height: 12px; background: #ffffff; border-radius: 2px; animation: wave 0.8s infinite ease-in-out; }
+.sound-wave span:nth-child(2) { animation-delay: 0.2s; height: 16px; }
+.sound-wave span:nth-child(3) { animation-delay: 0.4s; height: 10px; }
+@keyframes wave { 0%, 100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
+
+/* Mode Switcher Pill Banner */
+.mode-banner { background: var(--card); border: 1px solid var(--card-border); padding: 14px 16px; border-radius: 20px; box-shadow: var(--shadow-sm); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.mode-details h3 { font-size: 0.85rem; font-weight: 700; color: var(--text-main); }
+.mode-details p { font-size: 0.7rem; color: var(--text-muted); margin-top: 1px; }
+.btn-pill-toggle { background: var(--primary-light); color: var(--primary); border: 1px solid #bae6fd; padding: 7px 14px; border-radius: 24px; font-weight: 700; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+.btn-pill-toggle.dual { background: var(--teal-accent); color: #ffffff; border-color: var(--teal-accent); }
+
+/* Action Cards */
+.card { background: var(--card); border: 1px solid var(--card-border); border-radius: 20px; padding: 16px; box-shadow: var(--shadow-md); }
+.action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.btn { width: 100%; min-height: 48px; border-radius: 14px; font-weight: 700; font-size: 0.85rem; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.15s; }
+.btn:active { transform: scale(0.97); }
+.btn-primary { background: var(--primary); color: #ffffff; box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25); }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-success { background: var(--success); color: #ffffff; }
+.btn-danger { background: var(--danger); color: #ffffff; }
+.btn-secondary { background: #f1f5f9; color: var(--text-main); border: 1px solid #cbd5e1; }
+
+/* Calibration Banner */
+.calib-banner { background: #f0f9ff; border: 1px dashed #38bdf8; border-radius: 14px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.calib-banner span { font-size: 0.75rem; font-weight: 600; color: var(--primary); }
+
+/* Live Telemetry Cards */
+.telemetry-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.metric-box { background: var(--card); border: 1px solid var(--card-border); border-radius: 18px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: var(--shadow-sm); position: relative; overflow: hidden; }
+.metric-box::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: #cbd5e1; }
+.metric-box.state-good::before { background: var(--success); }
+.metric-box.state-warn::before { background: var(--warning); }
+.metric-box.state-alert::before { background: var(--danger); }
+.box-label { font-size: 0.7rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.box-val { font-size: 1.85rem; font-weight: 800; color: var(--text-main); margin: 4px 0; display: flex; align-items: baseline; gap: 4px; }
+.box-val .unit { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
+.box-target { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; }
+
+/* Recoil Pill */
+.recoil-indicator { padding: 8px 12px; border-radius: 10px; font-size: 0.8rem; font-weight: 800; text-align: center; margin: 4px 0; }
+.recoil-good { background: var(--success-light); color: var(--success); }
+.recoil-lean { background: var(--danger-light); color: var(--danger); animation: pulse 1s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* Audio Coaching Interactive Tester */
+.audio-card { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 18px; padding: 14px; margin-top: 4px; }
+.audio-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.audio-header h3 { font-size: 0.85rem; font-weight: 800; color: var(--success); display: flex; align-items: center; gap: 6px; }
+.voice-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.voice-btn { background: #ffffff; border: 1px solid #86efac; color: #166534; padding: 6px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 700; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 4px; }
+.voice-btn:hover { background: #dcfce7; transform: scale(1.02); }
+.voice-btn:active { transform: scale(0.96); }
+
+/* Scenario Selector */
+.scenario-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 12px; margin-top: 8px; }
+.scenario-card label { font-size: 0.75rem; font-weight: 700; color: var(--text-main); display: block; margin-bottom: 6px; }
+.scenario-select { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid #cbd5e1; background: #ffffff; font-size: 0.78rem; font-weight: 600; color: var(--text-main); }
+
+/* Sliders & Tuning Section */
+.tuning-title { font-size: 0.95rem; font-weight: 800; color: var(--text-main); margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+.setting-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 12px; margin-bottom: 10px; }
+.setting-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.setting-name { font-size: 0.8rem; font-weight: 700; color: var(--text-main); }
+.setting-badge { font-size: 0.75rem; font-weight: 800; color: var(--primary); background: #ffffff; padding: 2px 8px; border-radius: 12px; border: 1px solid #cbd5e1; }
+.setting-help { font-size: 0.68rem; color: var(--text-muted); line-height: 1.35; margin-bottom: 8px; }
+.slider-wrap { display: flex; align-items: center; gap: 10px; }
+input[type="range"] { flex: 1; accent-color: var(--primary); height: 6px; }
+
+/* Toast Notification */
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #ffffff; padding: 10px 18px; border-radius: 30px; font-size: 0.8rem; font-weight: 600; box-shadow: 0 10px 25px rgba(0,0,0,0.2); display: none; z-index: 1000; text-align: center; }
+.code-box { background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 10px; padding: 10px; font-family: monospace; font-size: 0.68rem; color: #0369a1; white-space: pre-wrap; display: none; margin-top: 10px; max-height: 130px; overflow-y: auto; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Top Clinical Header -->
+  <header>
+    <div class="brand">
+      <h1>CPReady Bench</h1>
+      <p>Clinical CPR Metric Validation <span class="pill pill-mock" style="margin-left:4px;">Voice Enabled</span></p>
+    </div>
+    <div class="status-pill-group">
+      <span id="pillChest" class="pill pill-green">Chest: OK (0x68)</span>
+      <span id="pillBase" class="pill pill-amber">Spine: Offline</span>
+    </div>
+  </header>
+
+  <!-- Live Voice Coaching Banner (Appears when phone speaks) -->
+  <div id="voiceBanner" class="voice-banner">
+    <div class="cue-text">
+      <div class="sound-wave"><span></span><span></span><span></span></div>
+      <span id="voiceCueText">Voice Coach Active</span>
+    </div>
+    <span style="font-size:0.65rem; opacity:0.85;">Phone Speaker</span>
+  </div>
+
+  <!-- Single vs Dual MPU Mode Switcher -->
+  <div class="mode-banner">
+    <div class="mode-details">
+      <h3 id="modeTitle">Single MPU (Chest Only)</h3>
+      <p id="modeDesc">Measuring sternal compression with baseline zeroing.</p>
+    </div>
+    <button id="btnMode" class="btn-pill-toggle" onclick="toggleSensorMode()">Switch Mode</button>
+  </div>
+
+  <!-- Session & Calibration Controls -->
+  <div class="card">
+    <div class="action-grid">
+      <button class="btn btn-primary" onclick="startCalibration()">
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg>
+        Calibrate (2s)
+      </button>
+      <button id="btnSession" class="btn btn-success" onclick="toggleSession()">Start Test</button>
+    </div>
+    <div class="calib-banner">
+      <span id="calibLabel">Rest hands on chest & calibrate</span>
+      <button onclick="resetStats()" style="background:none; border:none; color:var(--text-muted); font-size:0.7rem; font-weight:700; cursor:pointer;">Reset Stats</button>
+    </div>
+  </div>
+
+  <!-- Real-Time AHA Telemetry Cards (Mobile Stack) -->
+  <div class="telemetry-row">
+    <!-- Rate -->
+    <div id="boxRate" class="metric-box">
+      <div class="box-label">Rate</div>
+      <div class="box-val"><span id="valRate">--</span> <span class="unit">cpm</span></div>
+      <div class="box-target">AHA: 100–120 cpm</div>
+    </div>
+
+    <!-- Depth -->
+    <div id="boxDepth" class="metric-box">
+      <div class="box-label">Depth</div>
+      <div class="box-val"><span id="valDepth">--</span> <span class="unit">cm</span></div>
+      <div class="box-target">AHA: 5.0–6.0 cm (<span id="valDepthMm">--</span>mm)</div>
+    </div>
+  </div>
+
+  <div class="telemetry-row">
+    <!-- Recoil -->
+    <div id="boxRecoil" class="metric-box">
+      <div class="box-label">Recoil</div>
+      <div id="recoilPill" class="recoil-indicator recoil-good">READY</div>
+      <div class="box-target">Compliance: <span id="valRecoilPct">100%</span></div>
+    </div>
+
+    <!-- CCF -->
+    <div id="boxCCF" class="metric-box">
+      <div class="box-label">CCF Active</div>
+      <div class="box-val"><span id="valCCF">--</span> <span class="unit">%</span></div>
+      <div class="box-target">AHA Target: &ge; 60%</div>
+    </div>
+  </div>
+
+  <!-- Stroke and Time Footer Row -->
+  <div class="telemetry-row">
+    <div class="metric-box">
+      <div class="box-label">Compressions</div>
+      <div class="box-val"><span id="valStrokes">0</span> <span class="unit">strokes</span></div>
+      <div class="box-target">Elapsed: <span id="valElapsed">0s</span></div>
+    </div>
+    <div class="metric-box">
+      <div class="box-label">Net Accel</div>
+      <div class="box-val"><span id="valAccel">0.00</span> <span class="unit">g</span></div>
+      <div class="box-target">Trigger: <span id="valThreshSub">0.45 g</span></div>
+    </div>
+  </div>
+
+  <!-- Voice Coaching Interactive Tester -->
+  <div class="audio-card">
+    <div class="audio-header">
+      <h3>
+        <svg width="18" height="18" fill="currentColor" viewBox="0 0 16 16"><path d="M11.536 14.01A8.473 8.473 0 0 0 14.026 8a8.473 8.473 0 0 0-2.49-6.01l-.708.707A7.476 7.476 0 0 1 13.025 8c0 2.071-.84 3.946-2.197 5.303l.708.707z"/><path d="M10.121 12.596A6.48 6.48 0 0 0 12.025 8a6.48 6.48 0 0 0-1.904-4.596l-.707.707A5.482 5.482 0 0 1 11.025 8a5.482 5.482 0 0 1-1.61 3.89l.706.706z"/><path d="M8.707 11.182A4.486 4.486 0 0 0 10.025 8a4.486 4.486 0 0 0-1.318-3.182L8 5.525A3.489 3.489 0 0 1 9.025 8 3.49 3.49 0 0 1 8 10.475l.707.707zM6.717 3.55A.5.5 0 0 1 7 4v8a.5.5 0 0 1-.812.39L3.825 10.5H1.5A.5.5 0 0 1 1 10V6a.5.5 0 0 1 .5-.5h2.325l2.363-1.89a.5.5 0 0 1 .529-.06z"/></svg>
+        Web Speech Voice Coach (Phone Speaker)
+      </h3>
+      <button id="btnVoiceToggle" class="voice-btn" onclick="toggleVoiceMaster()" style="border-color:#16a34a; background:#dcfce7;">
+        🔊 Voice: ON
+      </button>
+    </div>
+    <p style="font-size:0.7rem; color:#15803d; margin-bottom:8px; line-height:1.35;">
+      Tap any button below to test how your browser immediately speaks the clinical coaching prompts out loud using its native voice engine:
+    </p>
+    <div class="voice-pills">
+      <button class="voice-btn" onclick="speakPhrase('Push harder')">🗣️ "Push harder"</button>
+      <button class="voice-btn" onclick="speakPhrase('Push shallower')">🗣️ "Push shallower"</button>
+      <button class="voice-btn" onclick="speakPhrase('Release chest completely')">🗣️ "Release completely"</button>
+      <button class="voice-btn" onclick="speakPhrase('Speed up')">🗣️ "Speed up"</button>
+      <button class="voice-btn" onclick="speakPhrase('Slow down')">🗣️ "Slow down"</button>
+      <button class="voice-btn" onclick="speakPhrase('Good compressions')">🗣️ "Good compressions"</button>
+    </div>
+
+    <!-- Scenario Simulation -->
+    <div class="scenario-card">
+      <label for="cprScenario">Simulate Rescuer CPR Scenario during Test:</label>
+      <select id="cprScenario" class="scenario-select" onchange="onScenarioChange(this.value)">
+        <option value="compliant">Target Compliant CPR (112 cpm, 5.3 cm) -> "Good compressions"</option>
+        <option value="shallow">Trainee Compressing Too Shallow (4.1 cm) -> "Push harder"</option>
+        <option value="too_deep">Trainee Compressing Too Deep (6.5 cm) -> "Push shallower"</option>
+        <option value="leaning">Trainee Leaning on Chest (Incomplete Recoil) -> "Release completely"</option>
+        <option value="slow">Trainee Pumping Too Slow (85 cpm) -> "Speed up"</option>
+        <option value="fast">Trainee Pumping Too Fast (135 cpm) -> "Slow down"</option>
+      </select>
+
+      <!-- Hysteresis & Cooldown Live Indicator -->
+      <div style="margin-top: 8px; font-size: 0.72rem; color: #15803d; background: #ffffff; padding: 6px 10px; border-radius: 8px; border: 1px solid #bbf7d0; display: flex; justify-content: space-between; align-items: center;">
+        <span>Status: <strong id="coachStatusText">Idle (Start Test to begin)</strong></span>
+        <span id="coachTimerBadge" style="font-size: 0.65rem; color: #64748b; font-weight: 600;">Cooldown: 0s</span>
+      </div>
+
+      <!-- Voice Selector Dropdown -->
+      <div style="margin-top: 8px; display: flex; align-items: center; gap: 6px;">
+        <label for="voiceSelect" style="font-size: 0.7rem; font-weight: 700; color: #166534; white-space: nowrap;">Voice Engine:</label>
+        <select id="voiceSelect" style="flex: 1; padding: 4px 8px; border-radius: 8px; border: 1px solid #86efac; font-size: 0.7rem; background: #ffffff; color: #0f172a;" onchange="onVoiceSelected(this.value)">
+          <option value="-1">Default System Voice</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tuning & Explanations Panel -->
+  <div class="card">
+    <div class="tuning-title">
+      <span>Parameter Calibration</span>
+      <button class="btn btn-secondary" onclick="restoreDefaults()" style="width:auto; min-height:32px; padding:4px 10px; font-size:0.7rem;">Reset</button>
+    </div>
+
+    <!-- Depth K -->
+    <div class="setting-card">
+      <div class="setting-header">
+        <span class="setting-name">Depth Multiplier (K)</span>
+        <span id="lblDepthK" class="setting-badge">11.2</span>
+      </div>
+      <p class="setting-help">Scales measured bounce into centimeters. If your physical ruler measures 5.0 cm but the screen shows 4.0 cm, increase this number.</p>
+      <div class="slider-wrap">
+        <input type="range" id="rngDepthK" min="5.0" max="25.0" step="0.1" value="11.2" oninput="updateSetting('DepthK', this.value)">
+      </div>
+    </div>
+
+    <!-- Push Threshold -->
+    <div class="setting-card">
+      <div class="setting-header">
+        <span class="setting-name">Push Sensitivity</span>
+        <span id="lblCThresh" class="setting-badge">0.45 g</span>
+      </div>
+      <p class="setting-help">Minimum force to trigger a downstroke. Lower this if soft compressions aren't counting; raise it if bumps trigger false strokes.</p>
+      <div class="slider-wrap">
+        <input type="range" id="rngCThresh" min="0.20" max="1.00" step="0.01" value="0.45" oninput="updateSetting('CThresh', this.value)">
+      </div>
+    </div>
+
+    <!-- Recoil Threshold -->
+    <div class="setting-card">
+      <div class="setting-header">
+        <span class="setting-name">Recoil Strictness</span>
+        <span id="lblRThresh" class="setting-badge">-0.35 g</span>
+      </div>
+      <p class="setting-help">Upward snap-back check. If trainees release fully but it warns 'Leaning', move this slider closer to zero (e.g. -0.25 g).</p>
+      <div class="slider-wrap">
+        <input type="range" id="rngRThresh" min="-0.80" max="-0.10" step="0.01" value="-0.35" oninput="updateSetting('RThresh', this.value)">
+      </div>
+    </div>
+
+    <!-- Refractory Lockout -->
+    <div class="setting-card">
+      <div class="setting-header">
+        <span class="setting-name">Refractory Lockout</span>
+        <span id="lblRefr" class="setting-badge">250 ms</span>
+      </div>
+      <p class="setting-help">Rest window between strokes to stop foam bounce from double-counting. 250 ms safely caps rate to 240 cpm.</p>
+      <div class="slider-wrap">
+        <input type="range" id="rngRefr" min="150" max="400" step="10" value="250" oninput="updateSetting('Refr', this.value)">
+      </div>
+    </div>
+
+    <!-- Safe Save Button (Dirty Checking + Rate Limited on ESP32) -->
+    <button id="btnSaveMemory" class="btn btn-primary" onclick="saveToMemory()" style="margin-top:6px;">
+      💾 Save Settings to Memory (Safe Flash)
+    </button>
+    <button class="btn btn-secondary" onclick="exportCode()" style="margin-top:8px;">
+      📋 Generate C++ Config for Paper
+    </button>
+    <div id="exportBox" class="code-box"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- ============================================================================== -->
+<!-- IN-BROWSER MOCK BACKEND ENGINE WITH WEB SPEECH AUDIO SYNTHESIS                  -->
+<!-- ============================================================================== -->
+<script>
+let voiceMasterEnabled = true;
+let lastSpokenTime = 0;
+let activeScenario = 'compliant';
+let scenarioStreakStart = 0;
+let selectedVoiceIndex = -1;
+let availableVoices = [];
+
+// Initialize and populate available system voices
+function initVoices() {
+  if (!('speechSynthesis' in window)) return;
+  availableVoices = window.speechSynthesis.getVoices();
+  const sel = document.getElementById('voiceSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="-1">Default System Voice</option>';
+  availableVoices.forEach((v, idx) => {
+    const opt = document.createElement('option');
+    opt.value = idx;
+    opt.textContent = `${v.name} (${v.lang})${v.default ? ' [Default]' : ''}`;
+    // Prefer clear English natural voices if not yet chosen
+    if (v.lang.startsWith('en') && selectedVoiceIndex === -1 && (v.name.includes('Natural') || v.name.includes('Online') || v.name.includes('Google') || v.name.includes('Siri') || v.name.includes('Zira'))) {
+      selectedVoiceIndex = idx;
+    }
+    sel.appendChild(opt);
+  });
+  if (selectedVoiceIndex >= 0) sel.value = selectedVoiceIndex;
+}
+
+if ('speechSynthesis' in window) {
+  initVoices();
+  window.speechSynthesis.onvoiceschanged = initVoices;
+}
+
+function onVoiceSelected(idx) {
+  selectedVoiceIndex = parseInt(idx);
+}
+
+// Unlock audio on initial user gesture (critical for mobile browser autoplay policies)
+let audioUnlocked = false;
+let audioCtx = null;
+
+function getAudioContext() {
+  if (!audioCtx) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) audioCtx = new AudioContextClass();
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+// Medical AED-style prompt chime (wakes up mobile DAC/Bluetooth hardware and eliminates first-syllable cut-offs)
+function playWakeupChime() {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    // Gentle dual-tone medical ping: D5 (587 Hz) ramping to A5 (880 Hz)
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.07);
+    gain.gain.setValueAtTime(0.001, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.09);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.1);
+  } catch (e) {
+    console.warn('Audio chime warning:', e);
+  }
+}
+
+function unlockAudio() {
+  if (audioUnlocked) return;
+  getAudioContext();
+  if ('speechSynthesis' in window) {
+    const silent = new SpeechSynthesisUtterance('');
+    silent.volume = 0;
+    window.speechSynthesis.speak(silent);
+  }
+  audioUnlocked = true;
+}
+document.addEventListener('touchstart', unlockAudio, { once: true });
+document.addEventListener('click', unlockAudio, { once: true });
+
+// Persistent reference to prevent Chromium on Windows from garbage-collecting the utterance mid-speech
+window._activeUtterance = null;
+
+// Speech Synthesis Engine
+function speakPhrase(phrase) {
+  if (!voiceMasterEnabled) return;
+  if (!('speechSynthesis' in window)) {
+    showToast('Web Speech API not supported in this browser');
+    return;
+  }
+
+  // 1. Play prompt chime to wake mobile speaker amplifier & alert rescuer
+  playWakeupChime();
+
+  // 2. Unpause engine for Windows Chrome/Edge SAPI
+  if (window.speechSynthesis.paused) {
+    window.speechSynthesis.resume();
+  }
+  if (window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
+  }
+
+  // 3. 120ms delay: allows speaker hardware DAC to ramp up and avoids Windows Chromium cancel() race deadlock
+  setTimeout(() => {
+    // Leading comma provides 100ms acoustic lead-in so the initial consonant is never clipped
+    const paddedText = ',  ' + phrase;
+    const u = new SpeechSynthesisUtterance(paddedText);
+    u.rate = 1.02; // natural clinical pacing
+    u.pitch = 1.0;
+    u.lang = 'en-US';
+
+    if (selectedVoiceIndex >= 0 && availableVoices[selectedVoiceIndex]) {
+      u.voice = availableVoices[selectedVoiceIndex];
+    } else {
+      const enVoice = availableVoices.find(v => v.lang.startsWith('en'));
+      if (enVoice) u.voice = enVoice;
+    }
+
+    const banner = document.getElementById('voiceBanner');
+    const bannerText = document.getElementById('voiceCueText');
+    bannerText.innerText = 'Voice Coach: "' + phrase + '"';
+
+    u.onstart = () => {
+      banner.style.display = 'flex';
+    };
+    u.onend = () => {
+      banner.style.display = 'none';
+      window._activeUtterance = null;
+    };
+    u.onerror = (e) => {
+      console.warn('Speech error:', e);
+      banner.style.display = 'none';
+      window._activeUtterance = null;
+    };
+
+    // Store reference globally so V8 garbage collection does not drop speech on Windows
+    window._activeUtterance = u;
+
+    window.speechSynthesis.speak(u);
+
+    // Additional safety resume for Chromium Windows bug where speech pauses randomly
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+  }, 120);
+}
+
+function toggleVoiceMaster() {
+  voiceMasterEnabled = !voiceMasterEnabled;
+  const btn = document.getElementById('btnVoiceToggle');
+  if (voiceMasterEnabled) {
+    btn.innerHTML = '🔊 Voice: ON';
+    btn.style.background = '#dcfce7';
+    btn.style.borderColor = '#16a34a';
+    btn.style.color = '#166534';
+    showToast('Voice coaching unmuted');
+  } else {
+    btn.innerHTML = '🔇 Voice: MUTED';
+    btn.style.background = '#fee2e2';
+    btn.style.borderColor = '#ef4444';
+    btn.style.color = '#991b1b';
+    window.speechSynthesis.cancel();
+    showToast('Voice coaching muted');
+  }
+}
+
+function onScenarioChange(val) {
+  activeScenario = val;
+  scenarioStreakStart = Date.now();
+  showToast('Switched scenario to: ' + val);
+}
+
+// Mock Server State
+let mockState = {
+  config: { depthK: 11.2, compressionThreshG: 0.45, recoilThreshG: -0.35, refractoryMs: 250, useDualMpu: false },
+  lastSavedConfig: { depthK: 11.2, compressionThreshG: 0.45, recoilThreshG: -0.35, refractoryMs: 250, useDualMpu: false },
+  sessionActive: false,
+  isCalibrating: false,
+  isCalibrated: false,
+  calibTimer: 0,
+  strokes: 0,
+  startTime: 0,
+  lastStrokeTime: 0,
+  lastSaveTime: 0,
+  simAngle: 0
+};
+
+// Mock In-Browser Fetch Interceptor
+window.fetch = async function(url, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+
+  // 1. GET /api/config
+  if (url === '/api/config' && method === 'GET') {
+    return { ok: true, json: async () => ({ ...mockState.config }) };
+  }
+
+  // 2. POST /api/config (NVS Safe Save simulation)
+  if (url === '/api/config' && method === 'POST') {
+    const now = Date.now();
+    if (now - mockState.lastSaveTime < 5000) {
+      return { 
+        ok: false, 
+        status: 429, 
+        json: async () => ({ status: 'rate_limited', message: 'Rate limited: Please wait 5 seconds between saves to protect Flash memory.' }) 
+      };
+    }
+    const body = JSON.parse(options.body || '{}');
+    const isDirty = Math.abs(body.depthK - mockState.lastSavedConfig.depthK) > 0.001 ||
+                    Math.abs(body.compressionThreshG - mockState.lastSavedConfig.compressionThreshG) > 0.001 ||
+                    Math.abs(body.recoilThreshG - mockState.lastSavedConfig.recoilThreshG) > 0.001 ||
+                    body.refractoryMs !== mockState.lastSavedConfig.refractoryMs ||
+                    body.useDualMpu !== mockState.lastSavedConfig.useDualMpu;
+
+    mockState.lastSaveTime = now;
+    if (!isDirty) {
+      return { ok: true, json: async () => ({ status: 'ok', message: 'No changes detected. Memory write skipped to protect Flash life.' }) };
+    }
+    mockState.config = { ...body };
+    mockState.lastSavedConfig = { ...body };
+    return { ok: true, json: async () => ({ status: 'ok', message: 'Settings successfully saved to Flash memory.' }) };
+  }
+
+  // 3. POST /api/action
+  if (url === '/api/action' && method === 'POST') {
+    const body = JSON.parse(options.body || '{}');
+    if (body.action === 'calibrate') {
+      mockState.isCalibrating = true;
+      mockState.calibTimer = Date.now();
+      setTimeout(() => {
+        mockState.isCalibrating = false;
+        mockState.isCalibrated = true;
+        mockState.sessionActive = true;
+        mockState.startTime = Date.now();
+        mockState.strokes = 0;
+        scenarioStreakStart = Date.now();
+      }, 2000);
+      return { ok: true, json: async () => ({ status: 'calibrating' }) };
+    }
+    if (body.action === 'start_session') {
+      if (!mockState.isCalibrated) {
+        mockState.isCalibrating = true;
+        mockState.calibTimer = Date.now();
+        setTimeout(() => {
+          mockState.isCalibrating = false;
+          mockState.isCalibrated = true;
+          mockState.sessionActive = true;
+          mockState.startTime = Date.now();
+          mockState.strokes = 0;
+          scenarioStreakStart = Date.now();
+        }, 2000);
+        return { ok: true, json: async () => ({ status: 'calibrating', message: 'Calibrating baseline first (2s)... Keep still!' }) };
+      }
+      mockState.sessionActive = true;
+      mockState.startTime = Date.now();
+      mockState.strokes = 0;
+      scenarioStreakStart = Date.now();
+      return { ok: true, json: async () => ({ status: 'session_started', message: 'Test session started! Ready for compressions.' }) };
+    }
+    if (body.action === 'stop_session') {
+      mockState.sessionActive = false;
+      return { ok: true, json: async () => ({ status: 'session_stopped' }) };
+    }
+    if (body.action === 'reset_session') {
+      mockState.strokes = 0;
+      mockState.startTime = Date.now();
+      scenarioStreakStart = Date.now();
+      return { ok: true, json: async () => ({ status: 'reset_done' }) };
+    }
+    if (body.action === 'set_mode') {
+      mockState.config.useDualMpu = body.dual;
+      return { ok: true, json: async () => ({ status: 'mode_updated' }) };
+    }
+    if (body.action === 'restore_defaults') {
+      mockState.config = { depthK: 11.2, compressionThreshG: 0.45, recoilThreshG: -0.35, refractoryMs: 250, useDualMpu: false };
+      return { ok: true, json: async () => ({ status: 'defaults_restored' }) };
+    }
+  }
+
+  // 4. GET /api/metrics (Synthesizes live CPR kinematics and audio coaching trigger codes)
+  if (url === '/api/metrics' && method === 'GET') {
+    const now = Date.now();
+    let accel = 0.0;
+    let rate = 0;
+    let depth = 0;
+    let recoilOk = true;
+    let ccf = 0;
+    let elapsed = 0;
+    let cueCode = 0;
+
+    if (mockState.sessionActive) {
+      elapsed = Math.floor((now - mockState.startTime) / 1000);
+      mockState.simAngle += 0.35;
+      accel = Math.sin(mockState.simAngle) * 1.85;
+
+      if (accel > mockState.config.compressionThreshG && (now - mockState.lastStrokeTime > mockState.config.refractoryMs)) {
+        mockState.strokes++;
+        mockState.lastStrokeTime = now;
+      }
+
+      // Default compliant CPR parameters
+      rate = 112 + Math.sin(elapsed * 0.2) * 3;
+      depth = 5.3 + Math.sin(elapsed * 0.15) * 0.3;
+      recoilOk = true;
+      ccf = Math.min(98, 70 + elapsed * 2);
+
+      // Scenario overrides & Audio Coaching logic (3.5s hysteresis, 5s cooldown)
+      const streakDuration = now - scenarioStreakStart;
+      const cooldownElapsed = now - lastSpokenTime;
+      const cooldownRemain = Math.max(0, Math.ceil((5000 - cooldownElapsed) / 1000));
+      const streakSec = (streakDuration / 1000).toFixed(1);
+
+      const statusEl = document.getElementById('coachStatusText');
+      const timerBadge = document.getElementById('coachTimerBadge');
+      if (timerBadge) {
+        timerBadge.innerText = cooldownRemain > 0 ? `Cooldown: ${cooldownRemain}s` : 'Ready to coach';
+      }
+
+      if (activeScenario === 'shallow') {
+        depth = 4.1; // Shallow
+        if (streakDuration >= 3500 && cooldownElapsed >= 5000) {
+          cueCode = 1; // "Push harder"
+          lastSpokenTime = now;
+          speakPhrase("Push harder");
+          if (statusEl) statusEl.innerText = 'Prompted: "Push harder"';
+        } else if (streakDuration < 3500) {
+          if (statusEl) statusEl.innerText = `Detecting shallow: ${streakSec}s / 3.5s`;
+        } else {
+          if (statusEl) statusEl.innerText = `Sustained shallow (cooling down ${cooldownRemain}s)`;
+        }
+      } else if (activeScenario === 'too_deep') {
+        depth = 6.5; // Too deep
+        if (streakDuration >= 3500 && cooldownElapsed >= 5000) {
+          cueCode = 2; // "Push shallower"
+          lastSpokenTime = now;
+          speakPhrase("Push shallower");
+          if (statusEl) statusEl.innerText = 'Prompted: "Push shallower"';
+        } else if (streakDuration < 3500) {
+          if (statusEl) statusEl.innerText = `Detecting too deep: ${streakSec}s / 3.5s`;
+        } else {
+          if (statusEl) statusEl.innerText = `Sustained deep (cooling down ${cooldownRemain}s)`;
+        }
+      } else if (activeScenario === 'leaning') {
+        recoilOk = false; // Leaning
+        if (streakDuration >= 3500 && cooldownElapsed >= 5000) {
+          cueCode = 3; // "Release chest completely"
+          lastSpokenTime = now;
+          speakPhrase("Release chest completely");
+          if (statusEl) statusEl.innerText = 'Prompted: "Release completely"';
+        } else if (streakDuration < 3500) {
+          if (statusEl) statusEl.innerText = `Detecting leaning: ${streakSec}s / 3.5s`;
+        } else {
+          if (statusEl) statusEl.innerText = `Sustained leaning (cooling down ${cooldownRemain}s)`;
+        }
+      } else if (activeScenario === 'slow') {
+        rate = 86; // Too slow
+        if (streakDuration >= 3500 && cooldownElapsed >= 5000) {
+          cueCode = 4; // "Speed up"
+          lastSpokenTime = now;
+          speakPhrase("Speed up");
+          if (statusEl) statusEl.innerText = 'Prompted: "Speed up"';
+        } else if (streakDuration < 3500) {
+          if (statusEl) statusEl.innerText = `Detecting slow rate: ${streakSec}s / 3.5s`;
+        } else {
+          if (statusEl) statusEl.innerText = `Sustained slow (cooling down ${cooldownRemain}s)`;
+        }
+      } else if (activeScenario === 'fast') {
+        rate = 138; // Too fast
+        if (streakDuration >= 3500 && cooldownElapsed >= 5000) {
+          cueCode = 5; // "Slow down"
+          lastSpokenTime = now;
+          speakPhrase("Slow down");
+          if (statusEl) statusEl.innerText = 'Prompted: "Slow down"';
+        } else if (streakDuration < 3500) {
+          if (statusEl) statusEl.innerText = `Detecting fast rate: ${streakSec}s / 3.5s`;
+        } else {
+          if (statusEl) statusEl.innerText = `Sustained fast (cooling down ${cooldownRemain}s)`;
+        }
+      } else if (activeScenario === 'compliant') {
+        // Praise every 15s of compliant performance
+        const praiseRemain = Math.max(0, Math.ceil((15000 - streakDuration) / 1000));
+        if (streakDuration >= 15000 && cooldownElapsed >= 15000) {
+          cueCode = 6; // "Good compressions"
+          lastSpokenTime = now;
+          scenarioStreakStart = now; // reset streak interval
+          speakPhrase("Good compressions");
+          if (statusEl) statusEl.innerText = 'Prompted: "Good compressions"';
+        } else {
+          if (statusEl) statusEl.innerText = `Target compliant CPR (praise in ${praiseRemain}s)`;
+        }
+      }
+    } else {
+      const statusEl = document.getElementById('coachStatusText');
+      if (statusEl) statusEl.innerText = 'Idle (Click "Start Test" to simulate live feedback)';
+    }
+
+    return {
+      ok: true,
+      json: async () => ({
+        rate: rate,
+        depth: depth,
+        recoil_ok: recoilOk,
+        recoil_pct: recoilOk ? 100 : 40,
+        ccf: ccf,
+        strokes: mockState.strokes,
+        elapsed: elapsed,
+        accel: accel,
+        chest_ok: true,
+        base_ok: mockState.config.useDualMpu,
+        is_calibrating: mockState.isCalibrating,
+        is_calibrated: mockState.isCalibrated,
+        session_active: mockState.sessionActive,
+        cue: cueCode
+      })
+    };
+  }
+
+  return { ok: false, status: 404 };
+};
+
+// UI Frontend Logic
+let cfg = { depthK: 11.2, compressionThreshG: 0.45, recoilThreshG: -0.35, refractoryMs: 250, useDualMpu: false };
+let sessionActive = false;
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.innerText = msg;
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 3200);
+}
+
+function updateSetting(key, val) {
+  val = parseFloat(val);
+  if (key === 'DepthK') {
+    cfg.depthK = val;
+    document.getElementById('lblDepthK').innerText = val.toFixed(1);
+  } else if (key === 'CThresh') {
+    cfg.compressionThreshG = val;
+    document.getElementById('lblCThresh').innerText = val.toFixed(2) + ' g';
+    document.getElementById('valThreshSub').innerText = val.toFixed(2) + ' g';
+  } else if (key === 'RThresh') {
+    cfg.recoilThreshG = val;
+    document.getElementById('lblRThresh').innerText = val.toFixed(2) + ' g';
+  } else if (key === 'Refr') {
+    cfg.refractoryMs = parseInt(val);
+    document.getElementById('lblRefr').innerText = val + ' ms';
+  }
+}
+
+async function fetchMetrics() {
+  try {
+    const res = await fetch('/api/metrics');
+    if (!res.ok) return;
+    const d = await res.json();
+
+    // Rate
+    const rateEl = document.getElementById('valRate');
+    const boxRate = document.getElementById('boxRate');
+    if (d.rate > 0) {
+      rateEl.innerText = Math.round(d.rate);
+      boxRate.className = 'metric-box ' + (d.rate >= 100 && d.rate <= 120 ? 'state-good' : (d.rate < 100 ? 'state-warn' : 'state-alert'));
+    } else {
+      rateEl.innerText = '--';
+      boxRate.className = 'metric-box';
+    }
+
+    // Depth
+    const depthEl = document.getElementById('valDepth');
+    const depthMmEl = document.getElementById('valDepthMm');
+    const boxDepth = document.getElementById('boxDepth');
+    if (d.depth > 0) {
+      depthEl.innerText = d.depth.toFixed(1);
+      depthMmEl.innerText = Math.round(d.depth * 10);
+      boxDepth.className = 'metric-box ' + (d.depth >= 5.0 && d.depth <= 6.0 ? 'state-good' : (d.depth < 5.0 ? 'state-warn' : 'state-alert'));
+    } else {
+      depthEl.innerText = '--';
+      depthMmEl.innerText = '--';
+      boxDepth.className = 'metric-box';
+    }
+
+    // Recoil
+    const pill = document.getElementById('recoilPill');
+    if (d.strokes > 0) {
+      if (d.recoil_ok) {
+        pill.className = 'recoil-indicator recoil-good';
+        pill.innerText = 'FULL RELEASE';
+      } else {
+        pill.className = 'recoil-indicator recoil-lean';
+        pill.innerText = 'LEANING / INCOMPLETE';
+      }
+    } else {
+      pill.className = 'recoil-indicator recoil-good';
+      pill.innerText = 'READY';
+    }
+    document.getElementById('valRecoilPct').innerText = Math.round(d.recoil_pct) + '%';
+
+    // CCF
+    const ccfEl = document.getElementById('valCCF');
+    const boxCCF = document.getElementById('boxCCF');
+    if (d.elapsed > 0) {
+      ccfEl.innerText = Math.round(d.ccf);
+      boxCCF.className = 'metric-box ' + (d.ccf >= 60 ? 'state-good' : 'state-warn');
+    } else {
+      ccfEl.innerText = '--';
+      boxCCF.className = 'metric-box';
+    }
+
+    // Strokes & Accel
+    document.getElementById('valStrokes').innerText = d.strokes;
+    document.getElementById('valElapsed').innerText = d.elapsed + 's';
+    document.getElementById('valAccel').innerText = (d.accel >= 0 ? '+' : '') + d.accel.toFixed(2);
+
+    // Hardware Badges
+    const pChest = document.getElementById('pillChest');
+    pChest.className = 'pill ' + (d.chest_ok ? 'pill-green' : 'pill-red');
+    pChest.innerText = d.chest_ok ? 'Chest: OK' : 'Chest: N/A';
+
+    const pBase = document.getElementById('pillBase');
+    pBase.className = 'pill ' + (d.base_ok ? 'pill-green' : 'pill-amber');
+    pBase.innerText = d.base_ok ? 'Spine: OK' : 'Spine: Offline';
+
+    // Calibration
+    const calibLabel = document.getElementById('calibLabel');
+    if (d.is_calibrating) {
+      calibLabel.innerText = 'Calibrating... Keep still!';
+      calibLabel.style.color = 'var(--warning)';
+    } else if (d.is_calibrated) {
+      calibLabel.innerText = 'Calibrated & Ready';
+      calibLabel.style.color = 'var(--success)';
+    }
+
+    sessionActive = d.session_active;
+    const btnS = document.getElementById('btnSession');
+    if (sessionActive) {
+      btnS.className = 'btn btn-danger';
+      btnS.innerText = 'Stop Test';
+    } else {
+      btnS.className = 'btn btn-success';
+      btnS.innerText = 'Start Test';
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config');
+    if (!res.ok) return;
+    const c = await res.json();
+    cfg = c;
+    document.getElementById('rngDepthK').value = c.depthK;
+    document.getElementById('rngCThresh').value = c.compressionThreshG;
+    document.getElementById('rngRThresh').value = c.recoilThreshG;
+    document.getElementById('rngRefr').value = c.refractoryMs;
+    updateSetting('DepthK', c.depthK);
+    updateSetting('CThresh', c.compressionThreshG);
+    updateSetting('RThresh', c.recoilThreshG);
+    updateSetting('Refr', c.refractoryMs);
+    renderModeUI(c.useDualMpu);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function renderModeUI(isDual) {
+  cfg.useDualMpu = isDual;
+  const t = document.getElementById('modeTitle');
+  const d = document.getElementById('modeDesc');
+  const b = document.getElementById('btnMode');
+  if (isDual) {
+    t.innerText = 'Dual MPU (Decoupled)';
+    d.innerText = 'Subtracting spine reference to eliminate foam bounce.';
+    b.innerText = 'Switch to Single';
+    b.className = 'btn-pill-toggle dual';
+  } else {
+    t.innerText = 'Single MPU (Chest Only)';
+    d.innerText = 'Direct sternal compression with zero-gravity offset.';
+    b.innerText = 'Switch to Dual';
+    b.className = 'btn-pill-toggle';
+  }
+}
+
+async function toggleSensorMode() {
+  const newMode = !cfg.useDualMpu;
+  await fetch('/api/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'set_mode', dual: newMode })
+  });
+  renderModeUI(newMode);
+  showToast(newMode ? 'Switched to Dual MPU Mode' : 'Switched to Single MPU Mode');
+}
+
+async function startCalibration() {
+  showToast('Hold hands still on chest pad...');
+  await fetch('/api/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'calibrate' })
+  });
+}
+
+async function toggleSession() {
+  const act = sessionActive ? 'stop_session' : 'start_session';
+  const res = await fetch('/api/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: act })
+  });
+  const data = await res.json();
+  if (data.message) {
+    showToast(data.message);
+  }
+}
+
+async function resetStats() {
+  await fetch('/api/action', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'reset_session' })
+  });
+  scenarioStreakStart = Date.now();
+  showToast('Statistics reset');
+}
+
+async function saveToMemory() {
+  const btn = document.getElementById('btnSaveMemory');
+  btn.disabled = true;
+  btn.innerText = 'Saving to Flash...';
+
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg)
+    });
+    const data = await res.json();
+    showToast(data.message || 'Saved successfully');
+  } catch (err) {
+    showToast('Save failed');
+  } finally {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerText = '💾 Save Settings to Memory (Safe Flash)';
+    }, 2000);
+  }
+}
+
+async function restoreDefaults() {
+  if (confirm('Reset parameters to factory defaults?')) {
+    await fetch('/api/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'restore_defaults' })
+    });
+    await loadConfig();
+    showToast('Defaults restored');
+  }
+}
+
+function exportCode() {
+  const box = document.getElementById('exportBox');
+  const code = 
+`// ==============================================================
+// CPReady Calibrated Parameters (Exported from Test Bench)
+// ==============================================================
+#define DEPTH_CALIBRATION_K    ${cfg.depthK.toFixed(2)}f   // Tested depth scalar
+#define COMPRESSION_THRESH_G   ${cfg.compressionThreshG.toFixed(2)}f   // Downstroke sensitivity
+#define RECOIL_THRESH_G        ${cfg.recoilThreshG.toFixed(2)}f  // Upward rebound check
+#define REFRACTORY_LOCKOUT_MS  ${cfg.refractoryMs}      // Foam debounce lockout
+#define SENSOR_MODE_DUAL       ${cfg.useDualMpu ? 'true' : 'false'}   // Decoupling mode`;
+
+  box.innerText = code;
+  box.style.display = 'block';
+}
+
+window.onload = () => {
+  loadConfig();
+  setInterval(fetchMetrics, 100);
+};
+</script>
+</body>
+</html>
