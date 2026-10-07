@@ -18,6 +18,7 @@ CPReady_Program/
 │   └── FeedbackController.h   # Non-blocking 1-2-3 acoustic buzzer pattern sequencer
 ├── src/
 │   └── main.cpp               # Standard C++ entry point (PlatformIO / ESP-IDF)
+│   └── simulation.cpp         # Simulation of Fake Packets (PlatformIO / ESP-IDF)
 │   ├── SOFTWARE_DEVELOPER_GUIDE.md # Quick guide for mobile app developers & integration
 │   ├── ARCHITECTURE.md        # Object-oriented architecture & sequence diagrams
 │   ├── ALGORITHM_RESEARCH.md  # Deep dive into pedometer & CPR resuscitation literature
