@@ -57,11 +57,19 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
 - The ESP32 retains `lastFinalSummary` in RAM.
 - If Flutter fails to save or missed the Type 4 packet, writing `"GET_RESULTS"` causes the ESP32 to immediately re-notify the Type 4 summary packet.
 
-### 6. Pre-Session Neutral-Position Calibration
-- Instructor verifies hand placement; trainee rests hands still on the chest.
-- Flutter sends `"START"`.
-- ESP32 buzzes 1 time and sends `packet_type = 2`.
-- After 2.0 seconds (200 samples of resting baseline captured), ESP32 buzzes 2 times, transmits `packet_type = 3 (CALIB_SUCCESS)`, and starts live monitoring. Flutter transitions its UI from *"Calibrating..."* to *"Begin Compressions Now!"*.
+### 6. Decoupled Pre-Session Calibration & Gated Session Start
+- **Automatic Pre-Session Calibration**: As soon as the instructor confirms correct hand placement, Flutter writes text string `"CALIBRATE"` to the Command Characteristic (`6e400003-...`).
+- **Stationary Baseline Sampling**: ESP32 buzzes 1 time and broadcasts `packet_type = 2 (PKT_TYPE_CALIB_PROGRESS)` every 500 ms while sampling for 2.0 seconds (target: 200 samples).
+- **Gated "Begin Session" Button**:
+  - The *"Begin Session"* button is displayed on screen while calibration is in progress.
+  - **Premature Tap Gating**: If the instructor taps *"Begin Session"* before calibration is ready, the session does **not** start. Flutter displays the prompt: *"Keep hands still and release downward pressure."* If `"START"` is received by the ESP32 while calibrating, the firmware rejects it with `packet_type = 5 (PKT_TYPE_ERROR)`.
+- **4-Tier Calibration Validation**: The firmware verifies:
+  1. *Sample Completeness*: $\ge 150$ samples collected (at least 75% of expected 200).
+  2. *Dynamic Motion Stability*: Peak-to-peak spread $\le 0.30\text{g}$ net differential, $\le 0.25\text{g}$ chest, and $\le 0.20\text{g}$ base.
+  3. *Static Gravity Bounds*: Resting baselines satisfy $0.65\text{g} \le g \le 1.35\text{g}$.
+  4. *Sensor Alignment / Pre-Pressure*: Sternum vs. spine divergence $|a_{\text{chest}} - a_{\text{base}}| \le 0.35\text{g}$.
+- **Calibration Completion**: Once verified, the ESP32 transmits `packet_type = 3 (PKT_TYPE_CALIB_SUCCESS)` and transitions to `CALIBRATED_READY`. Flutter updates the UI to indicate the session is ready.
+- **Starting the Practice Session**: When the instructor taps *"Begin Session"*, Flutter writes `"START"`, the ESP32 buzzes 2 times (*"Compressions begin now!"*), and live CPR tracking starts immediately (`packet_type = 1`).
 
 ---
 
@@ -164,10 +172,33 @@ class CPRMetrics {
 }
 
 // -----------------------------------------------------------------------------
-// BLE Telemetry Stream Listener Example
+// BLE Telemetry Stream Listener & Session Controller Example
 // -----------------------------------------------------------------------------
 class CPRSessionManager {
   final FlutterTts tts = FlutterTts();
+  bool isCalibrated = false;
+  bool isCalibrating = false;
+
+  /// Called when the instructor confirms correct hand placement
+  void startPreSessionCalibration(BleDevice device) {
+    isCalibrated = false;
+    isCalibrating = true;
+    showCalibrationUI("Calibrating... Keep hands still and release downward pressure.");
+    device.writeCommand("CALIBRATE");
+  }
+
+  /// Called when instructor taps "Begin Session" button
+  void onBeginSessionTapped(BleDevice device) {
+    if (!isCalibrated) {
+      // Gating check: calibration is not ready yet!
+      showPrompt("Please keep hands still and release downward pressure until calibration finishes.");
+      return;
+    }
+
+    // Calibration is ready: initiate active session
+    device.writeCommand("START");
+    transitionToLivePractice();
+  }
 
   void onCharacteristicChanged(List<int> rawBytes) {
     if (rawBytes.length < 11) return;
@@ -180,12 +211,14 @@ class CPRSessionManager {
         break;
 
       case 2: // CALIBRATION IN PROGRESS
+        isCalibrating = true;
         showCalibrationProgress(metrics.elapsedSeconds);
         break;
 
-      case 3: // CALIBRATION COMPLETE
-        tts.speak("Begin compressions now");
-        transitionToLivePractice();
+      case 3: // CALIBRATION COMPLETE (READY)
+        isCalibrated = true;
+        isCalibrating = false;
+        showCalibrationReady("Calibration ready! Tap Begin Session to start.");
         break;
 
       case 4: // FINALIZED SESSION SUMMARY
@@ -193,8 +226,10 @@ class CPRSessionManager {
         navigateToResultsScreen(metrics);
         break;
 
-      case 5: // ERROR
-        showInterruptionError("Calibration failed. Keep hands stationary.");
+      case 5: // CALIBRATION ERROR / PREMATURE START / EXCESSIVE MOTION
+        isCalibrated = false;
+        isCalibrating = false;
+        showPrompt("Motion or leaning detected! Keep hands still and release downward pressure.");
         break;
     }
   }
@@ -211,11 +246,13 @@ class CPRSessionManager {
   }
 
   void updateLiveGauges(CPRMetrics m) { /* update visual charts */ }
-  void showCalibrationProgress(int sec) { /* show 2-second countdown */ }
+  void showCalibrationUI(String msg) { /* display progress indicator */ }
+  void showCalibrationProgress(int sec) { /* update 2-second progress */ }
+  void showCalibrationReady(String msg) { /* enable Begin Session button */ }
+  void showPrompt(String msg) { /* display warning toast/snackbar */ }
   void transitionToLivePractice() { /* open live pumping UI */ }
   void saveToLocalHistory(CPRMetrics m) { /* persist to SQLite / Hive */ }
   void navigateToResultsScreen(CPRMetrics m) { /* open Results page */ }
-  void showInterruptionError(String msg) { /* display error notification */ }
 }
 ```
 
@@ -223,7 +260,7 @@ class CPRSessionManager {
 
 ## 5. Interaction Sequence Diagrams
 
-### 5.1 Normal Practice Session & Auto-Saving
+### 5.1 Decoupled Pre-Session Calibration & Live Practice
 ```mermaid
 sequenceDiagram
     autonumber
@@ -234,14 +271,28 @@ sequenceDiagram
     participant ESP32 as ESP32 Vest
     participant Buzzer as Onboard Buzzer
 
-    Instructor->>App: Tap "Begin Session"
-    App->>ESP32: Write "START" to Command Char
+    Note over Instructor,App: Step 1: Hand Placement Confirmed
+    App->>ESP32: Write "CALIBRATE" to Command Char
     ESP32->>Buzzer: Beep 1x (Calibration Start)
     ESP32->>App: Notify Packet Type 2 (Calibrating)
     App->>Instructor: Show "Calibrating... Keep hands still"
     Note over Trainee,ESP32: 2.0s Baseline Calibration (200 samples)
-    ESP32->>Buzzer: Beep 2x (Compressions Begin)
+
+    alt Premature Tap ("Begin Session" selected before calibration ready)
+        Instructor->>App: Tap "Begin Session"
+        App->>App: Check isCalibrated == false
+        App->>Instructor: Show Prompt: "Keep hands still and release pressure"
+    end
+
+    Note over ESP32: Baseline Captured & Verified Stable (<=0.30g P-P)
     ESP32->>App: Notify Packet Type 3 (Calib Success)
+    Note over ESP32: State: CALIBRATED_READY (Waiting for START)
+    App->>Instructor: Update UI: "Ready to Begin Session"
+
+    Note over Instructor,App: Step 2: Instructor Taps "Begin Session"
+    Instructor->>App: Tap "Begin Session"
+    App->>ESP32: Write "START" to Command Char
+    ESP32->>Buzzer: Beep 2x (Compressions Begin Now!)
     App->>PhoneSPK: "Begin compressions now!"
     App->>Instructor: Open Live Practice Gauges
     

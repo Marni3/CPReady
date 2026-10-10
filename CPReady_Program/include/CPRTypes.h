@@ -10,7 +10,8 @@ enum class DeviceState : uint8_t {
     CALIBRATING = 1,
     ACTIVE_SESSION = 2,
     SESSION_PAUSED = 3,
-    FAULT_ERROR = 4
+    FAULT_ERROR = 4,
+    CALIBRATED_READY = 5
 };
 
 enum class StrokeState : uint8_t {

@@ -20,8 +20,12 @@ private:
     float calBaseSum;
     uint16_t calSampleCount;
     bool isCalibrated;
-    float calNetMin;          // Minimum raw net differential during calibration (for stability check)
-    float calNetMax;          // Maximum raw net differential during calibration (for stability check)
+    float calNetMin;          // Minimum raw net differential during calibration
+    float calNetMax;          // Maximum raw net differential during calibration
+    float calChestMin;        // Minimum raw chest reading during calibration
+    float calChestMax;        // Maximum raw chest reading during calibration
+    float calBaseMin;         // Minimum raw base reading during calibration
+    float calBaseMax;         // Maximum raw base reading during calibration
 
 public:
     SensorManager() 
@@ -30,7 +34,9 @@ public:
           chestGravityOffset(0.0f), baseGravityOffset(0.0f),
           lastFilteredNetAccel(0.0f), lastSampleMicros(0),
           calChestSum(0.0f), calBaseSum(0.0f), calSampleCount(0), isCalibrated(false),
-          calNetMin(999.0f), calNetMax(-999.0f) {}
+          calNetMin(999.0f), calNetMax(-999.0f),
+          calChestMin(999.0f), calChestMax(-999.0f),
+          calBaseMin(999.0f), calBaseMax(-999.0f) {}
 
     bool begin() {
         Wire.begin(CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN);
@@ -59,6 +65,10 @@ public:
         isCalibrated = false;
         calNetMin = 999.0f;
         calNetMax = -999.0f;
+        calChestMin = 999.0f;
+        calChestMax = -999.0f;
+        calBaseMin = 999.0f;
+        calBaseMax = -999.0f;
     }
 
     // Called periodically during the idle baseline window
@@ -68,12 +78,22 @@ public:
         chestSensor.getAcceleration(&ax1, &ay1, &az1);
         baseSensor.getAcceleration(&ax2, &ay2, &az2);
 
-        calChestSum += (float)az1 / 8192.0f; // Scale factor for +/- 4g is 8192 LSB/g
-        calBaseSum  += (float)az2 / 8192.0f;
+        float a1 = (float)az1 / 8192.0f; // Scale factor for +/- 4g is 8192 LSB/g
+        float a2 = (float)az2 / 8192.0f;
+
+        calChestSum += a1;
+        calBaseSum  += a2;
         calSampleCount++;
 
+        // Track single-sensor extremes
+        if (a1 < calChestMin) calChestMin = a1;
+        if (a1 > calChestMax) calChestMax = a1;
+
+        if (a2 < calBaseMin) calBaseMin = a2;
+        if (a2 > calBaseMax) calBaseMax = a2;
+
         // Track raw differential spread for motion stability validation
-        float netSample = ((float)az1 - (float)az2) / 8192.0f;
+        float netSample = a1 - a2;
         if (netSample < calNetMin) calNetMin = netSample;
         if (netSample > calNetMax) calNetMax = netSample;
     }
@@ -87,10 +107,38 @@ public:
         }
     }
 
-    // Returns true if hand motion during calibration stayed within the stability threshold (0.30g P-P)
+    // Multi-tier calibration verification: sample count, motion spread, gravity sanity, and sensor alignment
     bool isCalibrationStable() const {
-        if (calSampleCount < 10) return false;
-        return (calNetMax - calNetMin) <= 0.30f;
+        if (calSampleCount < CPReadyConfig::CALIBRATION_MIN_SAMPLE_COUNT) {
+            Serial.printf("[CALIB FAIL] Sample count low: %d / %d\n", calSampleCount, CPReadyConfig::CALIBRATION_SAMPLE_COUNT);
+            return false;
+        }
+        if ((calNetMax - calNetMin) > CPReadyConfig::CALIBRATION_MAX_NET_SPREAD_G) {
+            Serial.printf("[CALIB FAIL] Net motion spread: %.2fg > %.2fg\n", (calNetMax - calNetMin), CPReadyConfig::CALIBRATION_MAX_NET_SPREAD_G);
+            return false;
+        }
+        if ((calChestMax - calChestMin) > CPReadyConfig::CALIBRATION_MAX_CHEST_SPREAD_G) {
+            Serial.printf("[CALIB FAIL] Chest motion spread: %.2fg > %.2fg\n", (calChestMax - calChestMin), CPReadyConfig::CALIBRATION_MAX_CHEST_SPREAD_G);
+            return false;
+        }
+        if ((calBaseMax - calBaseMin) > CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G) {
+            Serial.printf("[CALIB FAIL] Base motion spread: %.2fg > %.2fg\n", (calBaseMax - calBaseMin), CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G);
+            return false;
+        }
+        if (chestGravityOffset < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || chestGravityOffset > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
+            Serial.printf("[CALIB FAIL] Chest gravity implausible: %.2fg\n", chestGravityOffset);
+            return false;
+        }
+        if (baseGravityOffset < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || baseGravityOffset > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
+            Serial.printf("[CALIB FAIL] Base gravity implausible: %.2fg\n", baseGravityOffset);
+            return false;
+        }
+        if (fabsf(chestGravityOffset - baseGravityOffset) > CPReadyConfig::CALIBRATION_MAX_ALIGNMENT_DIFF_G) {
+            Serial.printf("[CALIB FAIL] Tilt/pre-pressure divergence: %.2fg > %.2fg\n", 
+                fabsf(chestGravityOffset - baseGravityOffset), CPReadyConfig::CALIBRATION_MAX_ALIGNMENT_DIFF_G);
+            return false;
+        }
+        return true;
     }
 
     // Primary sampling function intended to run at configured rate (default 100 Hz)

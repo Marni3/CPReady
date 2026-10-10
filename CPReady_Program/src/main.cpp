@@ -26,6 +26,7 @@ uint32_t practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
 void endAndFinalizeSession(uint32_t now) {
     Serial.println("[FLOW] Finalizing CPR practice session...");
     state = DeviceState::STANDBY;
+    sensors.resetCalibration();
 
     #if ENABLE_DEMO_MODE
     CPRSessionSummary summary;
@@ -65,8 +66,8 @@ void onReceiveMessage_BLE(String message) {
     message.toUpperCase();
     Serial.println("[BLE CMD] Received: " + message);
 
-    if (message == "START") {
-        Serial.println("[FLOW] Start received. Initiating stationary baseline calibration...");
+    if (message == "CALIBRATE") {
+        Serial.println("[FLOW] Calibrate received. Initiating stationary baseline calibration...");
         sensors.resetCalibration();
         calibrationStartMillis = millis();
         lastCalibProgressNotifyMillis = calibrationStartMillis;
@@ -78,6 +79,33 @@ void onReceiveMessage_BLE(String message) {
 
         // Protocol Step 1: Buzzer buzzes ONCE indicating calibration is underway
         feedback.playCalibrationStart();
+    }
+    else if (message == "START") {
+        if (state == DeviceState::CALIBRATED_READY) {
+            Serial.println("[FLOW] Device is calibrated and ready. Starting active CPR session!");
+            // Protocol Step 2: Buzzer buzzes TWICE indicating compressions should begin!
+            feedback.playCompressionsBegin();
+            tracker.startSession(millis());
+            state = DeviceState::ACTIVE_SESSION;
+            Serial.println("[FLOW] Live practice session started! Ready for compressions.");
+        }
+        else if (state == DeviceState::CALIBRATING) {
+            Serial.println("[FLOW WARN] Start requested while calibration is still ongoing! Rejecting.");
+            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0};
+            ble.sendPacket(errPkt);
+        }
+        else {
+            // Fallback / legacy 1-step behavior: trigger calibration first
+            Serial.println("[FLOW] Start received from uncalibrated state. Auto-calibrating first...");
+            sensors.resetCalibration();
+            calibrationStartMillis = millis();
+            lastCalibProgressNotifyMillis = calibrationStartMillis;
+            state = DeviceState::CALIBRATING;
+
+            CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
+            ble.sendPacket(calibPkt);
+            feedback.playCalibrationStart();
+        }
     }
     else if (message == "STOP") {
         Serial.println("[FLOW] Stop received from app.");
@@ -138,10 +166,12 @@ void loop() {
 
     // 1. Check for Bluetooth Disconnection during active operation
     if (ble.checkAndClearDisconnectionEvent()) {
-        if (state == DeviceState::CALIBRATING || state == DeviceState::ACTIVE_SESSION || state == DeviceState::SESSION_PAUSED) {
+        if (state == DeviceState::CALIBRATING || state == DeviceState::ACTIVE_SESSION || 
+            state == DeviceState::SESSION_PAUSED || state == DeviceState::CALIBRATED_READY) {
             Serial.println("[BLE WARN] Disconnected during active session! Immediately aborting.");
             feedback.abort();
             tracker.reset();
+            sensors.resetCalibration();
             state = DeviceState::STANDBY;
         }
     }
@@ -165,7 +195,7 @@ void loop() {
         #endif
 
         // Periodically broadcast calibration progress packet (Packet Type 2)
-        if (now - lastCalibProgressNotifyMillis >= 500) {
+        if (now - lastCalibProgressNotifyMillis >= CPReadyConfig::CALIBRATION_PROGRESS_INTERVAL_MS) {
             lastCalibProgressNotifyMillis = now;
             uint16_t elapsedCalib = (uint16_t)((now - calibrationStartMillis) / 1000);
             CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, elapsedCalib};
@@ -177,25 +207,21 @@ void loop() {
             #if !ENABLE_DEMO_MODE
             sensors.finalizeCalibration();
             if (!sensors.isCalibrationStable()) {
-                Serial.println("[ERROR] Calibration aborted: excessive hand motion detected.");
+                Serial.println("[ERROR] Calibration aborted: stability/plausibility checks failed.");
                 CPRMetricsPacket errorPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0};
                 ble.sendPacket(errorPkt);
                 sensors.resetCalibration();
                 state = DeviceState::STANDBY;
             } else {
             #endif
-                Serial.println("[FLOW] Calibration finished. Baselines stored.");
+                Serial.println("[FLOW] Calibration finished. Baselines stored. System is CALIBRATED_READY.");
 
                 // Signal Flutter that calibration succeeded (Packet Type 3)
                 CPRMetricsPacket successPkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
                 ble.sendPacket(successPkt);
 
-                // Protocol Step 2: Buzzer buzzes TWICE indicating compressions should begin!
-                feedback.playCompressionsBegin();
-
-                tracker.startSession(now);
-                state = DeviceState::ACTIVE_SESSION;
-                Serial.println("[FLOW] Live practice session started! Ready for compressions.");
+                // Transition to CALIBRATED_READY and await instructor's "START"
+                state = DeviceState::CALIBRATED_READY;
             #if !ENABLE_DEMO_MODE
             }
             #endif

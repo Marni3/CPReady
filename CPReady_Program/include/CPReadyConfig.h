@@ -29,11 +29,22 @@ namespace CPReadyConfig {
     constexpr uint32_t    BLE_NOTIFY_INTERVAL_MS        = 1000 / BLE_UPDATE_HZ;                     // Telemetry push rate (default 200 ms / 5 Hz)
 
     // Session & Tuning Parameters
-    constexpr uint32_t    DEFAULT_PRACTICE_DURATION_SEC = 120;       // Total trial duration before auto-stop (0 = manual STOP)
-    constexpr uint32_t    CALIBRATION_DURATION_MS       = 2000;      // Initial stationary baseline calibration window (ms)
-    constexpr float       DEPTH_CALIBRATION_K           = 11.2f;     // Harmonic depth scalar (depth = K * da * T^2)
-    constexpr float       COMPRESSION_START_THRESHOLD_G = 0.45f;     // Downstroke acceleration trigger threshold (g)
-    constexpr float       RECOIL_THRESHOLD_G            = -0.35f;    // Upward rebound threshold to confirm release (g)
+    constexpr uint32_t    DEFAULT_PRACTICE_DURATION_SEC       = 120;       // Total trial duration before auto-stop (0 = manual STOP)
+    constexpr float       DEPTH_CALIBRATION_K                 = 11.2f;     // Harmonic depth scalar (depth = K * da * T^2)
+    constexpr float       COMPRESSION_START_THRESHOLD_G       = 0.45f;     // Downstroke acceleration trigger threshold (g)
+    constexpr float       RECOIL_THRESHOLD_G                  = -0.35f;    // Upward rebound threshold to confirm release (g)
+
+    // Pre-Session Calibration & Stability Verification Parameters
+    constexpr uint32_t    CALIBRATION_DURATION_MS             = 2000;      // Stationary baseline calibration window (ms)
+    constexpr uint16_t    CALIBRATION_SAMPLE_COUNT            = 200;       // Target sample count (100 Hz * 2.0s)
+    constexpr uint16_t    CALIBRATION_MIN_SAMPLE_COUNT        = 150;       // Minimum samples required (75% completeness threshold)
+    constexpr uint32_t    CALIBRATION_PROGRESS_INTERVAL_MS    = 500;       // Packet Type 2 progress update cadence (ms)
+    constexpr float       CALIBRATION_MAX_NET_SPREAD_G        = 0.30f;     // Max allowable peak-to-peak differential motion (g)
+    constexpr float       CALIBRATION_MAX_CHEST_SPREAD_G      = 0.25f;     // Max allowable single chest sensor motion (g)
+    constexpr float       CALIBRATION_MAX_BASE_SPREAD_G       = 0.20f;     // Max allowable single spine sensor motion (g)
+    constexpr float       CALIBRATION_GRAVITY_MIN_G           = 0.65f;     // Plausible static gravity lower bound (g)
+    constexpr float       CALIBRATION_GRAVITY_MAX_G           = 1.35f;     // Plausible static gravity upper bound (g)
+    constexpr float       CALIBRATION_MAX_ALIGNMENT_DIFF_G    = 0.35f;     // Max allowable chest vs base tilt/pre-pressure divergence (g)
 
     // Audio Guidance & Coaching (Phone Speaker)
     constexpr bool        ENABLE_AUDIO_COACHING_PROMPTS = true;      // Master toggle for phone audio cue codes
@@ -65,7 +76,6 @@ namespace CPReadyConfig {
     constexpr uint32_t    SAMPLING_RATE_HZ              = 100;     // Sensor loop sampling rate (100 samples/sec)
     constexpr uint32_t    SAMPLE_INTERVAL_MICROS        = 1000000 / SAMPLING_RATE_HZ; // Microsecond interval between samples (10,000 us)
     constexpr float       LOWPASS_FILTER_ALPHA          = 0.25f;   // Exponential smoothing factor (~4.5 Hz lowpass cutoff)
-    constexpr uint16_t    CALIBRATION_SAMPLE_COUNT      = 200;     // Number of gravity samples averaged during 2.0s calibration
     constexpr uint32_t    REFRACTORY_LOCKOUT_MS         = 250;     // Minimum pause between strokes to reject impact bounces
     constexpr float       STROKE_FINISH_THRESHOLD_G     = -0.05f;  // Upward zero-crossing threshold to mark stroke completion
     constexpr uint32_t    PAUSE_DETECTION_TIMEOUT_MS    = 1500;    // Pause gap threshold before pausing active CCF accumulation
