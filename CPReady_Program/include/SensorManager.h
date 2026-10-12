@@ -157,7 +157,8 @@ public:
         float aBase  = ((float)az2 / 8192.0f) - baseGravityOffset;
 
         // Differential subtraction: removes table/floor mattress displacement
-        float rawNet = aChest - aBase;
+        // Inverted so downward chest compression produces positive acceleration (+g)
+        float rawNet = -(aChest - aBase);
 
         // Low-pass exponential smoothing filter
         const float alpha = CPReadyConfig::LOWPASS_FILTER_ALPHA;
