@@ -1,0 +1,15 @@
+/// Barrel export for config subsystem.
+
+export 'app_config.dart';
+export 'assets.dart';
+export 'ble.dart';
+export 'colors.dart';
+export 'durations.dart';
+export 'gradients.dart';
+export 'guide_steps.dart';
+export 'history.dart';
+export 'spacing.dart';
+export 'strings.dart';
+export 'sizes.dart';
+export 'targets.dart';
+export 'typography.dart';

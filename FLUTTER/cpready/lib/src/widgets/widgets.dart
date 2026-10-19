@@ -1,0 +1,25 @@
+/// Barrel export for all widgets (base + shared).
+
+export 'base/app_text.dart';
+export 'base/app_button.dart';
+export 'base/app_card.dart';
+export 'base/app_chip.dart';
+export 'base/app_icon.dart';
+export 'base/app_spacer.dart';
+export 'base/app_progress.dart';
+export 'base/app_scaffold.dart';
+export 'app_asset_icon.dart';
+export 'connection_status_chip.dart';
+export 'connect_button.dart';
+export 'dotted_border.dart';
+export 'flat_action_button.dart';
+export 'flow_back_button.dart';
+export 'flow_connection_guard.dart';
+export 'flow_panel.dart';
+export 'heartbeat_icon.dart';
+export 'hold_fill_button.dart';
+export 'hold_to_confirm_button.dart';
+export 'metric_row.dart';
+export 'metrics_card.dart';
+export 'screen_header.dart';
+export 'value_capsule.dart';
