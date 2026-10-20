@@ -12,7 +12,8 @@
 #define DEMO_DEPTH_MM          55        // AHA adult target: 50-60 mm
 #define DEMO_RATE_CPM          110       // AHA target: 100-120 /min
 #define DEMO_RECOIL_OK         true      // AHA: full recoil required
-#define DEMO_CCF_PERCENT       74        // AHA target: >=60%, ideally >80%
+// ---- Hardware Sensor Configuration ----
+#define USE_DUAL_MPU           false     // Set true for 2 MPUs (chest + base); false for 1 MPU (chest only)
 
 
 // ==============================================================================
@@ -20,6 +21,9 @@
 // (Maintained for firmware subsystem compatibility; no need to edit for testing)
 // ==============================================================================
 namespace CPReadyConfig {
+    // Hardware Sensor Mode
+    constexpr bool        USE_DUAL_MPU_MODE             = USE_DUAL_MPU;
+
     // BLE & Identity Parameters
     constexpr const char* BLE_DEVICE_NAME               = "CPReady";                                // Advertised name in BLE scan
     constexpr const char* BLE_SERVICE_UUID              = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";  // Primary GATT service UUID

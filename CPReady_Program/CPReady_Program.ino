@@ -149,10 +149,18 @@ void setup() {
     Serial.println("[DEMO] Emulating CPR metrics for mobile app testing.");
     #else
     if (!sensors.begin()) {
+        #if USE_DUAL_MPU
         Serial.println("[ERROR] Could not connect to both MPU6050 sensors (0x68 and 0x69). Check wiring!");
+        #else
+        Serial.println("[ERROR] Could not connect to chest MPU6050 sensor (0x68). Check wiring!");
+        #endif
         state = DeviceState::FAULT_ERROR;
     } else {
-        Serial.println("[OK] Both MPU6050 sensors initialized successfully.");
+        #if USE_DUAL_MPU
+        Serial.println("[OK] Dual-MPU mode initialized: Both sensors (0x68 and 0x69) ready.");
+        #else
+        Serial.println("[OK] Single-MPU mode initialized: Chest sensor (0x68) ready. Base sensor bypassed.");
+        #endif
     }
     #endif
 

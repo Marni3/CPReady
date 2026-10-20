@@ -38,21 +38,59 @@ public:
           calChestMin(999.0f), calChestMax(-999.0f),
           calBaseMin(999.0f), calBaseMax(-999.0f) {}
 
-    bool begin() {
+    // Hardware I2C bus recovery routine (NXP UM10204 9-clock cycle sequence)
+    // Toggles SCL up to 9 times to force any stuck slave to release SDA,
+    // followed by generating a manual STOP condition before restarting Wire.
+    static void recoverI2CBus() {
+        Wire.end();
+        pinMode(CPReadyConfig::I2C_SDA_PIN, INPUT_PULLUP);
+        pinMode(CPReadyConfig::I2C_SCL_PIN, OUTPUT);
+        digitalWrite(CPReadyConfig::I2C_SCL_PIN, HIGH);
+        delayMicroseconds(5);
+
+        for (int i = 0; i < 9; i++) {
+            if (digitalRead(CPReadyConfig::I2C_SDA_PIN) == HIGH) {
+                break; // Slave released SDA line
+            }
+            digitalWrite(CPReadyConfig::I2C_SCL_PIN, LOW);
+            delayMicroseconds(5);
+            digitalWrite(CPReadyConfig::I2C_SCL_PIN, HIGH);
+            delayMicroseconds(5);
+        }
+
+        // Generate explicit STOP condition (SDA low while SCL high, then SDA high)
+        pinMode(CPReadyConfig::I2C_SDA_PIN, OUTPUT);
+        digitalWrite(CPReadyConfig::I2C_SDA_PIN, LOW);
+        delayMicroseconds(5);
+        digitalWrite(CPReadyConfig::I2C_SCL_PIN, HIGH);
+        delayMicroseconds(5);
+        digitalWrite(CPReadyConfig::I2C_SDA_PIN, HIGH);
+        delayMicroseconds(5);
+
+        pinMode(CPReadyConfig::I2C_SDA_PIN, INPUT_PULLUP);
+        pinMode(CPReadyConfig::I2C_SCL_PIN, INPUT_PULLUP);
+
         Wire.begin(CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN);
         Wire.setClock(CPReadyConfig::I2C_CLOCK_SPEED_HZ);
         Wire.setTimeOut(CPReadyConfig::I2C_TIMEOUT_MS);
+    }
+
+    bool begin() {
+        recoverI2CBus();
 
         chestSensor.initialize();
-        baseSensor.initialize();
-
-        if (!chestSensor.testConnection() || !baseSensor.testConnection()) {
+        if (!chestSensor.testConnection()) {
             return false;
         }
-
-        // Set Accelerometer full-scale range to +/- 4g (CPR peaks around 2-3g)
         chestSensor.setFullScaleAccelRange(MPU6050_ACCEL_FS_4);
+
+        #if USE_DUAL_MPU
+        baseSensor.initialize();
+        if (!baseSensor.testConnection()) {
+            return false;
+        }
         baseSensor.setFullScaleAccelRange(MPU6050_ACCEL_FS_4);
+        #endif
 
         return true;
     }
@@ -74,26 +112,32 @@ public:
     // Called periodically during the idle baseline window
     void recordCalibrationSample() {
         int16_t ax1, ay1, az1;
-        int16_t ax2, ay2, az2;
         chestSensor.getAcceleration(&ax1, &ay1, &az1);
-        baseSensor.getAcceleration(&ax2, &ay2, &az2);
-
         float a1 = (float)az1 / 8192.0f; // Scale factor for +/- 4g is 8192 LSB/g
-        float a2 = (float)az2 / 8192.0f;
 
         calChestSum += a1;
-        calBaseSum  += a2;
         calSampleCount++;
 
         // Track single-sensor extremes
         if (a1 < calChestMin) calChestMin = a1;
         if (a1 > calChestMax) calChestMax = a1;
 
+        #if USE_DUAL_MPU
+        int16_t ax2, ay2, az2;
+        baseSensor.getAcceleration(&ax2, &ay2, &az2);
+        float a2 = (float)az2 / 8192.0f;
+
+        calBaseSum  += a2;
+
         if (a2 < calBaseMin) calBaseMin = a2;
         if (a2 > calBaseMax) calBaseMax = a2;
 
+        float netSample = -(a1 - a2);
+        #else
+        float netSample = -a1;
+        #endif
+
         // Track raw differential spread for motion stability validation
-        float netSample = a1 - a2;
         if (netSample < calNetMin) calNetMin = netSample;
         if (netSample > calNetMax) calNetMax = netSample;
     }
@@ -102,7 +146,11 @@ public:
     void finalizeCalibration() {
         if (calSampleCount > 0) {
             chestGravityOffset = calChestSum / (float)calSampleCount;
+            #if USE_DUAL_MPU
             baseGravityOffset  = calBaseSum  / (float)calSampleCount;
+            #else
+            baseGravityOffset  = 0.0f;
+            #endif
             isCalibrated = true;
         }
     }
@@ -121,12 +169,14 @@ public:
             Serial.printf("[CALIB FAIL] Chest motion spread: %.2fg > %.2fg\n", (calChestMax - calChestMin), CPReadyConfig::CALIBRATION_MAX_CHEST_SPREAD_G);
             return false;
         }
-        if ((calBaseMax - calBaseMin) > CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G) {
-            Serial.printf("[CALIB FAIL] Base motion spread: %.2fg > %.2fg\n", (calBaseMax - calBaseMin), CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G);
-            return false;
-        }
         if (chestGravityOffset < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || chestGravityOffset > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
             Serial.printf("[CALIB FAIL] Chest gravity implausible: %.2fg\n", chestGravityOffset);
+            return false;
+        }
+
+        #if USE_DUAL_MPU
+        if ((calBaseMax - calBaseMin) > CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G) {
+            Serial.printf("[CALIB FAIL] Base motion spread: %.2fg > %.2fg\n", (calBaseMax - calBaseMin), CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G);
             return false;
         }
         if (baseGravityOffset < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || baseGravityOffset > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
@@ -138,6 +188,8 @@ public:
                 fabsf(chestGravityOffset - baseGravityOffset), CPReadyConfig::CALIBRATION_MAX_ALIGNMENT_DIFF_G);
             return false;
         }
+        #endif
+
         return true;
     }
 
@@ -149,16 +201,17 @@ public:
         lastSampleMicros = currentMicros;
 
         int16_t ax1, ay1, az1;
-        int16_t ax2, ay2, az2;
         chestSensor.getAcceleration(&ax1, &ay1, &az1);
-        baseSensor.getAcceleration(&ax2, &ay2, &az2);
-
         float aChest = ((float)az1 / 8192.0f) - chestGravityOffset;
-        float aBase  = ((float)az2 / 8192.0f) - baseGravityOffset;
 
-        // Differential subtraction: removes table/floor mattress displacement
-        // Inverted so downward chest compression produces positive acceleration (+g)
+        #if USE_DUAL_MPU
+        int16_t ax2, ay2, az2;
+        baseSensor.getAcceleration(&ax2, &ay2, &az2);
+        float aBase  = ((float)az2 / 8192.0f) - baseGravityOffset;
         float rawNet = -(aChest - aBase);
+        #else
+        float rawNet = -aChest;
+        #endif
 
         // Low-pass exponential smoothing filter
         const float alpha = CPReadyConfig::LOWPASS_FILTER_ALPHA;
