@@ -2,14 +2,17 @@
 #define SENSOR_MANAGER_H
 
 #include <Wire.h>
-#include <MPU6050.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
 #include "CPRTypes.h"
 #include "CPReadyConfig.h"
 
 class SensorManager {
 private:
-    MPU6050 chestSensor;
-    MPU6050 baseSensor;
+    Adafruit_MPU6050 chestSensor;
+    #if USE_DUAL_MPU
+    Adafruit_MPU6050 baseSensor;
+    #endif
     float chestGravityOffset;
     float baseGravityOffset;
     float lastFilteredNetAccel;
@@ -29,9 +32,7 @@ private:
 
 public:
     SensorManager() 
-        : chestSensor(CPReadyConfig::CHEST_MPU_I2C_ADDR), 
-          baseSensor(CPReadyConfig::BASE_MPU_I2C_ADDR), 
-          chestGravityOffset(0.0f), baseGravityOffset(0.0f),
+        : chestGravityOffset(0.0f), baseGravityOffset(0.0f),
           lastFilteredNetAccel(0.0f), lastSampleMicros(0),
           calChestSum(0.0f), calBaseSum(0.0f), calSampleCount(0), isCalibrated(false),
           calNetMin(999.0f), calNetMax(-999.0f),
@@ -75,21 +76,48 @@ public:
         Wire.setTimeOut(CPReadyConfig::I2C_TIMEOUT_MS);
     }
 
+    // Automated boot-time I2C bus diagnostic scanner
+    static void scanI2CBus() {
+        Serial.printf("[I2C SCAN] Probing I2C bus (SDA=GPIO%d, SCL=GPIO%d, Speed=%d Hz)...\n",
+            CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN, CPReadyConfig::I2C_CLOCK_SPEED_HZ);
+        uint8_t count = 0;
+        for (uint8_t addr = 1; addr < 127; addr++) {
+            Wire.beginTransmission(addr);
+            uint8_t error = Wire.endTransmission();
+            if (error == 0) {
+                Serial.printf("[I2C SCAN]  -> Device detected at address 0x%02X", addr);
+                if (addr == 0x68) {
+                    Serial.print(" (Default MPU-6050 / Chest)");
+                } else if (addr == 0x69) {
+                    Serial.print(" (Alternate MPU-6050 / Base or AD0 HIGH)");
+                }
+                Serial.println();
+                count++;
+            }
+        }
+        if (count == 0) {
+            Serial.println("[I2C SCAN]  -> [WARN] No I2C devices found! Check VCC/5V power, GND, and SDA/SCL wires.");
+        } else {
+            Serial.printf("[I2C SCAN]  -> Scan complete: %d device(s) found.\n", count);
+        }
+    }
+
     bool begin() {
         recoverI2CBus();
+        scanI2CBus();
 
-        chestSensor.initialize();
-        if (!chestSensor.testConnection()) {
+        if (!chestSensor.begin(CPReadyConfig::CHEST_MPU_I2C_ADDR, &Wire)) {
             return false;
         }
-        chestSensor.setFullScaleAccelRange(MPU6050_ACCEL_FS_4);
+        chestSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+        chestSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
 
         #if USE_DUAL_MPU
-        baseSensor.initialize();
-        if (!baseSensor.testConnection()) {
+        if (!baseSensor.begin(CPReadyConfig::BASE_MPU_I2C_ADDR, &Wire)) {
             return false;
         }
-        baseSensor.setFullScaleAccelRange(MPU6050_ACCEL_FS_4);
+        baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+        baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
         #endif
 
         return true;
@@ -111,9 +139,9 @@ public:
 
     // Called periodically during the idle baseline window
     void recordCalibrationSample() {
-        int16_t ax1, ay1, az1;
-        chestSensor.getAcceleration(&ax1, &ay1, &az1);
-        float a1 = (float)az1 / 8192.0f; // Scale factor for +/- 4g is 8192 LSB/g
+        sensors_event_t aChest, gChest, tempChest;
+        chestSensor.getEvent(&aChest, &gChest, &tempChest);
+        float a1 = aChest.acceleration.z / SENSORS_GRAVITY_STANDARD;
 
         calChestSum += a1;
         calSampleCount++;
@@ -123,9 +151,9 @@ public:
         if (a1 > calChestMax) calChestMax = a1;
 
         #if USE_DUAL_MPU
-        int16_t ax2, ay2, az2;
-        baseSensor.getAcceleration(&ax2, &ay2, &az2);
-        float a2 = (float)az2 / 8192.0f;
+        sensors_event_t aBase, gBase, tempBase;
+        baseSensor.getEvent(&aBase, &gBase, &tempBase);
+        float a2 = aBase.acceleration.z / SENSORS_GRAVITY_STANDARD;
 
         calBaseSum  += a2;
 
@@ -200,17 +228,17 @@ public:
         }
         lastSampleMicros = currentMicros;
 
-        int16_t ax1, ay1, az1;
-        chestSensor.getAcceleration(&ax1, &ay1, &az1);
-        float aChest = ((float)az1 / 8192.0f) - chestGravityOffset;
+        sensors_event_t aChest, gChest, tempChest;
+        chestSensor.getEvent(&aChest, &gChest, &tempChest);
+        float aChestG = (aChest.acceleration.z / SENSORS_GRAVITY_STANDARD) - chestGravityOffset;
 
         #if USE_DUAL_MPU
-        int16_t ax2, ay2, az2;
-        baseSensor.getAcceleration(&ax2, &ay2, &az2);
-        float aBase  = ((float)az2 / 8192.0f) - baseGravityOffset;
-        float rawNet = -(aChest - aBase);
+        sensors_event_t aBase, gBase, tempBase;
+        baseSensor.getEvent(&aBase, &gBase, &tempBase);
+        float aBaseG  = (aBase.acceleration.z / SENSORS_GRAVITY_STANDARD) - baseGravityOffset;
+        float rawNet  = -(aChestG - aBaseG);
         #else
-        float rawNet = -aChest;
+        float rawNet  = -aChestG;
         #endif
 
         // Low-pass exponential smoothing filter

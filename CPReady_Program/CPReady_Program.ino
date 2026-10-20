@@ -1,11 +1,11 @@
 #include <Arduino.h>
-#include "include/CPRTypes.h"
-#include "include/CPReadyConfig.h"
-#include "include/BLEReadings.h"
-#include "include/SensorManager.h"
-#include "include/CompressionTracker.h"
-#include "include/BleManager.h"
-#include "include/FeedbackController.h"
+#include "CPRTypes.h"
+#include "CPReadyConfig.h"
+#include "BLEReadings.h"
+#include "SensorManager.h"
+#include "CompressionTracker.h"
+#include "BleManager.h"
+#include "FeedbackController.h"
 
 // Subsystem Instances
 SensorManager      sensors;
@@ -287,5 +287,9 @@ void loop() {
             }
         }
         #endif
+    }
+    else {
+        // Standby, Calibrated Ready, or Fault Error: yield CPU to feed IDLE and BLE background tasks
+        delay(5);
     }
 }

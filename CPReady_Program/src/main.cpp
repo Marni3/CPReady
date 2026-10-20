@@ -288,4 +288,8 @@ void loop() {
         }
         #endif
     }
+    else {
+        // Standby, Calibrated Ready, or Fault Error: yield CPU to feed IDLE and BLE background tasks
+        delay(5);
+    }
 }

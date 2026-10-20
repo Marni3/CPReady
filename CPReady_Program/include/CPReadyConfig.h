@@ -73,7 +73,7 @@ namespace CPReadyConfig {
     // Internal I2C Bus & Sensor Addresses
     constexpr uint8_t     CHEST_MPU_I2C_ADDR            = 0x68;    // Chest MPU6050 address (AD0 pin tied to GND)
     constexpr uint8_t     BASE_MPU_I2C_ADDR             = 0x69;    // Base MPU6050 address (AD0 pin pulled up to 3.3V)
-    constexpr uint32_t    I2C_CLOCK_SPEED_HZ            = 400000;  // I2C bus clock in Fast Mode (400 kHz)
+    constexpr uint32_t    I2C_CLOCK_SPEED_HZ            = 100000;  // I2C bus clock in Standard Mode (100 kHz) for noise immunity
     constexpr uint32_t    I2C_TIMEOUT_MS                = 25;      // Bus read timeout to prevent lockup on wire disconnection
 
     // Kinematics & Filtering Engine
