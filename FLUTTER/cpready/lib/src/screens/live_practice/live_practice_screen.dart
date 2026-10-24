@@ -77,7 +77,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     final DateTime? at = _lastCompressionAt;
     final int count = _latest?.totalCompressions ?? 0;
     if (at == null || count <= 0) return false;
-    return DateTime.now().difference(at) <= AppDurations.compressionActiveWindow;
+    return DateTime.now().difference(at) <=
+        AppDurations.compressionActiveWindow;
   }
 
   void _onPacket(CprMetrics metrics) {
@@ -91,7 +92,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       _lastCount = count;
     });
 
-    // Firmware auto-stop: a FINAL_SUMMARY arrives without us asking.
+    // Firmware auto-stop: a FINAL_SUMMARY arrives without a STOP command.
     if (metrics.packetType == AppBleConfig.packetFinalSummary &&
         !_ending &&
         !_finished) {
@@ -212,8 +213,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       durationSeconds: durationSeconds,
       packetCount: packets,
       rateCpm: summary?.rateCpm,
-      depthTenthsMm:
-          summary == null ? null : (summary.depthCm * 100).round(),
+      depthTenthsMm: summary == null ? null : (summary.depthCm * 100).round(),
       recoilPercent: summary?.recoilPercentage,
       ccfPercent: summary?.ccfPercent,
       totalCompressions: summary?.totalCompressions,
@@ -256,81 +256,113 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   Widget build(BuildContext context) {
     final controller = _controller;
     final latest = _latest;
+    final double page = AppLayout.pagePaddingFor(
+      MediaQuery.sizeOf(context).width,
+    );
 
     return PopScope(
       canPop: false, // sessions end only through the hold or the firmware
       child: Scaffold(
         backgroundColor: AppColors.surfaceScaffold,
         body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.only(
-              top: AppSpacing.flowTopPadding,
-              bottom: AppSpacing.flowActionBottomPadding,
-              left: AppSpacing.page,
-              right: AppSpacing.page,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                if (controller != null) _StatusHeader(controller: controller),
-                const SizedBox(height: AppSpacing.liveTimerTopGap),
-                _TimerBlock(startedAt: controller?.sessionStartedAt),
-                const SizedBox(height: AppSpacing.liveSectionTopGap),
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: _MetricSection(
-                                label: AppStrings.liveRateLabel,
-                                capsule: _capsule(
-                                  rateText(latest?.rateCpm),
-                                  rateRating(latest?.rateCpm),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: AppSpacing.liveSectionGap),
-                            Expanded(
-                              child: _MetricSection(
-                                label: AppStrings.liveRecoilLabel,
-                                capsule: _capsule(
-                                  recoilText(latest?.recoilPercentage),
-                                  recoilRating(latest?.recoilPercentage),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: AppSpacing.liveSectionStackGap),
-                        _MetricSection(
-                          label: AppStrings.liveDepthLabel,
-                          capsule: _capsule(
-                            depthText(latest?.depthCm),
-                            depthRating(latest?.depthCm),
+          child: ContentBounds(
+            child: Padding(
+              padding: EdgeInsets.only(
+                top: AppSpacing.flowTopPadding,
+                bottom: AppSpacing.flowActionBottomPadding,
+                left: page,
+                right: page,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (controller != null) _StatusHeader(controller: controller),
+                  const SizedBox(height: AppSpacing.liveTimerTopGap),
+                  _TimerBlock(startedAt: controller?.sessionStartedAt),
+                  const SizedBox(height: AppSpacing.liveSectionTopGap),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          LayoutBuilder(
+                            builder:
+                                (BuildContext context, BoxConstraints bounds) {
+                                  final Widget rate = _MetricSection(
+                                    label: AppStrings.liveRateLabel,
+                                    capsule: _capsule(
+                                      rateText(latest?.rateCpm),
+                                      rateRating(latest?.rateCpm),
+                                    ),
+                                  );
+                                  final Widget recoil = _MetricSection(
+                                    label: AppStrings.liveRecoilLabel,
+                                    capsule: _capsule(
+                                      recoilText(latest?.recoilPercentage),
+                                      recoilRating(latest?.recoilPercentage),
+                                    ),
+                                  );
+                                  final double each =
+                                      (bounds.maxWidth -
+                                          AppSpacing.liveSectionGap) /
+                                      2;
+
+                                  if (each < AppLayout.minSectionWidth) {
+                                    return Column(
+                                      children: <Widget>[
+                                        rate,
+                                        const SizedBox(
+                                          height:
+                                              AppSpacing.liveSectionStackGap,
+                                        ),
+                                        recoil,
+                                      ],
+                                    );
+                                  }
+
+                                  return Row(
+                                    children: <Widget>[
+                                      Expanded(child: rate),
+                                      const SizedBox(
+                                        width: AppSpacing.liveSectionGap,
+                                      ),
+                                      Expanded(child: recoil),
+                                    ],
+                                  );
+                                },
                           ),
-                        ),
-                        const SizedBox(height: AppSpacing.liveSectionStackGap),
-                        Center(
-                          child: _CompressionCounter(
-                            count: latest?.totalCompressions ?? 0,
-                            active: _compressing,
+                          const SizedBox(
+                            height: AppSpacing.liveSectionStackGap,
                           ),
-                        ),
-                      ],
+                          _MetricSection(
+                            label: AppStrings.liveDepthLabel,
+                            capsule: _capsule(
+                              depthText(latest?.depthCm),
+                              depthRating(latest?.depthCm),
+                            ),
+                          ),
+                          const SizedBox(
+                            height: AppSpacing.liveSectionStackGap,
+                          ),
+                          Center(
+                            child: _CompressionCounter(
+                              count: latest?.totalCompressions ?? 0,
+                              active: _compressing,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: AppSpacing.liveSectionStackGap),
-                HoldFillButton(
-                  label: AppStrings.liveHoldEndSession,
-                  duration: AppDurations.holdSession,
-                  enabled: !_ending,
-                  onComplete: _endSession,
-                ),
-              ],
+                  const SizedBox(height: AppSpacing.liveSectionStackGap),
+                  HoldFillButton(
+                    label: AppStrings.liveHoldEndSession,
+                    duration: AppDurations.holdSession,
+                    enabled: !_ending,
+                    onComplete: _endSession,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -381,32 +413,36 @@ class _StatusLine extends StatelessWidget {
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
-        final (String label, Color color, bool up) = switch (controller.status) {
+        final (
+          String label,
+          Color color,
+          bool up,
+        ) = switch (controller.status) {
           BleStatus.connected => (
-              AppStrings.statusConnected,
-              AppColors.liveStatusConnected,
-              true,
-            ),
+            AppStrings.statusConnected,
+            AppColors.liveStatusConnected,
+            true,
+          ),
           BleStatus.scanning => (
-              AppStrings.statusScanning,
-              AppColors.statusScanning,
-              true,
-            ),
+            AppStrings.statusScanning,
+            AppColors.statusScanning,
+            true,
+          ),
           BleStatus.connecting => (
-              AppStrings.statusConnecting,
-              AppColors.statusConnecting,
-              true,
-            ),
+            AppStrings.statusConnecting,
+            AppColors.statusConnecting,
+            true,
+          ),
           BleStatus.disconnected => (
-              AppStrings.statusDisconnected,
-              AppColors.liveStatusLost,
-              false,
-            ),
+            AppStrings.statusDisconnected,
+            AppColors.liveStatusLost,
+            false,
+          ),
           BleStatus.error => (
-              '${AppStrings.statusErrorPrefix}${controller.lastError}',
-              AppColors.liveStatusLost,
-              false,
-            ),
+            '${AppStrings.statusErrorPrefix}${controller.lastError}',
+            AppColors.liveStatusLost,
+            false,
+          ),
         };
 
         return Row(
@@ -485,7 +521,9 @@ class _MetricSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: AppSizes.liveSectionHeight,
+      constraints: const BoxConstraints(
+        minHeight: AppSizes.liveSectionMinHeight,
+      ),
       decoration: BoxDecoration(
         color: AppColors.liveSectionBackground,
         borderRadius: BorderRadius.circular(AppSizes.liveSectionRadius),
@@ -530,8 +568,11 @@ class _CompressionCounter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: AppSizes.liveCounterWidth,
-      height: AppSizes.liveCounterHeight,
+      constraints: const BoxConstraints(
+        maxWidth: AppSizes.liveCounterWidth,
+        minWidth: AppSizes.liveCounterWidth,
+        minHeight: AppSizes.liveCounterHeight,
+      ),
       decoration: BoxDecoration(
         color: AppColors.liveSectionBackground,
         borderRadius: BorderRadius.circular(AppSizes.liveSectionRadius),
@@ -547,8 +588,9 @@ class _CompressionCounter extends StatelessWidget {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color:
-                active ? AppColors.liveCounterActive : AppColors.liveCounterIdle,
+            color: active
+                ? AppColors.liveCounterActive
+                : AppColors.liveCounterIdle,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,

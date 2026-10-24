@@ -14,6 +14,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../config/config.dart';
 import '../../core/app_scope.dart';
+import '../../widgets/widgets.dart';
 
 /// Countdown between calibration and the live session.
 class BeginCompressionScreen extends StatefulWidget {
@@ -75,58 +76,55 @@ class _BeginCompressionScreenState extends State<BeginCompressionScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final double page = AppLayout.pagePaddingFor(
+      MediaQuery.sizeOf(context).width,
+    );
+
     return PopScope(
       canPop: false,
-      child: Scaffold(
-        backgroundColor: AppColors.surfaceScaffold,
-        body: SafeArea(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.page,
+      child: AdaptiveScreen(
+        padding: EdgeInsets.symmetric(horizontal: page),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(
+                '$_remaining',
+                textAlign: TextAlign.center,
+                style: AppTypography.style(
+                  size: AppTypography.countdownNumberSize,
+                  weight: AppTypography.headingWeight,
+                  color: AppColors.flowHeadingText,
+                ),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Text(
-                    '$_remaining',
-                    textAlign: TextAlign.center,
-                    style: AppTypography.style(
-                      size: AppTypography.countdownNumberSize,
-                      weight: AppTypography.headingWeight,
-                      color: AppColors.flowHeadingText,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.countdownNumberGap),
-                  Image.asset(
-                    AppAssets.beginSession,
-                    width: AppSizes.countdownImageSize,
-                    height: AppSizes.countdownImageSize,
-                    fit: BoxFit.contain,
-                  ),
-                  const SizedBox(height: AppSpacing.countdownImageGap),
-                  Text(
-                    AppStrings.beginCompressionTitle,
-                    textAlign: TextAlign.center,
-                    style: AppTypography.style(
-                      size: AppTypography.countdownTitleSize,
-                      weight: AppTypography.headingWeight,
-                      color: AppColors.flowHeadingText,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.countdownHelperGap),
-                  Text(
-                    AppStrings.beginCompressionBody,
-                    textAlign: TextAlign.center,
-                    style: AppTypography.style(
-                      size: AppTypography.countdownHelperSize,
-                      weight: FontWeight.normal,
-                      color: AppColors.flowHelperText,
-                    ),
-                  ),
-                ],
+              const SizedBox(height: AppSpacing.countdownNumberGap),
+              Image.asset(
+                AppAssets.beginSession,
+                width: AppSizes.countdownImageSize,
+                height: AppSizes.countdownImageSize,
+                fit: BoxFit.contain,
               ),
-            ),
+              const SizedBox(height: AppSpacing.countdownImageGap),
+              Text(
+                AppStrings.beginCompressionTitle,
+                textAlign: TextAlign.center,
+                style: AppTypography.style(
+                  size: AppTypography.countdownTitleSize,
+                  weight: AppTypography.headingWeight,
+                  color: AppColors.flowHeadingText,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.countdownHelperGap),
+              Text(
+                AppStrings.beginCompressionBody,
+                textAlign: TextAlign.center,
+                style: AppTypography.style(
+                  size: AppTypography.countdownHelperSize,
+                  weight: FontWeight.normal,
+                  color: AppColors.flowHelperText,
+                ),
+              ),
+            ],
           ),
         ),
       ),

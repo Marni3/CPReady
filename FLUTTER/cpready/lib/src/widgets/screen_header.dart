@@ -17,14 +17,18 @@ class ScreenHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final double page = AppLayout.pagePaddingFor(
+      MediaQuery.sizeOf(context).width,
+    );
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.page,
+          padding: EdgeInsets.fromLTRB(
+            page,
             AppSpacing.item,
-            AppSpacing.page,
+            page,
             AppSpacing.dividerGap,
           ),
           child: Row(
@@ -51,14 +55,15 @@ class ScreenHeader extends StatelessWidget {
                   ),
                   Text(
                     pageLabel,
-                    style: AppTypography.style(
-                      size: AppTypography.homePageSize,
-                      weight: FontWeight.w500,
-                      color: AppColors.homePageText,
-                    ).copyWith(
-                      decoration: TextDecoration.underline,
-                      decorationColor: AppColors.homePageText,
-                    ),
+                    style:
+                        AppTypography.style(
+                          size: AppTypography.homePageSize,
+                          weight: FontWeight.w500,
+                          color: AppColors.homePageText,
+                        ).copyWith(
+                          decoration: TextDecoration.underline,
+                          decorationColor: AppColors.homePageText,
+                        ),
                   ),
                 ],
               ),
@@ -66,9 +71,7 @@ class ScreenHeader extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.dividerInset,
-          ),
+          padding: EdgeInsets.symmetric(horizontal: page),
           child: Container(
             height: AppSizes.dividerThickness,
             color: AppColors.divider,

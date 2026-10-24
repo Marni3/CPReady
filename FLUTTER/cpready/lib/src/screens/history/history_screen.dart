@@ -177,40 +177,46 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final double page = AppLayout.pagePaddingFor(
+      MediaQuery.sizeOf(context).width,
+    );
+
     return SafeArea(
       bottom: false,
       child: Column(
         children: <Widget>[
           ScreenHeader(pageLabel: AppStrings.historyHeaderPage),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const SizedBox(height: AppSpacing.historyTopPadding),
-                  Text(
-                    AppStrings.historyTitle,
-                    style: AppTypography.style(
-                      size: AppTypography.historyTitleSize,
-                      weight: AppTypography.headingWeight,
-                      color: AppColors.historyTitleText,
+            child: ContentBounds(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: page),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    const SizedBox(height: AppSpacing.historyTopPadding),
+                    Text(
+                      AppStrings.historyTitle,
+                      style: AppTypography.style(
+                        size: AppTypography.historyTitleSize,
+                        weight: AppTypography.headingWeight,
+                        color: AppColors.historyTitleText,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: AppSpacing.historyTitleGap),
-                  Expanded(child: _list()),
-                  if (_sessions.isNotEmpty) ...<Widget>[
-                    const SizedBox(
-                      height: AppSpacing.historyClearButtonTopGap,
-                    ),
-                    _ClearHistoryButton(
-                      onPressed: () => unawaited(_clearAll()),
-                    ),
-                    const SizedBox(
-                      height: AppSpacing.historyClearButtonBottomGap,
-                    ),
+                    const SizedBox(height: AppSpacing.historyTitleGap),
+                    Expanded(child: _list()),
+                    if (_sessions.isNotEmpty) ...<Widget>[
+                      const SizedBox(
+                        height: AppSpacing.historyClearButtonTopGap,
+                      ),
+                      _ClearHistoryButton(
+                        onPressed: () => unawaited(_clearAll()),
+                      ),
+                      const SizedBox(
+                        height: AppSpacing.historyClearButtonBottomGap,
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -265,7 +271,9 @@ class _ClearHistoryButton extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(AppSizes.historyClearButtonRadius),
+          borderRadius: BorderRadius.circular(
+            AppSizes.historyClearButtonRadius,
+          ),
           onTap: onPressed,
           child: Center(
             child: Text(
@@ -400,7 +408,9 @@ class _SeeMoreButton extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onPressed,
       child: Container(
-        height: AppSizes.historySeeMoreHeight,
+        constraints: const BoxConstraints(
+          minHeight: AppSizes.historySeeMoreMinHeight,
+        ),
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.historySeeMorePaddingH,
@@ -438,8 +448,9 @@ class _InterruptedLabel extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         color: AppColors.historyInterruptedBackground,
-        borderRadius:
-            BorderRadius.circular(AppSizes.historyInterruptedLabelRadius),
+        borderRadius: BorderRadius.circular(
+          AppSizes.historyInterruptedLabelRadius,
+        ),
       ),
       child: Text(
         AppStrings.historyInterruptedLabel,

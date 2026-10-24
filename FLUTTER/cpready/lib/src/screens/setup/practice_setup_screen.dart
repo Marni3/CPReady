@@ -49,18 +49,24 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.surfaceScaffold,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.only(
-            top: AppSpacing.flowTopPadding,
-            bottom: AppSpacing.flowActionBottomPadding,
-            left: AppSpacing.page,
-            right: AppSpacing.page,
-          ),
-          child: Column(
+    final double page = AppLayout.pagePaddingFor(
+      MediaQuery.sizeOf(context).width,
+    );
+
+    return AdaptiveScreen(
+      padding: EdgeInsets.only(
+        top: AppSpacing.flowTopPadding,
+        bottom: AppSpacing.flowActionBottomPadding,
+        left: page,
+        right: page,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: <Widget>[
+          Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -126,14 +132,16 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                   color: AppColors.flowHelperText,
                 ),
               ),
-              const Spacer(),
-              FlatActionButton(
-                label: AppStrings.setupContinue,
-                onPressed: _valid ? _continue : null,
-              ),
             ],
           ),
-        ),
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.section),
+            child: FlatActionButton(
+              label: AppStrings.setupContinue,
+              onPressed: _valid ? _continue : null,
+            ),
+          ),
+        ],
       ),
     );
   }

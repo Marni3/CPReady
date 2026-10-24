@@ -19,6 +19,10 @@ class PracticeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final double page = AppLayout.pagePaddingFor(
+      MediaQuery.sizeOf(context).width,
+    );
+
     return SafeArea(
       bottom: false,
       child: Column(
@@ -26,39 +30,39 @@ class PracticeScreen extends StatelessWidget {
           ScreenHeader(pageLabel: AppStrings.practiceHeaderPage),
           Expanded(
             child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.page,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    const SizedBox(height: AppSpacing.practiceTopPadding),
-                    Text(
-                      AppStrings.practiceTitle,
-                      style: AppTypography.style(
-                        size: AppTypography.practiceTitleSize,
-                        weight: AppTypography.headingWeight,
-                        color: AppColors.practiceTitleText,
+              child: ContentBounds(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: page),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      const SizedBox(height: AppSpacing.practiceTopPadding),
+                      Text(
+                        AppStrings.practiceTitle,
+                        style: AppTypography.style(
+                          size: AppTypography.practiceTitleSize,
+                          weight: AppTypography.headingWeight,
+                          color: AppColors.practiceTitleText,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: AppSpacing.practiceTitleGap),
-                    const _ChooseOptionBox(),
-                    const SizedBox(height: AppSpacing.practiceOptionTopGap),
-                    PracticeOptionCard(
-                      title: AppStrings.practiceGuide,
-                      body: AppStrings.practiceGuideBody,
-                      iconAsset: AppAssets.iconBook,
-                      onTap: () => context.pushNamed(AppRoutes.guide),
-                    ),
-                    const SizedBox(height: AppSpacing.practiceOptionGap),
-                    PracticeOptionCard(
-                      title: AppStrings.practiceStart,
-                      body: AppStrings.practiceStartBody,
-                      iconAsset: AppAssets.iconHeartbeat,
-                      onTap: () => context.pushNamed(AppRoutes.setup),
-                    ),
-                  ],
+                      const SizedBox(height: AppSpacing.practiceTitleGap),
+                      const _ChooseOptionBox(),
+                      const SizedBox(height: AppSpacing.practiceOptionTopGap),
+                      PracticeOptionCard(
+                        title: AppStrings.practiceGuide,
+                        body: AppStrings.practiceGuideBody,
+                        iconAsset: AppAssets.iconBook,
+                        onTap: () => context.pushNamed(AppRoutes.guide),
+                      ),
+                      const SizedBox(height: AppSpacing.practiceOptionGap),
+                      PracticeOptionCard(
+                        title: AppStrings.practiceStart,
+                        body: AppStrings.practiceStartBody,
+                        iconAsset: AppAssets.iconHeartbeat,
+                        onTap: () => context.pushNamed(AppRoutes.setup),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

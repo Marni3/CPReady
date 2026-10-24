@@ -1,7 +1,7 @@
 /// All user-facing UI copy (English only).
 ///
-/// Strings are keyed by intent so they can be edited here without touching
-/// widgets. This also prepares the app for future i18n if needed.
+/// Strings are keyed by intent, so copy changes stay in this file and never
+/// reach the widgets.
 
 class AppStrings {
   // -----------------------------------------------------------------------
@@ -66,7 +66,7 @@ class AppStrings {
   /// Device card — connecting / scanning.
   static const String homeConnectingTitle = 'CONNECT DEVICE';
   static const String homeConnectingInstruction =
-      'Turn on your CPReady\n device and keep it nearby.';
+      'Turn on your CPReady device and keep it nearby.';
   static const String homeScanning = 'Scanning';
   static const String homeConnected = 'Connected!';
 
@@ -157,8 +157,8 @@ class AppStrings {
 
   static const String handPlacementTitle = 'Hand Placement';
 
-  /// Instruction inside the panel. The break is intentional.
-  static const String handPlacementInstruction = 'Place both hands\non chest';
+  /// Instruction inside the panel; it wraps to the card's width.
+  static const String handPlacementInstruction = 'Place both hands on chest';
 
   static const String handPlacementBegin = 'Begin Session';
 
@@ -173,6 +173,7 @@ class AppStrings {
   static const String calibrationError = 'Calibration problem.';
   static const String calibrationNotReady =
       'Not ready. Keep hands still and release downward pressure.';
+  static const String calibrationRetry = 'Retry Calibration';
   static const String calibrationBeginSession = 'Begin Session';
 
   // -----------------------------------------------------------------------
@@ -181,9 +182,9 @@ class AppStrings {
 
   static const String beginCompressionTitle = 'Begin Compression Now';
 
-  /// Helper line under the heading. The break is intentional.
+  /// Helper line under the heading.
   static const String beginCompressionBody =
-      'Get into position as live\nsession start automatically.';
+      'Get into position as live session start automatically.';
 
   // -----------------------------------------------------------------------
   // Live practice
@@ -225,7 +226,7 @@ class AppStrings {
   /// The session is still persisted to History (§2-33).
   static const String sessionInterrupted = 'Session Interrupted (disconnected)';
   static const String sessionInterruptedDetail =
-      'BLE link was lost before a final summary arrived — this session was saved to History.';
+      'BLE link was lost before a final summary arrived — this session was not saved.';
 
   /// Shown when the session could not be written to the History database.
   static const String sessionHistoryFailed =

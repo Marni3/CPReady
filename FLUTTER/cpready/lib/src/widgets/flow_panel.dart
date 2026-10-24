@@ -18,7 +18,7 @@ class FlowPanel extends StatelessWidget {
     this.radius,
     this.borderWidth,
     this.width = double.infinity,
-    this.height,
+    this.minHeight,
   });
 
   /// Panel content.
@@ -28,9 +28,9 @@ class FlowPanel extends StatelessWidget {
   /// or null to let the panel hug its content.
   final double? width;
 
-  /// Panel height. Defaults to hugging the content; the flow cards pass a fixed
-  /// height so the two cards match whatever their text says.
-  final double? height;
+  /// Minimum panel height. Defaults to hugging the content; the flow cards pass
+  /// a floor so both cards share a size and still grow if their text wraps.
+  final double? minHeight;
 
   /// Inner padding; defaults to [AppSpacing.flowPanelPadding].
   final EdgeInsetsGeometry? padding;
@@ -51,7 +51,9 @@ class FlowPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: width,
-      height: height,
+      constraints: minHeight == null
+          ? null
+          : BoxConstraints(minHeight: minHeight!),
       padding: padding ?? const EdgeInsets.all(AppSpacing.flowPanelPadding),
       decoration: BoxDecoration(
         color: background ?? AppColors.flowPanelBackground,
