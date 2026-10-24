@@ -55,24 +55,24 @@ class _CpReadyAppState extends State<CpReadyApp> {
         AppRoutes.home: (_) => const MainShell(),
         AppRoutes.historyDetail: (context) {
           final rawId = GoRouterState.of(context).pathParameters['id'];
-          return HistoryDetailScreen(sessionId: int.tryParse(rawId ?? '') ?? -1);
+          return HistoryDetailScreen(
+            sessionId: int.tryParse(rawId ?? '') ?? -1,
+          );
         },
         AppRoutes.guide: (_) => const GuideScreen(),
-        AppRoutes.setup: (_) => const FlowConnectionGuard(
-              child: PracticeSetupScreen(),
-            ),
+        AppRoutes.setup: (_) =>
+            const FlowConnectionGuard(child: PracticeSetupScreen()),
         AppRoutes.handPlacement: (context) => FlowConnectionGuard(
-              child: HandPlacementScreen(traineeName: _traineeName(context)),
-            ),
+          child: HandPlacementScreen(traineeName: _traineeName(context)),
+        ),
         AppRoutes.calibration: (context) => FlowConnectionGuard(
-              child: CalibrationScreen(traineeName: _traineeName(context)),
-            ),
+          child: CalibrationScreen(traineeName: _traineeName(context)),
+        ),
         AppRoutes.beginCompression: (context) => FlowConnectionGuard(
-              child: BeginCompressionScreen(traineeName: _traineeName(context)),
-            ),
-        AppRoutes.livePractice: (context) => LivePracticeScreen(
-              traineeName: _traineeName(context),
-            ),
+          child: BeginCompressionScreen(traineeName: _traineeName(context)),
+        ),
+        AppRoutes.livePractice: (context) =>
+            LivePracticeScreen(traineeName: _traineeName(context)),
         AppRoutes.sessionComplete: (context) {
           final extra = GoRouterState.of(context).extra as Map? ?? {};
           return SessionCompleteScreen(
@@ -106,6 +106,12 @@ class _CpReadyAppState extends State<CpReadyApp> {
           theme: appThemeData().theme,
           routerConfig: _router,
           debugShowCheckedModeBanner: false,
+          builder: (BuildContext context, Widget? child) {
+            return MediaQuery.withClampedTextScaling(
+              maxScaleFactor: AppLayout.maxTextScale,
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
         ),
       ),
     );
@@ -166,8 +172,10 @@ class _MainShellState extends State<MainShell> {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.dividerInset,
+            padding: EdgeInsets.symmetric(
+              horizontal: AppLayout.pagePaddingFor(
+                MediaQuery.sizeOf(context).width,
+              ),
             ),
             child: Container(
               height: AppSizes.dividerThickness,
@@ -215,11 +223,16 @@ class _BottomNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool compact = AppLayout.isCompact(MediaQuery.sizeOf(context).width);
+    final double gap = compact
+        ? AppSpacing.navItemGapCompact
+        : AppSpacing.navItemGap;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: <Widget>[
         for (int i = 0; i < _destinations.length; i++) ...<Widget>[
-          if (i > 0) const SizedBox(width: AppSpacing.navItemGap),
+          if (i > 0) SizedBox(width: gap),
           _NavButton(
             destination: _destinations[i],
             selected: i == currentIndex,
@@ -245,8 +258,9 @@ class _NavButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color color =
-        selected ? AppColors.navSelected : AppColors.navUnselected;
+    final Color color = selected
+        ? AppColors.navSelected
+        : AppColors.navUnselected;
 
     return Semantics(
       button: true,
@@ -256,8 +270,10 @@ class _NavButton extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.navItemPadding,
+          padding: EdgeInsets.symmetric(
+            horizontal: AppLayout.isCompact(MediaQuery.sizeOf(context).width)
+                ? AppSpacing.navItemPaddingCompact
+                : AppSpacing.navItemPadding,
             vertical: AppSpacing.item,
           ),
           child: Column(

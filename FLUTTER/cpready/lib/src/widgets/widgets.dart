@@ -8,6 +8,7 @@ export 'base/app_icon.dart';
 export 'base/app_spacer.dart';
 export 'base/app_progress.dart';
 export 'base/app_scaffold.dart';
+export 'adaptive_screen.dart';
 export 'app_asset_icon.dart';
 export 'connection_status_chip.dart';
 export 'connect_button.dart';

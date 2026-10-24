@@ -21,6 +21,9 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
+    final double page = AppLayout.pagePaddingFor(
+      MediaQuery.sizeOf(context).width,
+    );
 
     return SafeArea(
       bottom: false,
@@ -28,15 +31,26 @@ class HomeScreen extends StatelessWidget {
         children: <Widget>[
           ScreenHeader(pageLabel: AppStrings.homeHeaderPage),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.page),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: <Widget>[
-                  const _WelcomeCard(),
-                  _DeviceCard(controller: controller),
-                  const _InfoCard(),
-                ],
+            child: ContentBounds(
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  return SingleChildScrollView(
+                    padding: EdgeInsets.symmetric(horizontal: page),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: constraints.maxHeight,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: <Widget>[
+                          const _WelcomeCard(),
+                          _DeviceCard(controller: controller),
+                          const _InfoCard(),
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ),
@@ -70,14 +84,18 @@ class _WelcomeCard extends StatelessWidget {
 
     // Size the subtitle so its single-line width matches "Welcome!" exactly.
     final double titleWidth = _measure(AppStrings.homeWelcomeTitle, titleStyle);
-    final double subtitleWidth =
-        _measure(AppStrings.homeWelcomeSubtitle, subtitleStyle);
+    final double subtitleWidth = _measure(
+      AppStrings.homeWelcomeSubtitle,
+      subtitleStyle,
+    );
     final double subtitleSize =
         AppTypography.homeWelcomeSubtitleSize * (titleWidth / subtitleWidth);
 
     return Container(
       width: double.infinity,
-      height: AppSizes.homeWelcomeCardHeight,
+      constraints: const BoxConstraints(
+        minHeight: AppSizes.homeWelcomeCardMinHeight,
+      ),
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.only(
         left: AppSpacing.homeWelcomeInset,

@@ -65,8 +65,8 @@ class AppSizes {
   /// Corner radius of the home cards.
   static const double homeCardRadius = 20.0;
 
-  /// Height of the gradient welcome card (bigger than its content).
-  static const double homeWelcomeCardHeight = 132.0;
+  /// Minimum height of the gradient welcome card; it grows with its text.
+  static const double homeWelcomeCardMinHeight = 132.0;
 
   /// Border width of the home cards.
   static const double homeCardBorderWidth = 1.5;
@@ -152,9 +152,9 @@ class AppSizes {
   static const double historyMoreIconSize = 20.0;
   static const double historyMoreTapSize = 32.0;
 
-  /// Outlined "See more" capsule on a session row (kept low enough to sit on
-  /// the same line as the timestamp).
-  static const double historySeeMoreHeight = 22.0;
+  /// Minimum height of the outlined "See more" capsule on a session row (kept
+  /// low enough to sit on the same line as the timestamp).
+  static const double historySeeMoreMinHeight = 22.0;
   static const double historySeeMoreRadius = 11.0;
   static const double historySeeMoreBorderWidth = 1.0;
 
@@ -187,12 +187,11 @@ class AppSizes {
   /// Also used by Calibration, which shows the same picture.
   static const double flowHandImageSize = 150.0;
 
-  /// Fixed size of the Hand Placement and Calibration cards, so both are the
-  /// same size and neither one grows or shrinks with its text. The height fits
-  /// two lines at [AppTypography.flowPanelHeadingSize], which is the most
-  /// either card's text needs.
+  /// Size of the Hand Placement and Calibration cards. The width never exceeds
+  /// the space available, and the height is a floor so the card grows when its
+  /// text wraps on a narrow screen.
   static const double flowCardWidth = 284.0;
-  static const double flowCardHeight = 290.0;
+  static const double flowCardMinHeight = 290.0;
 
   /// Rendered size of the countdown illustration (the source is square).
   static const double countdownImageSize = 190.0;
@@ -209,8 +208,8 @@ class AppSizes {
   /// capsule stops short of the section instead of spanning it.
   static const double liveSectionPaddingH = 16.0;
 
-  /// Height of the Rate / Recoil / Depth sections.
-  static const double liveSectionHeight = 96.0;
+  /// Minimum height of the Rate / Recoil / Depth sections.
+  static const double liveSectionMinHeight = 96.0;
 
   /// Value capsule (pill).
   static const double liveCapsuleHeight = 44.0;
@@ -242,7 +241,9 @@ class AppSizes {
   static const double summaryPanelBorderWidth = 1.0;
   static const double summaryRowRadius = 16.0;
   static const double summaryRowBorderWidth = 1.0;
-  static const double summaryRowHeight = 52.0;
+
+  /// Minimum height of a metric row; it grows with its label.
+  static const double summaryRowMinHeight = 52.0;
   static const double summaryCapsuleHeight = 30.0;
   static const double summaryCapsuleRadius = 15.0;
 

@@ -50,10 +50,10 @@ class ValueCapsule extends StatelessWidget {
   /// Fill for a graded capsule: green in range, red out of range, grey when
   /// there is no value yet.
   static Color gradedBackground(MetricRating? rating) => switch (rating) {
-        MetricRating.good => AppColors.liveCapsulePositive,
-        MetricRating.poor => AppColors.liveCapsuleNegative,
-        null => AppColors.liveCapsuleNeutral,
-      };
+    MetricRating.good => AppColors.liveCapsulePositive,
+    MetricRating.poor => AppColors.liveCapsuleNegative,
+    null => AppColors.liveCapsuleNeutral,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -68,12 +68,17 @@ class ValueCapsule extends StatelessWidget {
         color: background,
         borderRadius: BorderRadius.circular(radius),
       ),
-      child: Text(
-        text,
-        style: AppTypography.style(
-          size: textSize,
-          weight: textWeight,
-          color: foreground,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          text,
+          maxLines: 1,
+          softWrap: false,
+          style: AppTypography.style(
+            size: textSize,
+            weight: textWeight,
+            color: foreground,
+          ),
         ),
       ),
     );

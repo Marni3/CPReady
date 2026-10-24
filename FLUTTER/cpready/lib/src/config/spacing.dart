@@ -56,11 +56,14 @@ class AppSpacing {
   /// Space between the bottom-nav items.
   static const double navItemGap = 28.0;
 
+  /// Space between the bottom-nav items on compact screens.
+  static const double navItemGapCompact = 14.0;
+
   /// Horizontal padding inside each bottom-nav item (tap-target width).
   static const double navItemPadding = 14.0;
 
-  /// Horizontal inset of the top + bottom dividers from each screen edge.
-  static const double dividerInset = 24.0;
+  /// Horizontal padding inside each bottom-nav item on compact screens.
+  static const double navItemPaddingCompact = 8.0;
 
   /// Vertical breathing room around the top + bottom dividers.
   static const double dividerGap = 18.0;
@@ -208,6 +211,9 @@ class AppSpacing {
   /// Padding under the flat action button.
   static const double flowActionBottomPadding = 28.0;
 
+  /// Space between two stacked action buttons.
+  static const double flowActionStackGap = 12.0;
+
   /// Inner padding of the big instructional panel.
   static const double flowPanelPadding = 24.0;
 
@@ -287,6 +293,10 @@ class AppSpacing {
   /// Space between a metric cell and the panel's left and right edges. This is
   /// what keeps a cell from spanning the whole section.
   static const double summaryPanelPaddingH = 32.0;
+
+  /// The same inset on compact screens, where the regular one would squeeze the
+  /// row labels.
+  static const double summaryPanelPaddingHCompact = 20.0;
 
   /// Space above the first cell and below the duration line.
   static const double summaryPanelPaddingV = 24.0;

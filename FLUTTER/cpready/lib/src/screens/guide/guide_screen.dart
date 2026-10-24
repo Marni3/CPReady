@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/config.dart';
+import '../../widgets/widgets.dart';
 
 /// Step-by-step guide screen.
 class GuideScreen extends StatelessWidget {
@@ -19,52 +20,58 @@ class GuideScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final double page = AppLayout.pagePaddingFor(
+      MediaQuery.sizeOf(context).width,
+    );
+
     return Scaffold(
       backgroundColor: AppColors.surfaceScaffold,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.only(
-            top: AppSpacing.guideTopPadding,
-            bottom: AppSpacing.item,
-            left: AppSpacing.page,
-            right: AppSpacing.page,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: <Widget>[
-                  const GuideBackButton(),
-                  const SizedBox(width: AppSpacing.guideBackTitleGap),
-                  Expanded(
-                    child: Text(
-                      AppStrings.guideTitle,
-                      style: AppTypography.style(
-                        size: AppTypography.guideTitleSize,
-                        weight: AppTypography.headingWeight,
-                        color: AppColors.guideTitleText,
+        child: ContentBounds(
+          child: Padding(
+            padding: EdgeInsets.only(
+              top: AppSpacing.guideTopPadding,
+              bottom: AppSpacing.item,
+              left: page,
+              right: page,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    const GuideBackButton(),
+                    const SizedBox(width: AppSpacing.guideBackTitleGap),
+                    Expanded(
+                      child: Text(
+                        AppStrings.guideTitle,
+                        style: AppTypography.style(
+                          size: AppTypography.guideTitleSize,
+                          weight: AppTypography.headingWeight,
+                          color: AppColors.guideTitleText,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.guideTitleGap),
-              Expanded(
-                child: ListView.separated(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.guideCardSideInset,
-                  ),
-                  itemCount: AppGuideSteps.steps.length,
-                  separatorBuilder: (_, _) =>
-                      const SizedBox(height: AppSpacing.guideStepGap),
-                  itemBuilder: (_, int index) => GuideStepCard(
-                    number: index + 1,
-                    step: AppGuideSteps.steps[index],
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.guideTitleGap),
+                Expanded(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.guideCardSideInset,
+                    ),
+                    itemCount: AppGuideSteps.steps.length,
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: AppSpacing.guideStepGap),
+                    itemBuilder: (_, int index) => GuideStepCard(
+                      number: index + 1,
+                      step: AppGuideSteps.steps[index],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

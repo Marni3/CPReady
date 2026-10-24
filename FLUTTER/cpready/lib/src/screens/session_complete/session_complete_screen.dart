@@ -54,15 +54,16 @@ class SessionCompleteScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false, // explicit exit only, never back into the session
-      child: Scaffold(
-        backgroundColor: AppColors.surfaceScaffold,
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.only(
-              top: AppSpacing.summaryTopPadding,
-              bottom: AppSpacing.flowActionBottomPadding,
-            ),
-            child: Column(
+      child: AdaptiveScreen(
+        padding: const EdgeInsets.only(
+          top: AppSpacing.summaryTopPadding,
+          bottom: AppSpacing.flowActionBottomPadding,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: <Widget>[
+            Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 Padding(
@@ -84,10 +85,7 @@ class SessionCompleteScreen extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.summaryTitleInsetH,
                   ),
-                  child: _SavedBanner(
-                    saved: saved,
-                    historySaved: historySaved,
-                  ),
+                  child: _SavedBanner(saved: saved, historySaved: historySaved),
                 ),
                 const SizedBox(height: AppSpacing.summaryTraineeGap),
                 Padding(
@@ -105,34 +103,29 @@ class SessionCompleteScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSpacing.summaryPanelGap),
                 if (summary != null)
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.summaryPanelInsetH,
-                        ),
-                        child: _MetricsPanel(
-                          metrics: summary!,
-                          durationSeconds: durationSeconds,
-                        ),
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.summaryPanelInsetH,
                     ),
-                  )
-                else
-                  const Spacer(),
-                const SizedBox(height: AppSpacing.summaryActionTopGap),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.summaryActionInsetH,
+                    child: _MetricsPanel(
+                      metrics: summary!,
+                      durationSeconds: durationSeconds,
+                    ),
                   ),
-                  child: FlatActionButton(
-                    label: AppStrings.sessionReturnToHome,
-                    onPressed: () => _returnToHome(context),
-                  ),
-                ),
               ],
             ),
-          ),
+            Padding(
+              padding: const EdgeInsets.only(
+                top: AppSpacing.summaryActionTopGap,
+                left: AppSpacing.summaryActionInsetH,
+                right: AppSpacing.summaryActionInsetH,
+              ),
+              child: FlatActionButton(
+                label: AppStrings.sessionReturnToHome,
+                onPressed: () => _returnToHome(context),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -152,8 +145,10 @@ class _SavedBanner extends StatelessWidget {
     final Color background = saved
         ? AppColors.summarySavedBackground
         : AppColors.summaryFailedBackground;
-    final Color foreground =
-        saved ? AppColors.summarySavedText : AppColors.summaryFailedText;
+    final Color foreground = saved
+        ? AppColors.summarySavedText
+        : AppColors.summaryFailedText;
+    final bool compact = AppLayout.isCompact(MediaQuery.sizeOf(context).width);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -175,12 +170,12 @@ class _SavedBanner extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
               Text(
-                saved
-                    ? AppStrings.sessionSaved
-                    : AppStrings.sessionInterrupted,
+                saved ? AppStrings.sessionSaved : AppStrings.sessionInterrupted,
                 textAlign: TextAlign.center,
                 style: AppTypography.style(
-                  size: AppTypography.summaryBannerSize,
+                  size: compact
+                      ? AppTypography.summaryBannerCompactSize
+                      : AppTypography.summaryBannerSize,
                   weight: AppTypography.headingWeight,
                   color: foreground,
                 ),
@@ -268,8 +263,10 @@ class _MetricsPanel extends StatelessWidget {
       border: AppColors.summaryPanelBorder,
       radius: AppSizes.summaryPanelRadius,
       borderWidth: AppSizes.summaryPanelBorderWidth,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.summaryPanelPaddingH,
+      padding: EdgeInsets.symmetric(
+        horizontal: AppLayout.isCompact(MediaQuery.sizeOf(context).width)
+            ? AppSpacing.summaryPanelPaddingHCompact
+            : AppSpacing.summaryPanelPaddingH,
         vertical: AppSpacing.summaryPanelPaddingV,
       ),
       child: Column(
@@ -314,16 +311,19 @@ class _MetricsPanel extends StatelessWidget {
               horizontal: AppSpacing.summaryRowPaddingH,
             ),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(
-                  AppStrings.sessionDuration,
-                  style: AppTypography.style(
-                    size: AppTypography.summaryDurationLabelSize,
-                    weight: AppTypography.headingWeight,
-                    color: AppColors.summaryRowLabelText,
+                Expanded(
+                  child: Text(
+                    AppStrings.sessionDuration,
+                    style: AppTypography.style(
+                      size: AppTypography.summaryDurationLabelSize,
+                      weight: AppTypography.headingWeight,
+                      color: AppColors.summaryRowLabelText,
+                    ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: AppSpacing.summaryRowGap),
                 Text(
                   durationText(durationSeconds),
                   style: AppTypography.style(
@@ -353,9 +353,12 @@ class _MetricRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: AppSizes.summaryRowHeight,
+      constraints: const BoxConstraints(
+        minHeight: AppSizes.summaryRowMinHeight,
+      ),
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.summaryRowPaddingH,
+        vertical: AppSpacing.tiny,
       ),
       decoration: BoxDecoration(
         color: AppColors.summaryRowBackground,

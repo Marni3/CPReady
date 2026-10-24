@@ -134,7 +134,7 @@ class AppTypography {
   /// Number inside the red circle.
   static const double guideNumberSize = 13.0;
 
-  /// Heaviest weight we ship (Montserrat Black — see the `fonts:` list in
+  /// Heaviest weight the app uses (Montserrat Black — see the `fonts:` list in
   /// `pubspec.yaml`). Used by the page headings and the header wordmark.
   static const FontWeight headingWeight = FontWeight.w900;
 
@@ -235,6 +235,10 @@ class AppTypography {
 
   static const double summaryTitleSize = 30.0;
   static const double summaryBannerSize = 28.0;
+
+  /// Banner size on compact screens, where the interrupted label would
+  /// otherwise wrap far past the banner's width.
+  static const double summaryBannerCompactSize = 21.0;
   static const double summaryTraineeSize = 18.0;
   static const double summaryRowLabelSize = 15.0;
   static const double summaryCapsuleSize = 13.0;
