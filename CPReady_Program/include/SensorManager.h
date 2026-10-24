@@ -139,6 +139,58 @@ public:
         }
     }
 
+    // Automated boot-time diagnostic scanner across all 8 downstream multiplexer channels
+    void scanMultiplexerChannels() {
+        if (!hasMultiplexer) return;
+        Serial.println("[MUX SCAN] Probing all 8 downstream PCA9548A multiplexer channels (SD0-SD7)...");
+        uint8_t totalDevicesAcrossChannels = 0;
+
+        for (uint8_t ch = 0; ch < 8; ch++) {
+            selectMuxChannel(ch);
+            uint8_t chDevices = 0;
+
+            for (uint8_t addr = 1; addr < 127; addr++) {
+                // Skip the multiplexer's own address to avoid echoing upstream bus traffic
+                if (addr == CPReadyConfig::PCA9548A_I2C_ADDR) continue;
+
+                Wire.beginTransmission(addr);
+                if (Wire.endTransmission() == 0) {
+                    if (chDevices == 0) {
+                        Serial.printf("[MUX SCAN]  -> Channel SD%d:\n", ch);
+                    }
+                    Serial.printf("        * Device at 0x%02X", addr);
+                    if (addr == 0x68) {
+                        Serial.print(" (MPU-6050 Default / 0x68)");
+                    } else if (addr == 0x69) {
+                        Serial.print(" (MPU-6050 Alternate / 0x69)");
+                    }
+
+                    // Query WHO_AM_I register for MPU devices
+                    if (addr == 0x68 || addr == 0x69) {
+                        Wire.beginTransmission(addr);
+                        Wire.write(0x75);
+                        if (Wire.endTransmission(false) == 0 && Wire.requestFrom((int)addr, 1) == 1) {
+                            uint8_t whoAmI = Wire.read();
+                            const char* tag = (whoAmI == 0x68) ? " - MPU6050 Genuine" 
+                                            : (whoAmI == 0x70 || whoAmI == 0x72 ? " - MPU6500/Clone" : "");
+                            Serial.printf(" [WHO_AM_I: 0x%02X%s]", whoAmI, tag);
+                        }
+                    }
+                    Serial.println();
+                    chDevices++;
+                    totalDevicesAcrossChannels++;
+                }
+            }
+        }
+        disableMux();
+
+        if (totalDevicesAcrossChannels == 0) {
+            Serial.println("[MUX SCAN]  -> [WARN] No devices found across any downstream multiplexer channel!");
+        } else {
+            Serial.printf("[MUX SCAN]  -> Downstream scan complete: %d device(s) found across all channels.\n", totalDevicesAcrossChannels);
+        }
+    }
+
     // Dynamic PCA9548A channel scanner & automatic mapping (with multi-address & retry support)
     bool detectAndMapChannels() {
         Wire.beginTransmission(CPReadyConfig::PCA9548A_I2C_ADDR);
@@ -147,7 +199,6 @@ public:
             return false;
         }
         hasMultiplexer = true;
-        Serial.printf("[I2C MUX] PCA9548A Multiplexer detected at address 0x%02X.\n", CPReadyConfig::PCA9548A_I2C_ADDR);
 
         int8_t detectedChannels[8];
         uint8_t detectedAddresses[8];
@@ -189,7 +240,7 @@ public:
 
                     const char* chipTag = (whoAmI == 0x68) ? " - MPU6050 Genuine" 
                                         : (whoAmI == 0x70 || whoAmI == 0x72 ? " - MPU6500/Clone" : "");
-                    Serial.printf("[I2C MUX]  -> Channel SD%d: Found device at 0x%02X (WHO_AM_I: 0x%02X%s)\n",
+                    Serial.printf("[I2C MUX]  -> Channel SD%d: Mapped to 0x%02X (WHO_AM_I: 0x%02X%s)\n",
                         ch, probeAddr, whoAmI, chipTag);
                     break; // Sensor found on this channel, advance to next channel
                 }
@@ -261,8 +312,15 @@ public:
         recoverI2CBus();
         scanI2CBus();
 
-        bool muxDetected = detectAndMapChannels();
+        // Check if PCA9548A multiplexer is online at 0x70
+        Wire.beginTransmission(CPReadyConfig::PCA9548A_I2C_ADDR);
+        hasMultiplexer = (Wire.endTransmission() == 0);
+
         if (hasMultiplexer) {
+            Serial.printf("[I2C MUX] PCA9548A Multiplexer detected at address 0x%02X.\n", CPReadyConfig::PCA9548A_I2C_ADDR);
+            scanMultiplexerChannels();
+
+            bool muxDetected = detectAndMapChannels();
             if (!muxDetected) {
                 disableMux();
                 return false;
