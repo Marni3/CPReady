@@ -17,6 +17,20 @@ private:
     uint32_t totalActiveCompressionMillis;
     uint32_t lastCompressionDetectedMillis;
 
+    // Runtime Dynamic Configuration
+    float depthCalibrationK;
+    float compressionStartThresholdG;
+    float recoilThresholdG;
+    CPReadyConfig::KinematicProfile currentProfile;
+
+    // Cadence Consistency & Jitter Estimator
+    static constexpr uint8_t PERIOD_HISTORY_SIZE = 4;
+    uint16_t recentCyclePeriods[PERIOD_HISTORY_SIZE];
+    uint8_t  periodHistoryCount;
+    uint8_t  periodHistoryIndex;
+    uint8_t  unsteadyStreak;
+    uint32_t unsteadyStartTime;
+
     // Cumulative Session Aggregators
     uint32_t totalStrokeCount;
     uint32_t goodRecoilCount;
@@ -40,7 +54,12 @@ private:
     uint32_t targetStartTime;
 
 public:
-    CompressionTracker() : state(StrokeState::WAITING_FOR_DOWNSLICK) {
+    CompressionTracker() 
+        : state(StrokeState::WAITING_FOR_DOWNSLICK),
+          depthCalibrationK(CPReadyConfig::DEPTH_CALIBRATION_K),
+          compressionStartThresholdG(CPReadyConfig::COMPRESSION_START_THRESHOLD_G),
+          recoilThresholdG(CPReadyConfig::RECOIL_THRESHOLD_G),
+          currentProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD) {
         reset();
     }
 
@@ -53,6 +72,11 @@ public:
         sessionStartMillis = 0;
         totalActiveCompressionMillis = 0;
         lastCompressionDetectedMillis = 0;
+
+        periodHistoryCount = 0;
+        periodHistoryIndex = 0;
+        unsteadyStreak = 0;
+        unsteadyStartTime = 0;
 
         totalStrokeCount = 0;
         goodRecoilCount = 0;
@@ -73,19 +97,70 @@ public:
         fastRateStartTime = 0;
         targetStartTime = 0;
 
-        reading = {0.0f, 0.0f, true, 0.0f, 0, PROMPT_NONE, 0};
-        lastFinalSummary = {0.0f, 0.0f, 100.0f, 0.0f, 0, 0};
+        reading = CPRReading(0.0f, 0.0f, true, 0.0f, 0, PROMPT_NONE, 0, CADENCE_FLAG_STEADY);
+        lastFinalSummary = CPRSessionSummary(0.0f, 0.0f, 100.0f, 0.0f, 0, 0, CADENCE_FLAG_STEADY);
     }
 
     void startSession(uint32_t currentMillis) {
         reset();
         sessionStartMillis = currentMillis;
-        lastStrokePeakMillis = currentMillis;          // Fix: prevents first-stroke cycle period explosion
+        lastStrokePeakMillis = currentMillis;          // Prevents first-stroke cycle period explosion
         lastCompressionDetectedMillis = currentMillis;
-        lastAudioPromptMillis = currentMillis; // Grace period at start
+        lastAudioPromptMillis = currentMillis;         // Grace period at start
         lastTargetPraiseMillis = currentMillis;
         targetStartTime = currentMillis;
     }
+
+    // Dynamic Runtime Tuning APIs
+    void setDepthK(float k) {
+        if (k >= 1.0f && k <= 30.0f) {
+            depthCalibrationK = k;
+        }
+    }
+    float getDepthK() const { return depthCalibrationK; }
+
+    float getRunningAverageDepth() const {
+        return totalStrokeCount > 0 ? (cumulativeDepthSum / (float)totalStrokeCount) : 0.0f;
+    }
+
+    // Proportional comparative calibration: K_new = K_current * (targetDepth / measuredMeanDepth)
+    bool calibrateFromLastSummary(float targetDepthCm, float& outNewK) {
+        if (targetDepthCm <= 0.0f || lastFinalSummary.avg_depth_cm <= 0.0f) {
+            return false;
+        }
+        float ratio = targetDepthCm / lastFinalSummary.avg_depth_cm;
+        float newK = depthCalibrationK * ratio;
+        if (newK >= 1.0f && newK <= 30.0f) {
+            depthCalibrationK = newK;
+            outNewK = newK;
+            return true;
+        }
+        return false;
+    }
+
+    void setCompressionStartThresholdG(float g) {
+        if (g >= 0.10f && g <= 1.50f) compressionStartThresholdG = g;
+    }
+    float getCompressionStartThresholdG() const { return compressionStartThresholdG; }
+
+    void setRecoilThresholdG(float g) {
+        if (g <= -0.05f && g >= -1.50f) recoilThresholdG = g;
+    }
+    float getRecoilThresholdG() const { return recoilThresholdG; }
+
+    void setProfile(CPReadyConfig::KinematicProfile profile) {
+        currentProfile = profile;
+        if (profile == CPReadyConfig::KinematicProfile::BENCH_TEST) {
+            compressionStartThresholdG = CPReadyConfig::BENCH_COMPRESSION_START_THRESHOLD_G;
+            recoilThresholdG           = CPReadyConfig::BENCH_RECOIL_THRESHOLD_G;
+            depthCalibrationK          = CPReadyConfig::BENCH_DEPTH_CALIBRATION_K;
+        } else {
+            compressionStartThresholdG = CPReadyConfig::COMPRESSION_START_THRESHOLD_G;
+            recoilThresholdG           = CPReadyConfig::RECOIL_THRESHOLD_G;
+            depthCalibrationK          = CPReadyConfig::DEPTH_CALIBRATION_K;
+        }
+    }
+    CPReadyConfig::KinematicProfile getProfile() const { return currentProfile; }
 
     // Called for each 100 Hz sample. Returns true whenever a stroke completes.
     bool processSample(float netAccel, uint32_t currentMillis) {
@@ -103,7 +178,7 @@ public:
 
         switch (state) {
             case StrokeState::WAITING_FOR_DOWNSLICK:
-                if (netAccel > CPReadyConfig::COMPRESSION_START_THRESHOLD_G && 
+                if (netAccel > compressionStartThresholdG && 
                     (currentMillis - lastStrokePeakMillis > CPReadyConfig::REFRACTORY_LOCKOUT_MS)) {
                     state = StrokeState::COMPRESSING;
                     strokeStartMillis = currentMillis;
@@ -129,20 +204,72 @@ public:
                 }
                 // When net acceleration crosses back upward near zero, stroke is finished
                 if (netAccel >= CPReadyConfig::STROKE_FINISH_THRESHOLD_G) {
-                    uint32_t cyclePeriodMs = currentMillis - lastStrokePeakMillis;
+                    uint32_t rawPeriodMs = currentMillis - lastStrokePeakMillis;
                     lastStrokePeakMillis = currentMillis;
                     lastCompressionDetectedMillis = currentMillis;
 
-                    // 1. Compute Instantaneous Rate
-                    if (cyclePeriodMs > 0 && cyclePeriodMs < 2000) {
-                        reading.rate_cpm = 60000.0f / (float)cyclePeriodMs;
-                        totalActiveCompressionMillis += cyclePeriodMs;
+                    bool isPostPause = (rawPeriodMs > CPReadyConfig::PAUSE_DETECTION_TIMEOUT_MS || totalStrokeCount == 0);
+
+                    // 1. Cadence Jitter & Consistency Estimation
+                    bool isCadenceSteady = true;
+                    if (!isPostPause && rawPeriodMs >= 250 && rawPeriodMs <= 2000) {
+                        recentCyclePeriods[periodHistoryIndex] = (uint16_t)rawPeriodMs;
+                        periodHistoryIndex = (periodHistoryIndex + 1) % PERIOD_HISTORY_SIZE;
+                        if (periodHistoryCount < PERIOD_HISTORY_SIZE) {
+                            periodHistoryCount++;
+                        }
+
+                        if (periodHistoryCount >= 3) {
+                            float sumPeriod = 0.0f;
+                            for (uint8_t i = 0; i < periodHistoryCount; i++) {
+                                sumPeriod += (float)recentCyclePeriods[i];
+                            }
+                            float meanPeriod = sumPeriod / (float)periodHistoryCount;
+                            float sumDev = 0.0f;
+                            for (uint8_t i = 0; i < periodHistoryCount; i++) {
+                                sumDev += fabsf((float)recentCyclePeriods[i] - meanPeriod);
+                            }
+                            float meanDev = sumDev / (float)periodHistoryCount;
+                            float jitterRatio = (meanPeriod > 0.0f) ? (meanDev / meanPeriod) : 0.0f;
+                            isCadenceSteady = (jitterRatio <= CPReadyConfig::MAX_CADENCE_JITTER_RATIO);
+                        }
+                    } else {
+                        // After an idle pause or on first stroke, cadence is not yet synchronized
+                        periodHistoryCount = 0;
+                        periodHistoryIndex = 0;
+                        isCadenceSteady = false;
                     }
 
-                    // 2. Compute Algebraic Harmonic Depth: D = K * a_pp * T^2
+                    // Build Quality Flags Bitmask
+                    uint8_t flags = 0;
+                    if (isCadenceSteady) flags |= CADENCE_FLAG_STEADY;
+                    if (isPostPause)     flags |= CADENCE_FLAG_FIRST_STROKE;
+                    if (currentProfile == CPReadyConfig::KinematicProfile::BENCH_TEST) flags |= CADENCE_FLAG_BENCH_MODE;
+                    reading.quality_flags = flags;
+
+                    // 2. Compute Instantaneous Rate
+                    if (rawPeriodMs > 0 && rawPeriodMs < 2000) {
+                        reading.rate_cpm = 60000.0f / (float)rawPeriodMs;
+                        totalActiveCompressionMillis += rawPeriodMs;
+                    }
+
+                    // 3. Compute Algebraic Harmonic Depth: D = K * a_pp * T_clamped^2
+                    // Clamping period prevents quadratic explosion during bench testing or after pauses
+                    float cyclePeriodSec;
+                    if (isPostPause) {
+                        // Anchor to typical CPR period (~110 CPM = 0.55s) to eliminate false 10 cm ceilings
+                        cyclePeriodSec = CPReadyConfig::FALLBACK_CADENCE_PERIOD_SEC;
+                    } else {
+                        cyclePeriodSec = (float)rawPeriodMs / 1000.0f;
+                        if (cyclePeriodSec < CPReadyConfig::MIN_CPR_PERIOD_SEC) {
+                            cyclePeriodSec = CPReadyConfig::MIN_CPR_PERIOD_SEC;
+                        } else if (cyclePeriodSec > CPReadyConfig::MAX_CPR_PERIOD_SEC) {
+                            cyclePeriodSec = CPReadyConfig::MAX_CPR_PERIOD_SEC;
+                        }
+                    }
+
                     float peakToPeakAccel = peakAccel - troughAccel;
-                    float cyclePeriodSec = (float)cyclePeriodMs / 1000.0f;
-                    reading.depth_cm = CPReadyConfig::DEPTH_CALIBRATION_K * (peakToPeakAccel * cyclePeriodSec * cyclePeriodSec);
+                    reading.depth_cm = depthCalibrationK * (peakToPeakAccel * cyclePeriodSec * cyclePeriodSec);
 
                     // Constrain bounds using configured limits
                     if (reading.depth_cm < CPReadyConfig::DEPTH_MIN_LIMIT_CM) {
@@ -152,17 +279,17 @@ public:
                         reading.depth_cm = CPReadyConfig::DEPTH_MAX_LIMIT_CM;
                     }
 
-                    // 3. Evaluate Recoil
-                    reading.recoil_complete = (troughAccel < CPReadyConfig::RECOIL_THRESHOLD_G);
+                    // 4. Evaluate Recoil
+                    reading.recoil_complete = (troughAccel < recoilThresholdG);
 
-                    // 4. Update Chest Compression Fraction
+                    // 5. Update Chest Compression Fraction
                     uint32_t totalSessionTime = currentMillis - sessionStartMillis;
                     if (totalSessionTime > 0) {
                         reading.ccf_percentage = ((float)totalActiveCompressionMillis / (float)totalSessionTime) * 100.0f;
                         if (reading.ccf_percentage > 100.0f) reading.ccf_percentage = 100.0f;
                     }
 
-                    // 5. Update Session Accumulators
+                    // 6. Update Session Accumulators
                     totalStrokeCount++;
                     reading.stroke_count = (uint16_t)totalStrokeCount;
                     if (reading.recoil_complete) {
@@ -171,17 +298,17 @@ public:
                     cumulativeDepthSum += reading.depth_cm;
                     cumulativeRateSum += reading.rate_cpm;
 
-                    // 6. Audio Coaching Engine Evaluation
-                    // Clear stale error streaks if the inter-stroke gap exceeded the pause threshold
-                    if (cyclePeriodMs > CPReadyConfig::PAUSE_DETECTION_TIMEOUT_MS) {
+                    // 7. Audio Coaching Engine Evaluation
+                    if (rawPeriodMs > CPReadyConfig::PAUSE_DETECTION_TIMEOUT_MS) {
                         shallowStreak = 0;   shallowStartTime = 0;
                         deepStreak = 0;      deepStartTime = 0;
                         leaningStreak = 0;   leaningStartTime = 0;
                         slowRateStreak = 0;  slowRateStartTime = 0;
                         fastRateStreak = 0;  fastRateStartTime = 0;
+                        unsteadyStreak = 0;  unsteadyStartTime = 0;
                     }
                     reading.audio_prompt_code = PROMPT_NONE;
-                    evaluateAudioGuidance(currentMillis);
+                    evaluateAudioGuidance(currentMillis, isCadenceSteady, isPostPause);
 
                     state = StrokeState::WAITING_FOR_DOWNSLICK;
                     return true; // Stroke complete, fresh metrics and audio cue ready
@@ -193,7 +320,7 @@ public:
     }
 
 private:
-    void evaluateAudioGuidance(uint32_t currentMillis) {
+    void evaluateAudioGuidance(uint32_t currentMillis, bool isCadenceSteady, bool isPostPause) {
         if (!CPReadyConfig::ENABLE_AUDIO_COACHING_PROMPTS) return;
 
         bool isShallow = (reading.depth_cm < CPReadyConfig::TARGET_DEPTH_MIN_CM);
@@ -242,6 +369,15 @@ private:
         } else {
             fastRateStreak = 0;
             fastRateStartTime = 0;
+        }
+
+        // Track unsteady cadence streak (ignore post-pause recovery stroke)
+        if (!isCadenceSteady && !isPostPause) {
+            if (unsteadyStreak == 0) unsteadyStartTime = currentMillis;
+            unsteadyStreak++;
+        } else {
+            unsteadyStreak = 0;
+            unsteadyStartTime = 0;
         }
 
         if (isTarget) {
@@ -304,7 +440,16 @@ private:
             return;
         }
 
-        // Priority 4: Positive Reinforcement (Good compressions every 15s)
+        // Priority 4: Cadence Rhythm Consistency
+        if (isSustained(unsteadyStartTime, unsteadyStreak)) {
+            reading.audio_prompt_code = PROMPT_STEADY_RHYTHM;
+            lastAudioPromptMillis = currentMillis;
+            unsteadyStreak = 0;
+            unsteadyStartTime = 0;
+            return;
+        }
+
+        // Priority 5: Positive Reinforcement (Good compressions every 15s)
         if (isTarget && targetStartTime > 0 && 
             (currentMillis - targetStartTime >= CPReadyConfig::AUDIO_PROMPT_PRAISE_INTERVAL) &&
             (currentMillis - lastTargetPraiseMillis >= CPReadyConfig::AUDIO_PROMPT_PRAISE_INTERVAL)) {
@@ -321,6 +466,8 @@ public:
         CPRSessionSummary s;
         s.total_compressions = (uint16_t)totalStrokeCount;
         s.total_duration_sec = sessionStartMillis > 0 ? (uint16_t)((endMillis - sessionStartMillis) / 1000) : 0;
+        s.quality_flags = (currentProfile == CPReadyConfig::KinematicProfile::BENCH_TEST) ? 
+                          (CADENCE_FLAG_STEADY | CADENCE_FLAG_BENCH_MODE) : CADENCE_FLAG_STEADY;
         
         if (totalStrokeCount > 0) {
             s.avg_depth_cm = cumulativeDepthSum / (float)totalStrokeCount;

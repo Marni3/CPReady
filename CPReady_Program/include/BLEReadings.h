@@ -8,7 +8,7 @@
  * CPReady BLE Telemetry & Packet Specification
  * ==============================================================================
  * 
- * PACKET SIZE: Exactly 11 Bytes (Packed Little-Endian)
+ * PACKET SIZE: Exactly 12 Bytes (Packed Little-Endian)
  * SERVICE UUID:        6e400001-b5a3-f393-e0a9-e50e24dcca9e
  * METRICS CHAR UUID:   6e400002-b5a3-f393-e0a9-e50e24dcca9e
  * COMMAND CHAR UUID:   6e400003-b5a3-f393-e0a9-e50e24dcca9e
@@ -30,8 +30,14 @@ constexpr uint8_t PROMPT_RELEASE_FULLY    = 3; // "Release chest completely" (le
 constexpr uint8_t PROMPT_SPEED_UP         = 4; // "Speed up" (rate < 100 cpm sustained >= 3.5s)
 constexpr uint8_t PROMPT_SLOW_DOWN        = 5; // "Slow down" (rate > 120 cpm sustained >= 3.5s)
 constexpr uint8_t PROMPT_GOOD_JOB         = 6; // "Good compressions" (positive praise after sustained target compliance)
+constexpr uint8_t PROMPT_STEADY_RHYTHM    = 7; // "Maintain steady rhythm" (cadence jitter > 25% sustained)
 
-// Strict 1-byte packed network packet
+// Cadence Quality & Engine State Bitmask Flags (Byte 11)
+constexpr uint8_t CADENCE_FLAG_STEADY       = (1 << 0); // Bit 0: 1 = Steady rhythmic cadence, 0 = Erratic/Unsteady
+constexpr uint8_t CADENCE_FLAG_FIRST_STROKE = (1 << 1); // Bit 1: 1 = First stroke or stroke following an idle pause
+constexpr uint8_t CADENCE_FLAG_BENCH_MODE   = (1 << 2); // Bit 2: 1 = Bench profile active, 0 = Manikin profile
+
+// Strict 1-byte packed network packet (Exactly 12 Bytes)
 #pragma pack(push, 1)
 struct CPRMetricsPacket {
     // Byte Offset 0: Packet Type Identifier
@@ -50,7 +56,7 @@ struct CPRMetricsPacket {
     // Byte Offset 6: Cumulative Chest Compression Fraction percentage (0..100%)
     uint8_t  ccf_percent;
 
-    // Byte Offset 7: Audio Coaching Trigger Code (0..6)
+    // Byte Offset 7: Audio Coaching Trigger Code (0..7)
     uint8_t  audio_prompt_code;
 
     // Byte Offset 8: Stroke sequence index (Live) or total session compressions count (Summary)
@@ -58,8 +64,13 @@ struct CPRMetricsPacket {
 
     // Byte Offset 9..10: Elapsed session duration in seconds
     uint16_t session_elapsed_sec;
+
+    // Byte Offset 11: Cadence Quality & Engine Bitmask Flags
+    uint8_t  quality_flags;
 };
 #pragma pack(pop)
+
+static_assert(sizeof(CPRMetricsPacket) == 12, "CPRMetricsPacket must be exactly 12 bytes");
 
 
 /**
@@ -73,6 +84,14 @@ struct CPRSessionSummary {
     float    final_ccf_percent;
     uint16_t total_compressions;
     uint16_t total_duration_sec;
+    uint8_t  quality_flags;
+
+    CPRSessionSummary(float rate = 0.0f, float depth = 0.0f, float recoil = 100.0f,
+                      float ccf = 0.0f, uint16_t total = 0, uint16_t dur = 0,
+                      uint8_t flags = CADENCE_FLAG_STEADY)
+        : avg_rate_cpm(rate), avg_depth_cm(depth), recoil_compliance_percent(recoil),
+          final_ccf_percent(ccf), total_compressions(total), total_duration_sec(dur),
+          quality_flags(flags) {}
 
     CPRMetricsPacket toPacket(uint8_t packetType = PKT_TYPE_FINAL_SUMMARY) const {
         CPRMetricsPacket pkt;
@@ -84,6 +103,7 @@ struct CPRSessionSummary {
         pkt.audio_prompt_code  = PROMPT_NONE;
         pkt.total_compressions = (uint8_t)(total_compressions > 255 ? 255 : total_compressions);
         pkt.session_elapsed_sec= total_duration_sec;
+        pkt.quality_flags      = quality_flags;
         return pkt;
     }
 };
@@ -100,6 +120,14 @@ struct CPRReading {
     uint32_t elapsed_seconds;
     uint8_t  audio_prompt_code;
     uint16_t stroke_count;
+    uint8_t  quality_flags;
+
+    CPRReading(float rate = 0.0f, float depth = 0.0f, bool recoil = true,
+               float ccf = 0.0f, uint32_t elapsed = 0, uint8_t prompt = PROMPT_NONE,
+               uint16_t strokes = 0, uint8_t flags = CADENCE_FLAG_STEADY)
+        : rate_cpm(rate), depth_cm(depth), recoil_complete(recoil),
+          ccf_percentage(ccf), elapsed_seconds(elapsed), audio_prompt_code(prompt),
+          stroke_count(strokes), quality_flags(flags) {}
 
     CPRMetricsPacket toPacket(uint8_t packetType = PKT_TYPE_REALTIME) const {
         CPRMetricsPacket pkt;
@@ -111,6 +139,7 @@ struct CPRReading {
         pkt.audio_prompt_code  = audio_prompt_code;
         pkt.total_compressions = (uint8_t)(stroke_count > 255 ? 255 : stroke_count);
         pkt.session_elapsed_sec= (uint16_t)elapsed_seconds;
+        pkt.quality_flags      = quality_flags;
         return pkt;
     }
 
@@ -123,14 +152,15 @@ struct CPRReading {
         r.audio_prompt_code = pkt.audio_prompt_code;
         r.stroke_count      = pkt.total_compressions;
         r.elapsed_seconds   = (uint32_t)pkt.session_elapsed_sec;
+        r.quality_flags     = pkt.quality_flags;
         return r;
     }
 
     String toDebugString() const {
-        char buf[128];
+        char buf[160];
         snprintf(buf, sizeof(buf),
-            "Rate: %3.0f cpm | Depth: %4.2f cm | Recoil: %s | CCF: %3.0f%% | AudioCue: %d | Time: %3ds",
-            rate_cpm, depth_cm, recoil_complete ? "OK" : "LEAN", ccf_percentage, audio_prompt_code, elapsed_seconds);
+            "Rate: %3.0f cpm | Depth: %4.2f cm | Recoil: %s | CCF: %3.0f%% | AudioCue: %d | Time: %3ds | Flags: 0x%02X",
+            rate_cpm, depth_cm, recoil_complete ? "OK" : "LEAN", ccf_percentage, audio_prompt_code, elapsed_seconds, quality_flags);
         return String(buf);
     }
 };
@@ -153,9 +183,14 @@ struct CPRReading {
    final double depthCm;         // Current or average depth (cm)
    final double depthMm;         // Current or average depth (mm)
    final int ccfPercent;         // Cumulative CCF %
-   final int audioPromptCode;    // 0=None, 1=Push Harder, 2=Push Less, 3=Release Fully, 4=Speed Up, 5=Slow Down, 6=Good
+   final int audioPromptCode;    // 0=None, 1=Push Harder, 2=Push Less, 3=Release Fully, 4=Speed Up, 5=Slow Down, 6=Good, 7=Steady Rhythm
    final int totalCompressions;  // Stroke count
    final int elapsedSeconds;     // Elapsed session duration
+   final int qualityFlags;       // Bitmask: Bit 0 = Steady, Bit 1 = First/Post-Pause, Bit 2 = Bench Mode
+
+   bool get isSteadyCadence => (qualityFlags & 0x01) != 0;
+   bool get isFirstStrokeOrPostPause => (qualityFlags & 0x02) != 0;
+   bool get isBenchMode => (qualityFlags & 0x04) != 0;
 
    CPRMetrics({
      required this.packetType,
@@ -168,11 +203,12 @@ struct CPRReading {
      required this.audioPromptCode,
      required this.totalCompressions,
      required this.elapsedSeconds,
+     required this.qualityFlags,
    });
 
    factory CPRMetrics.fromBytes(List<int> bytes) {
      if (bytes.length < 11) {
-       throw ArgumentError("Expected 11 bytes, got ${bytes.length}");
+       throw ArgumentError("Expected at least 11 bytes, got ${bytes.length}");
      }
      final byteData = ByteData.sublistView(Uint8List.fromList(bytes));
 
@@ -184,6 +220,7 @@ struct CPRReading {
      final audioCue = byteData.getUint8(7);
      final totalCount = byteData.getUint8(8);
      final elapsed = byteData.getUint16(9, Endian.little);
+     final flags = (bytes.length >= 12) ? byteData.getUint8(11) : 0x01; // Default to steady if 11 bytes received
 
      return CPRMetrics(
        packetType: type,
@@ -196,6 +233,7 @@ struct CPRReading {
        audioPromptCode: audioCue,
        totalCompressions: totalCount,
        elapsedSeconds: elapsed,
+       qualityFlags: flags,
      );
    }
  }
@@ -214,6 +252,7 @@ struct CPRReading {
  //     case 4: tts.speak("Speed up"); break;
  //     case 5: tts.speak("Slow down"); break;
  //     case 6: tts.speak("Good compressions"); break;
+ //     case 7: tts.speak("Maintain a steady rhythm"); break;
  //   }
  // }
  ```

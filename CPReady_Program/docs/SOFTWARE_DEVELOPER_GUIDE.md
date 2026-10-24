@@ -35,7 +35,7 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
 - **Sequence**:
   1. Instructor presses and holds "End Session" in Flutter.
   2. Flutter transmits the text string `"STOP"` to the Command Characteristic (`6e400003-...`).
-  3. The ESP32 closes the measurement period, computes session averages (average depth, average rate, recoil compliance %, final CCF %, total compressions), and broadcasts an 11-byte summary packet with `packet_type = 4 (PKT_TYPE_FINAL_SUMMARY)`.
+  3. The ESP32 closes the measurement period, computes session averages (average depth, average rate, recoil compliance %, final CCF %, total compressions), and broadcasts a 12-byte summary packet with `packet_type = 4 (PKT_TYPE_FINAL_SUMMARY)`.
   4. The ESP32 transitions to `STANDBY`.
   5. Flutter validates the packet, saves the session to local SQLite/Hive storage, and opens the Results screen.
 
@@ -49,7 +49,7 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
 
 ### 4. Response Timeout & Validation Rules
 - **Agreed Timeout**: **2.0 seconds** (2000 ms). If Flutter sends `"STOP"` and does not receive a Type 4 packet within 2.0s, it displays the *"Results Unavailable"* screen.
-- **Validation Criteria**: Flutter verifies `bytes.length == 11`, `rate <= 250`, `depth_tenths_mm <= 1000` (10.0 cm), and `ccf <= 100`.
+- **Validation Criteria**: Flutter verifies `bytes.length >= 11` (12 bytes expected in current protocol), `rate <= 250`, `depth_tenths_mm <= 1000` (10.0 cm), and `ccf <= 100`.
 
 ### 5. Final Results Retransmission (`"GET_RESULTS"`)
 - The ESP32 retains `lastFinalSummary` in RAM.
@@ -57,7 +57,7 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
 
 ### 6. Decoupled Pre-Session Calibration & Gated Session Start
 - **Automatic Pre-Session Calibration**: As soon as the instructor confirms correct hand placement, Flutter writes text string `"CALIBRATE"` to the Command Characteristic (`6e400003-...`).
-- **Stationary Baseline Sampling**: ESP32 buzzes 1 time and broadcasts `packet_type = 2 (PKT_TYPE_CALIB_PROGRESS)` every 500 ms while sampling for 2.0 seconds (target: 200 samples).
+- **Stationary Baseline Sampling**: ESP32 broadcasts `packet_type = 2 (PKT_TYPE_CALIB_PROGRESS)` every 500 ms while sampling for 2.0 seconds (target: 200 samples).
 - **Gated "Begin Session" Button**:
   - The *"Begin Session"* button is displayed on screen while calibration is in progress.
   - **Premature Tap Gating**: If the instructor taps *"Begin Session"* before calibration is ready, the session does **not** start. Flutter displays the prompt: *"Keep hands still and release downward pressure."* If `"START"` is received by the ESP32 while calibrating, the firmware rejects it with `packet_type = 5 (PKT_TYPE_ERROR)`.
@@ -67,11 +67,11 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
   3. *Static Gravity Bounds*: Resting baselines satisfy $0.65\text{g} \le g \le 1.35\text{g}$.
   4. *Sensor Alignment / Pre-Pressure*: Sternum vs. spine divergence $|a_{\text{chest}} - a_{\text{base}}| \le 0.35\text{g}$.
 - **Calibration Completion**: Once verified, the ESP32 transmits `packet_type = 3 (PKT_TYPE_CALIB_SUCCESS)` and transitions to `CALIBRATED_READY`. Flutter updates the UI to indicate the session is ready.
-- **Starting the Practice Session**: When the instructor taps *"Begin Session"*, Flutter writes `"START"`, the ESP32 buzzes 2 times (*"Compressions begin now!"*), and live CPR tracking starts immediately (`packet_type = 1`).
+- **Starting the Practice Session**: When the instructor taps *"Begin Session"*, Flutter writes `"START"`, and live CPR tracking starts immediately (`packet_type = 1`).
 
 ---
 
-## 3. Telemetry Packet Specification (11 Bytes Packed)
+## 3. Telemetry Packet Specification (12 Bytes Packed)
 
 ```
 SERVICE UUID:        6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -86,9 +86,21 @@ COMMAND CHAR UUID:   6e400003-b5a3-f393-e0a9-e50e24dcca9e  (Write)
 | **2..3** | `rate_cpm` | `uint16` | Instantaneous cadence (cpm) | Session Average Cadence (cpm) |
 | **4..5** | `depth_tenths_mm` | `uint16` | Stroke depth in 0.1 mm (e.g. 550 = 55mm) | Session Average Depth in 0.1 mm |
 | **6** | `ccf_percent` | `uint8` | Current cumulative CCF % (`0..100`) | Final Session CCF % (`0..100`) |
-| **7** | `audio_prompt_code` | `uint8` | Audio Guidance Cue Code (`0..6`) | `0` (Unused in summary) |
+| **7** | `audio_prompt_code` | `uint8` | Audio Guidance Cue Code (`0..7`) | `0` (Unused in summary) |
 | **8** | `total_compressions`| `uint8` | Current stroke sequence count | Total compressions delivered in session |
 | **9..10** | `session_elapsed_sec`| `uint16`| Elapsed session duration (seconds) | Total final session duration (seconds) |
+| **11** | `quality_flags` | `uint8` | Stroke quality bitfield (steady cadence, pause fallback, profile) | Final Session Quality Flags (steady rhythm, bench profile) |
+
+### Quality & Cadence Bitfield Flags (`quality_flags`)
+
+Byte 11 conveys stroke quality, cadence regularity, and runtime kinematic profile flags:
+
+| Bit Position | Bitmask | Flag Constant | Meaning / Behavior |
+| :---: | :---: | :--- | :--- |
+| **Bit 0** | `0x01` | `CADENCE_FLAG_STEADY` | `1` = Cadence jitter $\le 25\%$ (steady rhythm), `0` = Inconsistent cadence. When `0`, Flutter should display an on-screen warning banner: *"Rhythm unsteady: depth readings may fluctuate"*. |
+| **Bit 1** | `0x02` | `CADENCE_FLAG_FIRST_OR_PAUSE` | `1` = First stroke of session or post-pause recovery stroke (period exceeded 0.85s and was safely bounded to fallback 0.55s). |
+| **Bit 2** | `0x04` | `CADENCE_FLAG_BENCH_MODE` | `1` = Bench testing profile active (`BENCH_TEST`), `0` = Standard manikin profile (`MANIKIN_STANDARD`). |
+| **Bits 3..7** | — | *Reserved* | Set to `0` for future extensions. |
 
 ### Audio Guidance Cue Codes (`audio_prompt_code`)
 
@@ -103,6 +115,7 @@ The firmware contains a smart coaching engine with **3.5-second error persistenc
 | **4** | `PROMPT_SPEED_UP` | *"Speed up"* | Rate < 100 cpm sustained for $\ge 3.5\text{ s}$ |
 | **5** | `PROMPT_SLOW_DOWN` | *"Slow down"* | Rate > 120 cpm sustained for $\ge 3.5\text{ s}$ |
 | **6** | `PROMPT_GOOD_JOB` | *"Good compressions"* | Target metrics maintained continuously for $\ge 15\text{ s}$ |
+| **7** | `PROMPT_STEADY_RHYTHM` | *"Maintain steady rhythm"* | Cadence jitter ratio > 25% sustained for $\ge 3.5\text{ s}$ |
 
 ---
 
@@ -122,9 +135,14 @@ class CPRMetrics {
   final double depthCm;         // Current or average depth in cm
   final double depthMm;         // Current or average depth in mm
   final int ccfPercent;         // Cumulative CCF %
-  final int audioPromptCode;    // 0..6
+  final int audioPromptCode;    // 0..7
   final int totalCompressions;  // Total stroke count
   final int elapsedSeconds;     // Total duration in seconds
+  final int qualityFlags;       // Bit 0=Steady, Bit 1=First/Pause, Bit 2=Bench Mode
+
+  bool get isSteadyCadence => (qualityFlags & 0x01) != 0;
+  bool get isFirstStrokeOrPostPause => (qualityFlags & 0x02) != 0;
+  bool get isBenchMode => (qualityFlags & 0x04) != 0;
 
   CPRMetrics({
     required this.packetType,
@@ -137,6 +155,7 @@ class CPRMetrics {
     required this.audioPromptCode,
     required this.totalCompressions,
     required this.elapsedSeconds,
+    this.qualityFlags = 0x01,
   });
 
   factory CPRMetrics.fromBytes(List<int> bytes) {
@@ -153,6 +172,7 @@ class CPRMetrics {
     final audioCue = byteData.getUint8(7);
     final totalCount = byteData.getUint8(8);
     final elapsed = byteData.getUint16(9, Endian.little);
+    final quality = byteData.lengthInBytes >= 12 ? byteData.getUint8(11) : 0x01;
 
     return CPRMetrics(
       packetType: type,
@@ -165,6 +185,7 @@ class CPRMetrics {
       audioPromptCode: audioCue,
       totalCompressions: totalCount,
       elapsedSeconds: elapsed,
+      qualityFlags: quality,
     );
   }
 }
@@ -240,10 +261,21 @@ class CPRSessionManager {
       case 4: tts.speak("Speed up"); break;
       case 5: tts.speak("Slow down"); break;
       case 6: tts.speak("Good compressions"); break;
+      case 7: tts.speak("Maintain steady rhythm"); break;
     }
   }
 
-  void updateLiveGauges(CPRMetrics m) { /* update visual charts */ }
+  void updateLiveGauges(CPRMetrics m) {
+    // Update live depth / rate gauges...
+    // If cadence is unsteady, show warning banner:
+    if (!m.isSteadyCadence) {
+      showCadenceWarning("Rhythm unsteady: depth readings may fluctuate.");
+    } else {
+      hideCadenceWarning();
+    }
+  }
+  void showCadenceWarning(String msg) { /* display yellow warning pill/banner */ }
+  void hideCadenceWarning() { /* dismiss warning pill */ }
   void showCalibrationUI(String msg) { /* display progress indicator */ }
   void showCalibrationProgress(int sec) { /* update 2-second progress */ }
   void showCalibrationReady(String msg) { /* enable Begin Session button */ }
@@ -255,6 +287,28 @@ class CPRSessionManager {
 ```
 
 ---
+
+---
+
+## 4.5. Mobile App BLE Command Reference (Write Characteristic: `6e400003-...`)
+
+The mobile application sends ASCII text commands to control session flow, calibrate sensors, and dynamically tune kinematic sensitivity:
+
+| Command | Arguments | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `CALIBRATE` | None | Initiates 2.0-second stationary baseline calibration. | `CALIBRATE` |
+| `START` | None | Begins active CPR session once calibrated. | `START` |
+| `STOP` | None | Terminates active session and requests Type 4 summary packet. | `STOP` |
+| `GET_RESULTS` | None | Retransmits the last session summary (Type 4) packet. | `GET_RESULTS` |
+| `PAUSE` | None | Temporarily pauses active session timer and CCF accrual. | `PAUSE` |
+| `RESUME` | None | Resumes paused session. | `RESUME` |
+| `SET_TIME:<sec>` | `<sec>` (integer) | Overrides trial duration limit (0 = indefinite). | `SET_TIME:120` |
+| `SET_K:<val>` | `<val>` (1.0..30.0) | Sets depth harmonic scalar $K$ and persists to flash NVS. | `SET_K:11.2` |
+| `SET_PROFILE:BENCH` | None | Activates bench test thresholds (0.25g start, -0.18g recoil, K=9.5) and persists to NVS. | `SET_PROFILE:BENCH` |
+| `SET_PROFILE:MANIKIN` | None | Activates standard adult manikin thresholds (0.45g start, -0.35g recoil, K=11.2) and persists to NVS. | `SET_PROFILE:MANIKIN` |
+| `CALIBRATE_TARGET:<target>` | `<target>` (float cm) | Performs proportional calibration: $K_{\text{new}} = K \times (\text{target} / \bar{D})$, saves to NVS. | `CALIBRATE_TARGET:5.5` |
+| `RESET_CONFIG` | None | Clears flash NVS partition and restores factory defaults. | `RESET_CONFIG` |
+| `GET_CONFIG` | None | Emits current configuration parameters over Serial for debugging. | `GET_CONFIG` |
 
 ## 5. Interaction Sequence Diagrams
 

@@ -24,19 +24,40 @@ namespace CPReadyConfig {
     // Hardware Sensor Mode
     constexpr bool        USE_DUAL_MPU_MODE             = USE_DUAL_MPU;
 
+    // Kinematic Sensitivity Profiles
+    enum class KinematicProfile : uint8_t {
+        MANIKIN_STANDARD = 0, // Default adult AHA manikin thresholds (0.45g start, -0.35g recoil, K=11.2)
+        BENCH_TEST       = 1  // Relaxed hand bench testing thresholds (0.25g start, -0.18g recoil, K=9.5)
+    };
+
     // BLE & Identity Parameters
     constexpr const char* BLE_DEVICE_NAME               = "CPReady";                                // Advertised name in BLE scan
     constexpr const char* BLE_SERVICE_UUID              = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";  // Primary GATT service UUID
-    constexpr const char* BLE_CHAR_NOTIFY_UUID          = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";  // 11-byte telemetry notification characteristic
+    constexpr const char* BLE_CHAR_NOTIFY_UUID          = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";  // Telemetry notification characteristic
     constexpr const char* BLE_CHAR_COMMAND_UUID         = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";  // Mobile app command write characteristic
     constexpr uint32_t    BLE_UPDATE_HZ                 = 5;                                        // Telemetry update rate in Hz
     constexpr uint32_t    BLE_NOTIFY_INTERVAL_MS        = 1000 / BLE_UPDATE_HZ;                     // Telemetry push rate (default 200 ms / 5 Hz)
 
-    // Session & Tuning Parameters
+    // Session & Tuning Parameters (Standard Adult Manikin Profile)
     constexpr uint32_t    DEFAULT_PRACTICE_DURATION_SEC       = 120;       // Total trial duration before auto-stop (0 = manual STOP)
     constexpr float       DEPTH_CALIBRATION_K                 = 11.2f;     // Harmonic depth scalar (depth = K * da * T^2)
     constexpr float       COMPRESSION_START_THRESHOLD_G       = 0.45f;     // Downstroke acceleration trigger threshold (g)
     constexpr float       RECOIL_THRESHOLD_G                  = -0.35f;    // Upward rebound threshold to confirm release (g)
+
+    // Bench Testing Sensitivity Parameters (Alternative Relaxed Profile)
+    constexpr float       BENCH_COMPRESSION_START_THRESHOLD_G = 0.25f;     // Relaxed start trigger for hand bench testing (g)
+    constexpr float       BENCH_RECOIL_THRESHOLD_G            = -0.18f;    // Relaxed upward recoil threshold for bench testing (g)
+    constexpr float       BENCH_DEPTH_CALIBRATION_K           = 9.5f;      // Scaled harmonic depth constant for bench testing
+
+    // Kinematic Hardening Bounds & Cadence Consistency
+    constexpr float       MIN_CPR_PERIOD_SEC            = 0.38f;    // Max realistic cadence limit (~158 CPM)
+    constexpr float       MAX_CPR_PERIOD_SEC            = 0.85f;    // Min realistic cadence limit (~70 CPM)
+    constexpr float       FALLBACK_CADENCE_PERIOD_SEC   = 0.55f;    // Anchor cadence period (~110 CPM) used after pauses / 1st stroke
+    constexpr float       MAX_CADENCE_JITTER_RATIO      = 0.25f;    // 25% period variance threshold to flag unsteady rhythm
+
+    // 15-Second Comparative Manikin Calibration & Storage
+    constexpr uint32_t    CALIBRATION_RUN_DURATION_SEC        = 15;        // Standard comparative calibration trial duration (15s)
+    constexpr const char* NVS_NAMESPACE                       = "cpready"; // Flash non-volatile storage partition namespace
 
     // Pre-Session Calibration & Stability Verification Parameters
     constexpr uint32_t    CALIBRATION_DURATION_MS             = 2000;      // Stationary baseline calibration window (ms)

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Preferences.h>
 #include "CPRTypes.h"
 #include "CPReadyConfig.h"
 #include "BLEReadings.h"
@@ -10,6 +11,7 @@
 SensorManager      sensors;
 CompressionTracker tracker;
 BleManager         ble;
+Preferences        prefs;
 
 // System State Machine
 DeviceState state = DeviceState::STANDBY;
@@ -20,7 +22,7 @@ uint32_t lastCalibProgressNotifyMillis = 0;
 // Configurable target duration (in seconds, default set in CPReadyConfig; 0 = manual stop)
 uint32_t practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC; 
 
-// Helper: Finalizes the active session, broadcasts final summary packet, and plays 3 beeps
+// Helper: Finalizes the active session and broadcasts final summary packet
 void endAndFinalizeSession(uint32_t now) {
     Serial.println("[FLOW] Finalizing CPR practice session...");
     state = DeviceState::STANDBY;
@@ -69,7 +71,7 @@ void onReceiveMessage_BLE(String message) {
         state = DeviceState::CALIBRATING;
 
         // Broadcast initial calibration progress packet (Packet Type 2)
-        CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
+        CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0, CADENCE_FLAG_STEADY};
         ble.sendPacket(calibPkt);
     }
     else if (message == "START") {
@@ -81,7 +83,7 @@ void onReceiveMessage_BLE(String message) {
         }
         else if (state == DeviceState::CALIBRATING) {
             Serial.println("[FLOW WARN] Start requested while calibration is still ongoing! Rejecting.");
-            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0};
+            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0, 0};
             ble.sendPacket(errPkt);
         }
         else {
@@ -92,7 +94,7 @@ void onReceiveMessage_BLE(String message) {
             lastCalibProgressNotifyMillis = calibrationStartMillis;
             state = DeviceState::CALIBRATING;
 
-            CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
+            CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0, CADENCE_FLAG_STEADY};
             ble.sendPacket(calibPkt);
         }
     }
@@ -120,6 +122,48 @@ void onReceiveMessage_BLE(String message) {
             Serial.printf("[CONFIG] Session duration set to %d seconds.\n", practiceDurationSec);
         }
     }
+    else if (message.startsWith("SET_K:")) {
+        float k = message.substring(6).toFloat();
+        if (k >= 1.0f && k <= 30.0f) {
+            tracker.setDepthK(k);
+            prefs.putFloat("depth_k", k);
+            Serial.printf("[NVS] Depth calibration scalar K updated to %.2f (persisted to flash)\n", k);
+        }
+    }
+    else if (message == "SET_PROFILE:BENCH") {
+        tracker.setProfile(CPReadyConfig::KinematicProfile::BENCH_TEST);
+        prefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST);
+        prefs.putFloat("depth_k", tracker.getDepthK());
+        Serial.println("[NVS] Kinematic profile set to BENCH_TEST (persisted to flash: start 0.25g, recoil -0.18g, K=9.5)");
+    }
+    else if (message == "SET_PROFILE:MANIKIN") {
+        tracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+        prefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+        prefs.putFloat("depth_k", tracker.getDepthK());
+        Serial.println("[NVS] Kinematic profile set to MANIKIN_STANDARD (persisted to flash: start 0.45g, recoil -0.35g, K=11.2)");
+    }
+    else if (message.startsWith("CALIBRATE_TARGET:")) {
+        float targetCm = message.substring(17).toFloat();
+        float newK = 0.0f;
+        if (tracker.calibrateFromLastSummary(targetCm, newK)) {
+            prefs.putFloat("depth_k", newK);
+            Serial.printf("[CALIB] Auto-calibrated scalar K to %.2f based on target %.2f cm (persisted to flash)\n", newK, targetCm);
+        } else {
+            Serial.printf("[CALIB ERR] Failed to calibrate target %.2f cm: no valid completed session depth found!\n", targetCm);
+        }
+    }
+    else if (message == "RESET_CONFIG") {
+        prefs.clear();
+        tracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+        tracker.setDepthK(CPReadyConfig::DEPTH_CALIBRATION_K);
+        practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+        Serial.println("[NVS] Flash cleared! Restored factory defaults (MANIKIN_STANDARD, K=11.2).");
+    }
+    else if (message == "GET_CONFIG") {
+        Serial.printf("[CONFIG] Profile: %s | Depth K: %.2f | StartThresh: %.2fg | RecoilThresh: %.2fg | Duration: %d sec\n",
+            tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST ? "BENCH_TEST" : "MANIKIN_STANDARD",
+            tracker.getDepthK(), tracker.getCompressionStartThresholdG(), tracker.getRecoilThresholdG(), practiceDurationSec);
+    }
     else {
         Serial.println("[BLE CMD] Unhandled command: " + message);
     }
@@ -130,6 +174,15 @@ void setup() {
     Serial.println("\n=========================================");
     Serial.println("     CPReady Firmware Initializing       ");
     Serial.println("=========================================");
+
+    // Initialize Flash NVS Preferences & Load Calibrated Parameters
+    prefs.begin(CPReadyConfig::NVS_NAMESPACE, false);
+    float savedK = prefs.getFloat("depth_k", CPReadyConfig::DEPTH_CALIBRATION_K);
+    uint8_t savedProfile = prefs.getUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+    tracker.setDepthK(savedK);
+    tracker.setProfile((CPReadyConfig::KinematicProfile)savedProfile);
+    Serial.printf("[NVS] Flash configuration loaded: Profile=%s | Depth K=%.2f\n",
+        savedProfile == (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST ? "BENCH_TEST" : "MANIKIN_STANDARD", savedK);
 
     #if ENABLE_DEMO_MODE
     Serial.println("[DEMO] *** DEMO / SIMULATION MODE ENABLED ***");
@@ -198,7 +251,7 @@ void loop() {
         if (now - lastCalibProgressNotifyMillis >= CPReadyConfig::CALIBRATION_PROGRESS_INTERVAL_MS) {
             lastCalibProgressNotifyMillis = now;
             uint16_t elapsedCalib = (uint16_t)((now - calibrationStartMillis) / 1000);
-            CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, elapsedCalib};
+            CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, elapsedCalib, CADENCE_FLAG_STEADY};
             ble.sendPacket(calibPkt);
         }
 
@@ -208,7 +261,7 @@ void loop() {
             sensors.finalizeCalibration();
             if (!sensors.isCalibrationStable()) {
                 Serial.println("[ERROR] Calibration aborted: stability/plausibility checks failed.");
-                CPRMetricsPacket errorPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0};
+                CPRMetricsPacket errorPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0, 0};
                 ble.sendPacket(errorPkt);
                 sensors.resetCalibration();
                 state = DeviceState::STANDBY;
@@ -217,7 +270,7 @@ void loop() {
                 Serial.println("[FLOW] Calibration finished. Baselines stored. System is CALIBRATED_READY.");
 
                 // Signal Flutter that calibration succeeded (Packet Type 3)
-                CPRMetricsPacket successPkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
+                CPRMetricsPacket successPkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0, CADENCE_FLAG_STEADY};
                 ble.sendPacket(successPkt);
 
                 // Transition to CALIBRATED_READY and await instructor's "START"
@@ -243,6 +296,7 @@ void loop() {
             demoReading.elapsed_seconds   = (now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS) / 1000;
             demoReading.audio_prompt_code = PROMPT_NONE;
             demoReading.stroke_count      = (uint16_t)(demoReading.elapsed_seconds * 1.8f);
+            demoReading.quality_flags     = CADENCE_FLAG_STEADY;
 
             ble.sendPacket(demoReading.toPacket(PKT_TYPE_REALTIME));
             Serial.println("[DEMO TX] " + demoReading.toDebugString());
