@@ -225,6 +225,29 @@ class AppColors {
   /// Flat action button label while the button is disabled.
   static const Color flowActionDisabledText = Color(0xFF9E9E9E);
 
+  /// Training-mode option: fill and edge unselected, then selected.
+  static const Color profileOptionBackground = Color(0xFFF6F9FF);
+  static const Color profileOptionBorder = Color(0xFF9E9E9E);
+  static const Color profileOptionSelectedBackground = Color(0xFFE0E8F4);
+  static const Color profileOptionSelectedBorder = brandBlue;
+
+  /// Radio dot and selected outline.
+  static const Color profileOptionIndicator = brandBlue;
+
+  /// Option title and its description.
+  static const Color profileOptionText = Color(0xFF000000);
+  static const Color profileOptionBodyText = Color(0xFF4A4A4A);
+
+  // -----------------------------------------------------------------------
+  // Manikin depth calibration
+  // -----------------------------------------------------------------------
+
+  /// Box holding the trial's mean depth.
+  static const Color manikinValueBackground = flowActionBackground;
+  static const Color manikinValueBorder = flowPanelBorder;
+  static const Color manikinValueText = brandBlue;
+  static const Color manikinErrorText = statusError;
+
   // -----------------------------------------------------------------------
   // Live practice
   // -----------------------------------------------------------------------
@@ -256,6 +279,15 @@ class AppColors {
   /// Overlay that fills the "Hold to End Session" button while it is held.
   static const Color liveHoldFillOverlay = Color(0x59FFFFFF);
 
+  /// Cadence-warning banner.
+  static const Color liveWarningBackground = Color(0xFFFFF3CD);
+  static const Color liveWarningBorder = Color(0xFFE0B400);
+  static const Color liveWarningText = Color(0xFF7A5B00);
+
+  /// "BENCH MODE" capsule.
+  static const Color liveBenchBadgeBackground = flowActionBackground;
+  static const Color liveBenchBadgeText = brandBlue;
+
   // -----------------------------------------------------------------------
   // Session summary
   // -----------------------------------------------------------------------
@@ -263,6 +295,7 @@ class AppColors {
   /// "Session Saved" banner: the brand green at 20% so it reads as a tint over
   /// the white screen rather than a solid fill.
   static const Color summarySavedBackground = Color(0x33A5D6A7);
+
   /// "Session Saved" label: a mid green that sits softly on the tinted fill
   /// instead of reading as a heavy block.
   static const Color summarySavedText = Color(0xFF2E7D32);

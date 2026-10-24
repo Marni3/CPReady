@@ -193,7 +193,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
-                    const SizedBox(height: AppSpacing.historyTopPadding),
+                    SizedBox(height: AppSpacing.historyTopPadding),
                     Text(
                       AppStrings.historyTitle,
                       style: AppTypography.style(
@@ -202,16 +202,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         color: AppColors.historyTitleText,
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.historyTitleGap),
+                    SizedBox(height: AppSpacing.historyTitleGap),
                     Expanded(child: _list()),
                     if (_sessions.isNotEmpty) ...<Widget>[
-                      const SizedBox(
+                      SizedBox(
                         height: AppSpacing.historyClearButtonTopGap,
                       ),
                       _ClearHistoryButton(
                         onPressed: () => unawaited(_clearAll()),
                       ),
-                      const SizedBox(
+                      SizedBox(
                         height: AppSpacing.historyClearButtonBottomGap,
                       ),
                     ],
@@ -239,7 +239,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       padding: EdgeInsets.zero,
       itemCount: _sessions.length,
       separatorBuilder: (_, _) =>
-          const SizedBox(height: AppSpacing.historyRowGap),
+          SizedBox(height: AppSpacing.historyRowGap),
       itemBuilder: (context, index) {
         final record = _sessions[index];
         return _SessionRow(
@@ -263,7 +263,9 @@ class _ClearHistoryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      height: AppSizes.historyClearButtonHeight,
+      constraints: BoxConstraints(
+        minHeight: AppSizes.historyClearButtonHeight,
+      ),
       decoration: BoxDecoration(
         gradient: AppGradients.brandVertical,
         borderRadius: BorderRadius.circular(AppSizes.historyClearButtonRadius),
@@ -275,13 +277,20 @@ class _ClearHistoryButton extends StatelessWidget {
             AppSizes.historyClearButtonRadius,
           ),
           onTap: onPressed,
-          child: Center(
-            child: Text(
-              AppStrings.historyClearButton,
-              style: AppTypography.style(
-                size: AppTypography.historyClearButtonSize,
-                weight: AppTypography.headingWeight,
-                color: AppColors.historyClearButtonText,
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: AppSpacing.homeButtonLabelInsetH,
+              vertical: AppSpacing.flowActionLabelInsetV,
+            ),
+            child: Center(
+              child: Text(
+                AppStrings.historyClearButton,
+                textAlign: TextAlign.center,
+                style: AppTypography.style(
+                  size: AppTypography.historyClearButtonSize,
+                  weight: AppTypography.headingWeight,
+                  color: AppColors.historyClearButtonText,
+                ),
               ),
             ),
           ),
@@ -312,7 +321,7 @@ class _SessionRow extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onOpen,
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.historyRowPadding),
+        padding: EdgeInsets.all(AppSpacing.historyRowPadding),
         decoration: BoxDecoration(
           color: AppColors.historyRowBackground,
           borderRadius: BorderRadius.circular(AppSizes.historyRowRadius),
@@ -325,39 +334,8 @@ class _SessionRow extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: Text(
-                    record.traineeName,
-                    style: AppTypography.style(
-                      size: AppTypography.historyRowTitleSize,
-                      weight: AppTypography.headingWeight,
-                      color: AppColors.historyRowTitleText,
-                    ),
-                  ),
-                ),
-                if (!record.isCompleted) ...<Widget>[
-                  const SizedBox(width: AppSpacing.small),
-                  const _InterruptedLabel(),
-                ],
-                const SizedBox(width: AppSpacing.historyRowActionsGap),
-                Padding(
-                  padding: const EdgeInsets.only(
-                    right: AppSpacing.historyDurationRightPad,
-                  ),
-                  child: Text(
-                    formatHistoryDuration(record.durationSeconds),
-                    style: AppTypography.style(
-                      size: AppTypography.historyRowMetaSize,
-                      weight: AppTypography.headingWeight,
-                      color: AppColors.historyRowDateText,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.historyRowTextGap),
+            _HeaderLine(record: record),
+            SizedBox(height: AppSpacing.historyRowTextGap),
             Row(
               children: <Widget>[
                 Expanded(
@@ -370,9 +348,9 @@ class _SessionRow extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.historyRowActionsGap),
+                SizedBox(width: AppSpacing.historyRowActionsGap),
                 _SeeMoreButton(onPressed: onOpen),
-                const SizedBox(width: AppSpacing.historyRowDotsGap),
+                SizedBox(width: AppSpacing.historyRowDotsGap),
                 InkWell(
                   onTap: onDelete,
                   customBorder: const CircleBorder(),
@@ -408,11 +386,11 @@ class _SeeMoreButton extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onPressed,
       child: Container(
-        constraints: const BoxConstraints(
+        constraints: BoxConstraints(
           minHeight: AppSizes.historySeeMoreMinHeight,
         ),
         alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(
+        padding: EdgeInsets.symmetric(
           horizontal: AppSpacing.historySeeMorePaddingH,
         ),
         decoration: BoxDecoration(
@@ -442,7 +420,7 @@ class _InterruptedLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(
+      padding: EdgeInsets.symmetric(
         horizontal: AppSpacing.historyInterruptedPaddingH,
         vertical: AppSpacing.historyInterruptedPaddingV,
       ),
@@ -471,16 +449,16 @@ class _EmptyHistory extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.page),
+      padding: EdgeInsets.all(AppSpacing.page),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
-          const Icon(
+          Icon(
             Icons.history,
             size: AppSizes.iconLarge,
             color: AppColors.navUnselected,
           ),
-          const SizedBox(height: AppSpacing.item),
+          SizedBox(height: AppSpacing.item),
           Text(
             AppStrings.historyEmptyTitle,
             style: AppTypography.style(
@@ -489,7 +467,7 @@ class _EmptyHistory extends StatelessWidget {
               color: AppColors.historyRowTitleText,
             ),
           ),
-          const SizedBox(height: AppSpacing.small),
+          SizedBox(height: AppSpacing.small),
           Text(
             AppStrings.historyEmptyBody,
             textAlign: TextAlign.center,
@@ -500,6 +478,114 @@ class _EmptyHistory extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Trainee name on the left, then the "Interrupted" badge and the duration.
+///
+/// The three share one line while the name's rendered width leaves room for
+/// the rest. When they no longer fit, the badge and the duration move to a
+/// second line instead of squeezing the name.
+class _HeaderLine extends StatelessWidget {
+  const _HeaderLine({required this.record});
+
+  final SessionRecord record;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextStyle nameStyle = AppTypography.style(
+      size: AppTypography.historyRowTitleSize,
+      weight: AppTypography.headingWeight,
+      color: AppColors.historyRowTitleText,
+    );
+    final TextStyle metaStyle = AppTypography.style(
+      size: AppTypography.historyRowMetaSize,
+      weight: AppTypography.headingWeight,
+      color: AppColors.historyRowDateText,
+    );
+    final TextStyle badgeStyle = AppTypography.style(
+      size: AppTypography.historyInterruptedSize,
+      weight: FontWeight.bold,
+    );
+    final String duration = formatHistoryDuration(record.durationSeconds);
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double nameWidth = measureTextWidth(
+          context,
+          record.traineeName,
+          nameStyle,
+        );
+        final double badgeWidth = record.isCompleted
+            ? 0
+            : measureTextWidth(
+                    context,
+                    AppStrings.historyInterruptedLabel,
+                    badgeStyle,
+                  ) +
+                  (2 * AppSpacing.historyInterruptedPaddingH);
+        final double metaWidth =
+            badgeWidth +
+            (record.isCompleted ? 0 : AppSpacing.small) +
+            AppSpacing.historyRowActionsGap +
+            measureTextWidth(context, duration, metaStyle) +
+            AppSpacing.historyDurationRightPad;
+
+        if (nameWidth + metaWidth <= constraints.maxWidth) {
+          return Row(
+            children: <Widget>[
+              Expanded(child: Text(record.traineeName, style: nameStyle)),
+              if (!record.isCompleted) ...<Widget>[
+                SizedBox(width: AppSpacing.small),
+                const _InterruptedLabel(),
+              ],
+              SizedBox(width: AppSpacing.historyRowActionsGap),
+              _DurationLabel(text: duration),
+            ],
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Text(record.traineeName, style: nameStyle),
+            SizedBox(height: AppSpacing.small),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: <Widget>[
+                if (!record.isCompleted) ...<Widget>[
+                  const _InterruptedLabel(),
+                  SizedBox(width: AppSpacing.small),
+                ],
+                Flexible(child: _DurationLabel(text: duration)),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Session duration as shown on a History row.
+class _DurationLabel extends StatelessWidget {
+  const _DurationLabel({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(right: AppSpacing.historyDurationRightPad),
+      child: Text(
+        text,
+        style: AppTypography.style(
+          size: AppTypography.historyRowMetaSize,
+          weight: AppTypography.headingWeight,
+          color: AppColors.historyRowDateText,
+        ),
       ),
     );
   }

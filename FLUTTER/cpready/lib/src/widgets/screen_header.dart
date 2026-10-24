@@ -35,7 +35,7 @@ class ScreenHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.center,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
-              const Image(
+              Image(
                 image: AssetImage(AppAssets.logoBlue),
                 width: AppSizes.homeLogoSize,
                 height: AppSizes.homeLogoSize,

@@ -3,6 +3,9 @@
 ///
 /// Used by the practice flow (Continue, Begin Session) and by the Session
 /// Summary (Return to Home). It has no ripple, matching the flow screens.
+///
+/// [AppSizes.flowActionHeight] is a minimum: a label that does not fit on one
+/// line wraps and the button grows with it, so the text is never clipped.
 
 import 'package:flutter/material.dart';
 
@@ -30,9 +33,8 @@ class FlatActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool enabled = onPressed != null;
 
-    return SizedBox(
-      width: double.infinity,
-      height: AppSizes.flowActionHeight,
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: AppSizes.flowActionHeight),
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: AppColors.flowActionBackground,
@@ -42,14 +44,21 @@ class FlatActionButton extends StatelessWidget {
           behavior: HitTestBehavior.opaque,
           onTap: onPressed,
           child: Center(
-            child: Text(
-              label,
-              style: AppTypography.style(
-                size: AppTypography.flowActionSize,
-                weight: textWeight,
-                color: enabled
-                    ? AppColors.flowActionText
-                    : AppColors.flowActionDisabledText,
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: AppSpacing.flowActionLabelInsetH,
+                vertical: AppSpacing.flowActionLabelInsetV,
+              ),
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: AppTypography.style(
+                  size: AppTypography.flowActionSize,
+                  weight: textWeight,
+                  color: enabled
+                      ? AppColors.flowActionText
+                      : AppColors.flowActionDisabledText,
+                ),
               ),
             ),
           ),

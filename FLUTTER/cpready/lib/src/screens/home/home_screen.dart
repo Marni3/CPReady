@@ -9,6 +9,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../config/config.dart';
 import '../../core/app_scope.dart';
@@ -41,10 +42,12 @@ class HomeScreen extends StatelessWidget {
                         minHeight: constraints.maxHeight,
                       ),
                       child: Column(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: <Widget>[
                           const _WelcomeCard(),
+                          SizedBox(height: AppSpacing.homeSectionGap),
                           _DeviceCard(controller: controller),
+                          SizedBox(height: AppSpacing.homeSectionGap),
                           const _InfoCard(),
                         ],
                       ),
@@ -93,11 +96,9 @@ class _WelcomeCard extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(
-        minHeight: AppSizes.homeWelcomeCardMinHeight,
-      ),
+      constraints: BoxConstraints(minHeight: AppSizes.homeWelcomeCardMinHeight),
       alignment: Alignment.centerLeft,
-      padding: const EdgeInsets.only(
+      padding: EdgeInsets.only(
         left: AppSpacing.homeWelcomeInset,
         right: AppSpacing.homeCardPadding,
         top: AppSpacing.homeCardPadding,
@@ -112,7 +113,7 @@ class _WelcomeCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Text(AppStrings.homeWelcomeTitle, style: titleStyle),
-          const SizedBox(height: AppSpacing.homeWelcomeGap),
+          SizedBox(height: AppSpacing.homeWelcomeGap),
           Text(
             AppStrings.homeWelcomeSubtitle,
             maxLines: 1,
@@ -157,7 +158,7 @@ class _DeviceCard extends StatelessWidget {
 
         return Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(AppSpacing.homeCardPadding),
+          padding: EdgeInsets.all(AppSpacing.homeCardPadding),
           decoration: BoxDecoration(
             color: AppColors.surfaceCard,
             borderRadius: BorderRadius.circular(AppSizes.homeCardRadius),
@@ -167,7 +168,11 @@ class _DeviceCard extends StatelessWidget {
             ),
           ),
           child: (busy || connected)
-              ? _ConnectingContent(connected: connected)
+              ? _ConnectingContent(
+                  connected: connected,
+                  onCalibrate: () =>
+                      context.pushNamed(AppRoutes.manikinCalibration),
+                )
               : _NotConnectedContent(controller: controller),
         );
       },
@@ -186,14 +191,14 @@ class _NotConnectedContent extends StatelessWidget {
     return Column(
       children: <Widget>[
         Padding(
-          padding: const EdgeInsets.all(AppSpacing.homeBluetoothImagePadding),
-          child: const Image(
+          padding: EdgeInsets.all(AppSpacing.homeBluetoothImagePadding),
+          child: Image(
             image: AssetImage(AppAssets.bluetoothUnconnected),
             width: AppSizes.homeBluetoothImageSize,
             height: AppSizes.homeBluetoothImageSize,
           ),
         ),
-        const SizedBox(height: AppSpacing.item),
+        SizedBox(height: AppSpacing.item),
         Text(
           AppStrings.homeDeviceNoneTitle,
           textAlign: TextAlign.center,
@@ -203,7 +208,7 @@ class _NotConnectedContent extends StatelessWidget {
             color: AppColors.homeCardText,
           ),
         ),
-        const SizedBox(height: AppSpacing.small),
+        SizedBox(height: AppSpacing.small),
         Text(
           AppStrings.homeDeviceNoneSubtitle,
           textAlign: TextAlign.center,
@@ -213,7 +218,7 @@ class _NotConnectedContent extends StatelessWidget {
             color: AppColors.homeCardText,
           ),
         ),
-        const SizedBox(height: AppSpacing.item),
+        SizedBox(height: AppSpacing.item),
         _GradientButton(
           label: AppStrings.homeDeviceConnect,
           onPressed: controller.connect,
@@ -223,11 +228,16 @@ class _NotConnectedContent extends StatelessWidget {
   }
 }
 
-/// Connecting / connected: title, instructions, illustration, and status label.
+/// Connecting / connected: title, instructions, illustration, status label,
+/// and — once connected — the manikin calibration entry point.
 class _ConnectingContent extends StatelessWidget {
-  const _ConnectingContent({required this.connected});
+  const _ConnectingContent({
+    required this.connected,
+    required this.onCalibrate,
+  });
 
   final bool connected;
+  final VoidCallback onCalibrate;
 
   @override
   Widget build(BuildContext context) {
@@ -242,7 +252,7 @@ class _ConnectingContent extends StatelessWidget {
             color: AppColors.brandBlue,
           ),
         ),
-        const SizedBox(height: AppSpacing.small),
+        SizedBox(height: AppSpacing.small),
         Text(
           AppStrings.homeConnectingInstruction,
           textAlign: TextAlign.center,
@@ -252,17 +262,17 @@ class _ConnectingContent extends StatelessWidget {
             color: AppColors.homeCardText,
           ),
         ),
-        const SizedBox(height: AppSpacing.item),
+        SizedBox(height: AppSpacing.item),
         Padding(
-          padding: const EdgeInsets.all(AppSpacing.homeBluetoothImagePadding),
-          child: const Image(
+          padding: EdgeInsets.all(AppSpacing.homeBluetoothImagePadding),
+          child: Image(
             image: AssetImage(AppAssets.bluetoothConnected),
             width: AppSizes.homeBluetoothImageSize,
             height: AppSizes.homeBluetoothImageSize,
           ),
         ),
-        const SizedBox(height: AppSpacing.item),
-        if (connected)
+        SizedBox(height: AppSpacing.item),
+        if (connected) ...<Widget>[
           Text(
             AppStrings.homeConnected,
             style: AppTypography.style(
@@ -270,8 +280,13 @@ class _ConnectingContent extends StatelessWidget {
               weight: FontWeight.bold,
               color: AppColors.connected,
             ),
-          )
-        else
+          ),
+          SizedBox(height: AppSpacing.item),
+          FlatActionButton(
+            label: AppStrings.homeManikinCalibration,
+            onPressed: onCalibrate,
+          ),
+        ] else
           const _ScanningLabel(),
       ],
     );
@@ -334,7 +349,7 @@ class _InfoCard extends StatelessWidget {
       radius: AppSizes.homeCardRadius,
       dash: AppSizes.homeDottedDash,
       gap: AppSizes.homeDottedGap,
-      padding: const EdgeInsets.all(AppSpacing.homeCardPadding),
+      padding: EdgeInsets.all(AppSpacing.homeCardPadding),
       child: Text(
         AppStrings.homeInfoBody,
         textAlign: TextAlign.center,
@@ -364,7 +379,7 @@ class _GradientButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      height: AppSizes.homeButtonHeight,
+      constraints: BoxConstraints(minHeight: AppSizes.homeButtonHeight),
       decoration: BoxDecoration(
         gradient: AppGradients.brandVertical,
         borderRadius: BorderRadius.circular(AppSizes.homeButtonRadius),
@@ -374,13 +389,20 @@ class _GradientButton extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(AppSizes.homeButtonRadius),
           onTap: onPressed,
-          child: Center(
-            child: Text(
-              label,
-              style: AppTypography.style(
-                size: AppTypography.homeCardTitleSize,
-                weight: AppTypography.headingWeight,
-                color: AppColors.homeWelcomeText,
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: AppSpacing.homeButtonLabelInsetH,
+              vertical: AppSpacing.flowActionLabelInsetV,
+            ),
+            child: Center(
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: AppTypography.style(
+                  size: AppTypography.homeCardTitleSize,
+                  weight: AppTypography.headingWeight,
+                  color: AppColors.homeWelcomeText,
+                ),
               ),
             ),
           ),

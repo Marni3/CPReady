@@ -3,8 +3,8 @@
 ///
 /// Screens built on this widget never overflow: the content gets the viewport
 /// height as a minimum, so `SpaceBetween`/`SpaceEvenly` and centred layouts
-/// still work on tall screens, while a short screen (or a larger text scale)
-/// scrolls instead of overflowing.
+/// still work on tall screens, while a short screen scrolls instead of
+/// overflowing.
 
 import 'package:flutter/material.dart';
 

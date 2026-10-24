@@ -8,17 +8,18 @@ import 'package:flutter/material.dart';
 import '../config/config.dart';
 
 class HeartbeatIcon extends StatelessWidget {
-  const HeartbeatIcon({super.key, this.size = AppSizes.iconMedium});
+  const HeartbeatIcon({super.key, this.size});
 
-  /// Icon box size.
-  final double size;
+  /// Icon box size; defaults to [AppSizes.iconMedium].
+  final double? size;
 
   @override
   Widget build(BuildContext context) {
     final Color color = IconTheme.of(context).color ?? AppColors.navSelected;
+    final double box = size ?? AppSizes.iconMedium;
     return SizedBox(
-      width: size,
-      height: size,
+      width: box,
+      height: box,
       child: CustomPaint(
         painter: _HeartbeatPainter(
           color: color,

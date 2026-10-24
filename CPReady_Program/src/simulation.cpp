@@ -1,154 +1,514 @@
 /**
- * CPReady Simulation BLE Firmware
+ * CPReady simulation firmware.
  *
- * Build target: PlatformIO environment `simulation`
- * Selected via platformio.ini [env:simulation] build_src_filter and the
- * CPREADY_SIMULATION build flag.
+ * Build target: PlatformIO environment `simulation` (`CPREADY_SIMULATION`).
  *
- * Keeps the same BLE GATT service/characteristics and the same 11-byte CPReady
- * packet format from BLEReadings.h, but replaces the real sensor/session logic
- * with hardcoded fake packets.
+ * Exposes the same GATT service, the same 12-byte telemetry packet and the same
+ * text commands as the sensor build, but replaces the MPU-6050 pair with the
+ * synthetic signal from SyntheticVest. That signal is processed by the
+ * production CompressionTracker, so rate, depth, recoil, CCF, quality flags,
+ * audio cue codes and the final summary all come from the same logic the vest
+ * runs.
  *
- * The whole file is guarded by CPREADY_SIMULATION so that:
- *  - the default [env:esp32dev] build compiles this file to nothing, and
- *  - the Arduino IDE (.ino) build never sees a second setup()/loop().
- *
- * DO NOT flash this file unless you explicitly want fake-telemetry mode.
- * The normal firmware entry point remains src/main.cpp.
- *
+ * The sensor build remains src/main.cpp; this file is compiled only for the
+ * simulation environment.
  */
 
 #ifdef CPREADY_SIMULATION
 
 #include <Arduino.h>
+#include <Preferences.h>
+
 #include "CPRTypes.h"
 #include "CPReadyConfig.h"
 #include "BLEReadings.h"
 #include "BleManager.h"
+#include "CompressionTracker.h"
+#include "SimulationConfig.h"
+#include "SyntheticVest.h"
 
-// --- Fake telemetry parameters (tune here) ---------------------------------
-static const uint16_t FAKE_RATE_CPM           = 110;
-static const float    FAKE_DEPTH_CM           = 5.4f;  // 54 mm
-static const bool     FAKE_RECOIL_OK          = true;
-static const uint8_t  FAKE_CCF_PERCENT        = 78;
-static const uint16_t FAKE_STROKE_INTERVAL_MS = 550;   // fake stroke every ~550 ms
+// --- Subsystems -------------------------------------------------------------
 
-// --- File-local subsystem instances (avoid symbol collisions) --------------
-static BleManager         fakeBle;
+static BleManager         simBle;
+static CompressionTracker simTracker;
+static Preferences        simPrefs;
+static SyntheticVest      simVest;
 
-// --- File-local fake session state -----------------------------------------
-static DeviceState fakeState                     = DeviceState::STANDBY;
-static uint32_t    fakeCalibrationStartMillis    = 0;
-static uint32_t    fakeLastCalibProgressMillis   = 0;
-static uint32_t    fakeLastNotifyMillis          = 0;
-static uint32_t    fakePracticeDurationSec       = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
-static uint16_t    fakeStrokeCount               = 0;
-static uint16_t    fakeElapsedSec                = 0;
+// --- Session state ----------------------------------------------------------
+
+static DeviceState simState = DeviceState::STANDBY;
+
+static uint32_t simCalibrationStartMs    = 0;
+static uint32_t simCalibrationProgressMs = 0;
+static uint32_t simLastCalibrationMicros = 0;
+
+static uint32_t simLastNotifyMs     = 0;
+static uint32_t simLastSampleMicros = 0;
+
+static uint32_t simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+
+// --- Calibration window -----------------------------------------------------
+
+static uint16_t simCalibrationSamples = 0;
+static float    simCalibrationMinG    = 0.0f;
+static float    simCalibrationMaxG    = 0.0f;
+
+// Injected motion makes the baseline fail the same spread check the device
+// applies, so the error and retry path can be exercised without sensors.
+static bool simCalibrationMotion = false;
+
+// --- Diagnostics ------------------------------------------------------------
+
+static uint8_t     simForcedCue      = PROMPT_NONE;
+static uint8_t     simLastLoggedCue  = PROMPT_NONE;
+static int8_t      simLastPhase      = -1;
+static String      simSerialLine     = "";
 
 // ---------------------------------------------------------------------------
-// Fake packet generators (11-byte layout per BLEReadings.h)
+// Helpers
 // ---------------------------------------------------------------------------
 
-static CPRMetricsPacket makeFakeCalibProgress() {
-    CPRMetricsPacket pkt;
-    pkt.packet_type         = PKT_TYPE_CALIB_PROGRESS;
-    pkt.recoil_status       = 1;
-    pkt.rate_cpm            = 0;
-    pkt.depth_tenths_mm     = 0;
-    pkt.ccf_percent         = 0;
-    pkt.audio_prompt_code   = PROMPT_NONE;
-    pkt.total_compressions  = 0;
-    pkt.session_elapsed_sec = (uint16_t)((millis() - fakeCalibrationStartMillis) / 1000);
+static const char* stateName(DeviceState state) {
+    switch (state) {
+        case DeviceState::STANDBY:          return "STANDBY";
+        case DeviceState::CALIBRATING:      return "CALIBRATING";
+        case DeviceState::ACTIVE_SESSION:   return "ACTIVE_SESSION";
+        case DeviceState::SESSION_PAUSED:   return "SESSION_PAUSED";
+        case DeviceState::FAULT_ERROR:      return "FAULT_ERROR";
+        case DeviceState::CALIBRATED_READY: return "CALIBRATED_READY";
+        default:                            return "UNKNOWN";
+    }
+}
+
+static const char* profileName(CPReadyConfig::KinematicProfile profile) {
+    return profile == CPReadyConfig::KinematicProfile::BENCH_TEST
+        ? "BENCH_TEST"
+        : "MANIKIN_STANDARD";
+}
+
+static const char* cueName(uint8_t code) {
+    switch (code) {
+        case PROMPT_PUSH_HARDER:   return "push harder";
+        case PROMPT_PUSH_LESS:     return "push shallower";
+        case PROMPT_RELEASE_FULLY: return "release chest completely";
+        case PROMPT_SPEED_UP:      return "speed up";
+        case PROMPT_SLOW_DOWN:     return "slow down";
+        case PROMPT_GOOD_JOB:      return "good compressions";
+        default:                   return "none";
+    }
+}
+
+/**
+ * Calibration and progress packets follow the sensor build's layout: recoil
+ * reported as complete, steady cadence flag set, no audio cue, elapsed window.
+ */
+static CPRMetricsPacket makeCalibrationPacket(uint8_t packetType, uint16_t elapsedSec) {
+    CPRMetricsPacket pkt{};
+    pkt.packet_type        = packetType;
+    pkt.recoil_status      = 1;
+    pkt.audio_prompt_code  = PROMPT_NONE;
+    pkt.session_elapsed_sec = elapsedSec;
+    pkt.quality_flags      = CADENCE_FLAG_STEADY;
     return pkt;
 }
 
-static CPRMetricsPacket makeFakeCalibSuccess() {
-    CPRMetricsPacket pkt;
-    pkt.packet_type         = PKT_TYPE_CALIB_SUCCESS;
-    pkt.recoil_status       = 1;
-    pkt.rate_cpm            = 0;
-    pkt.depth_tenths_mm     = 0;
-    pkt.ccf_percent         = 0;
-    pkt.audio_prompt_code   = PROMPT_NONE;
-    pkt.total_compressions  = 0;
-    pkt.session_elapsed_sec = 0;
-    return pkt;
-}
-
-static CPRMetricsPacket makeFakeRealtime() {
-    CPRMetricsPacket pkt;
-    pkt.packet_type         = PKT_TYPE_REALTIME;
-    pkt.recoil_status       = FAKE_RECOIL_OK ? 1 : 0;
-    pkt.rate_cpm            = FAKE_RATE_CPM;
-    pkt.depth_tenths_mm     = (uint16_t)round(FAKE_DEPTH_CM * 100.0f);
-    pkt.ccf_percent         = FAKE_CCF_PERCENT;
-    pkt.audio_prompt_code   = PROMPT_NONE;
-    pkt.total_compressions  = fakeStrokeCount > 255 ? 255 : fakeStrokeCount;
-    pkt.session_elapsed_sec = fakeElapsedSec;
-    return pkt;
-}
-
-static CPRMetricsPacket makeFakeFinalSummary() {
-    CPRMetricsPacket pkt;
-    pkt.packet_type         = PKT_TYPE_FINAL_SUMMARY;
-    pkt.recoil_status       = FAKE_RECOIL_OK ? 100 : 50;
-    pkt.rate_cpm            = FAKE_RATE_CPM;
-    pkt.depth_tenths_mm     = (uint16_t)round(FAKE_DEPTH_CM * 100.0f);
-    pkt.ccf_percent         = FAKE_CCF_PERCENT;
-    pkt.audio_prompt_code   = PROMPT_NONE;
-    pkt.total_compressions  = fakeStrokeCount > 255 ? 255 : fakeStrokeCount;
-    pkt.session_elapsed_sec = fakeElapsedSec;
+/** Error packets are all-zero apart from the type, as in main.cpp. */
+static CPRMetricsPacket makeErrorPacket() {
+    CPRMetricsPacket pkt{};
+    pkt.packet_type = PKT_TYPE_ERROR;
     return pkt;
 }
 
 // ---------------------------------------------------------------------------
-// Command handling (same textual commands as main firmware)
+// Flow
 // ---------------------------------------------------------------------------
 
-static void fakeHandleCommand(String message) {
+/**
+ * Opens the 2 s baseline window.
+ *
+ * The window counts 100 Hz samples and tracks the peak-to-peak spread of the
+ * net signal, matching the sample-count and net-spread limits SensorManager
+ * checks. A synthetic stroke source has no static gravity offset to remove, so
+ * this stage gates the session rather than altering the waveform; the depth
+ * reported later is a peak-to-peak quantity and a constant offset would cancel.
+ */
+static void beginSimCalibration(uint32_t now) {
+    simCalibrationStartMs    = now;
+    simCalibrationProgressMs = now;
+    simLastCalibrationMicros = micros();
+    simCalibrationSamples    = 0;
+    simCalibrationMinG       = 999.0f;
+    simCalibrationMaxG       = -999.0f;
+
+    simState = DeviceState::CALIBRATING;
+
+    simBle.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_PROGRESS, 0));
+    Serial.printf("[FLOW] Calibration started: %u ms baseline window.\n",
+                  (unsigned)CPReadyConfig::CALIBRATION_DURATION_MS);
+}
+
+/**
+ * Starts an active session and restarts the stroke scenario.
+ *
+ * The reference scalar matches the active profile's default so the simulated
+ * stroke keeps its physical size; a retuned tracker scalar then shows up as a
+ * proportional change in the reported depth.
+ */
+static void startSimSession(uint32_t now) {
+    const bool steadyTrial =
+        simPracticeDurationSec > 0 &&
+        simPracticeDurationSec <= SimConfig::STEADY_TRIAL_MAX_SEC;
+
+    const float referenceK =
+        simTracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST
+            ? CPReadyConfig::BENCH_DEPTH_CALIBRATION_K
+            : CPReadyConfig::DEPTH_CALIBRATION_K;
+
+    simTracker.startSession(now);
+    simVest.begin(now, referenceK, steadyTrial);
+
+    simLastNotifyMs     = now;
+    simLastSampleMicros = micros();
+    simLastPhase        = -1;
+    simLastLoggedCue    = PROMPT_NONE;
+    simState            = DeviceState::ACTIVE_SESSION;
+
+    Serial.printf("[FLOW] Session started: %s | reference K %.2f | duration %u s\n",
+                  steadyTrial ? "steady depth trial" : "cue scenario",
+                  referenceK, (unsigned)simPracticeDurationSec);
+}
+
+/** Finalises the tracker and publishes the session summary. */
+static void endSimSession(uint32_t now, const char* reason) {
+    CPRSessionSummary summary = simTracker.finalizeSession(now);
+    CPRMetricsPacket pkt = summary.toPacket(PKT_TYPE_FINAL_SUMMARY);
+
+    simBle.sendPacket(pkt);
+    simState     = DeviceState::STANDBY;
+    simLastPhase = -1;
+
+    Serial.printf("[FINAL TX] %s | Rate %.0f cpm | Depth %.2f cm | Recoil %.0f%% | "
+                  "CCF %.0f%% | Strokes %u | Time %u s\n",
+                  reason,
+                  summary.avg_rate_cpm,
+                  summary.avg_depth_cm,
+                  summary.recoil_compliance_percent,
+                  summary.final_ccf_percent,
+                  (unsigned)summary.total_compressions,
+                  (unsigned)summary.total_duration_sec);
+}
+
+// ---------------------------------------------------------------------------
+// Command handling
+// ---------------------------------------------------------------------------
+
+static void handleBleCommand(String message) {
     message.trim();
     message.toUpperCase();
-    Serial.println("[FAKE BLE CMD] Received: " + message);
+    Serial.println("[BLE CMD] Received: " + message);
 
-    if (message == "START") {
-        Serial.println("[FAKE] START -> begin fake calibration flow");
-        fakeCalibrationStartMillis  = millis();
-        fakeLastCalibProgressMillis = millis();
-        fakeLastNotifyMillis        = millis();
-        fakeStrokeCount             = 0;
-        fakeElapsedSec              = 0;
-        fakeState                   = DeviceState::CALIBRATING;
-
-        fakeBle.sendPacket(makeFakeCalibProgress());
+    if (message == "CALIBRATE") {
+        beginSimCalibration(millis());
+    }
+    else if (message == "START") {
+        if (simState == DeviceState::CALIBRATED_READY) {
+            startSimSession(millis());
+        }
+        else if (simState == DeviceState::CALIBRATING) {
+            Serial.println("[FLOW] Start rejected: calibration still running.");
+            simBle.sendPacket(makeErrorPacket());
+        }
+        else {
+            Serial.println("[FLOW] Start from an uncalibrated state; running calibration first.");
+            beginSimCalibration(millis());
+        }
     }
     else if (message == "STOP") {
-        Serial.println("[FAKE] STOP -> finalize fake session");
-        fakeState = DeviceState::STANDBY;
-        fakeBle.sendPacket(makeFakeFinalSummary());
+        if (simState == DeviceState::ACTIVE_SESSION ||
+            simState == DeviceState::SESSION_PAUSED) {
+            endSimSession(millis(), "stop command");
+        }
+        else {
+            Serial.println("[FLOW] Stop with no active session; last summary resent.");
+            simBle.sendPacket(simTracker.getLastSummary().toPacket(PKT_TYPE_FINAL_SUMMARY));
+        }
     }
     else if (message == "GET_RESULTS") {
-        Serial.println("[FAKE] GET_RESULTS -> retransmit fake summary");
-        fakeBle.sendPacket(makeFakeFinalSummary());
+        simBle.sendPacket(simTracker.getLastSummary().toPacket(PKT_TYPE_FINAL_SUMMARY));
+        Serial.println("[FLOW] Summary resent.");
     }
     else if (message == "PAUSE") {
-        Serial.println("[FAKE] PAUSE");
-        fakeState = DeviceState::SESSION_PAUSED;
+        simState = DeviceState::SESSION_PAUSED;
+        Serial.println("[FLOW] Session paused.");
     }
     else if (message == "RESUME") {
-        Serial.println("[FAKE] RESUME");
-        if (fakeState == DeviceState::SESSION_PAUSED) {
-            fakeState = DeviceState::ACTIVE_SESSION;
+        if (simState == DeviceState::SESSION_PAUSED) {
+            simState = DeviceState::ACTIVE_SESSION;
+            Serial.println("[FLOW] Session resumed.");
         }
     }
     else if (message.startsWith("SET_TIME:")) {
-        int sec = message.substring(9).toInt();
-        if (sec > 0) {
-            fakePracticeDurationSec = (uint32_t)sec;
-            Serial.printf("[FAKE] Session duration set to %d seconds.\n", sec);
+        const int seconds = message.substring(9).toInt();
+        if (seconds > 0) {
+            simPracticeDurationSec = (uint32_t)seconds;
+            Serial.printf("[CONFIG] Session duration set to %u s.\n", (unsigned)simPracticeDurationSec);
+        }
+    }
+    else if (message.startsWith("SET_K:")) {
+        const float k = message.substring(6).toFloat();
+        if (k >= 1.0f && k <= 30.0f) {
+            simTracker.setDepthK(k);
+            simPrefs.putFloat("depth_k", k);
+            Serial.printf("[NVS] Depth scalar K set to %.2f.\n", k);
+        }
+    }
+    else if (message == "SET_PROFILE:BENCH") {
+        simTracker.setProfile(CPReadyConfig::KinematicProfile::BENCH_TEST);
+        simPrefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST);
+        simPrefs.putFloat("depth_k", simTracker.getDepthK());
+        Serial.printf("[NVS] Profile BENCH_TEST applied (K %.2f).\n", simTracker.getDepthK());
+    }
+    else if (message == "SET_PROFILE:MANIKIN") {
+        simTracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+        simPrefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+        simPrefs.putFloat("depth_k", simTracker.getDepthK());
+        Serial.printf("[NVS] Profile MANIKIN_STANDARD applied (K %.2f).\n", simTracker.getDepthK());
+    }
+    else if (message.startsWith("CALIBRATE_TARGET:")) {
+        const float targetCm = message.substring(17).toFloat();
+        const float previousK = simTracker.getDepthK();
+        float newK = 0.0f;
+
+        if (simTracker.calibrateFromLastSummary(targetCm, newK)) {
+            simPrefs.putFloat("depth_k", newK);
+            Serial.printf("[CALIB] Target %.2f cm scales K %.2f -> %.2f.\n",
+                          targetCm, previousK, newK);
+        }
+        else {
+            Serial.printf("[CALIB] Target %.2f cm rejected: no completed session depth available.\n",
+                          targetCm);
+        }
+    }
+    else if (message == "RESET_CONFIG") {
+        simPrefs.clear();
+        simTracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+        simTracker.setDepthK(CPReadyConfig::DEPTH_CALIBRATION_K);
+        simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+        Serial.println("[NVS] Simulation configuration cleared.");
+    }
+    else if (message == "GET_CONFIG") {
+        Serial.printf("[CONFIG] Profile: %s | Depth K: %.2f | Start: %.2fg | Recoil: %.2fg | Duration: %u s\n",
+                      profileName(simTracker.getProfile()),
+                      simTracker.getDepthK(),
+                      simTracker.getCompressionStartThresholdG(),
+                      simTracker.getRecoilThresholdG(),
+                      (unsigned)simPracticeDurationSec);
+    }
+    else {
+        Serial.println("[BLE CMD] Unhandled command: " + message);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Serial console
+// ---------------------------------------------------------------------------
+
+static void printSimStatus() {
+    const CPRReading& reading = simTracker.getReading();
+
+    Serial.printf("[SIM] State %s | Profile %s | K %.2f | Duration %u s\n",
+                  stateName(simState),
+                  profileName(simTracker.getProfile()),
+                  simTracker.getDepthK(),
+                  (unsigned)simPracticeDurationSec);
+    Serial.printf("[SIM] Elapsed %u s | Strokes %u | Rate %.0f cpm | Depth %.2f cm | Cue %u\n",
+                  (unsigned)reading.elapsed_seconds,
+                  (unsigned)reading.stroke_count,
+                  reading.rate_cpm,
+                  reading.depth_cm,
+                  (unsigned)reading.audio_prompt_code);
+    Serial.printf("[SIM] Calibration motion injection %s | Forced cue %u\n",
+                  simCalibrationMotion ? "ON" : "OFF",
+                  (unsigned)simForcedCue);
+}
+
+static void handleSerialCommand(String line) {
+    line.trim();
+    line.toUpperCase();
+
+    if (!line.startsWith("SIM:")) {
+        Serial.println("[SIM] Unrecognised input: " + line);
+        return;
+    }
+
+    if (line == "SIM:STATUS") {
+        printSimStatus();
+    }
+    else if (line == "SIM:CALIB") {
+        beginSimCalibration(millis());
+    }
+    else if (line == "SIM:START") {
+        if (simState == DeviceState::CALIBRATED_READY) {
+            startSimSession(millis());
+        }
+        else {
+            Serial.println("[SIM] START needs a completed baseline calibration.");
+        }
+    }
+    else if (line == "SIM:STOP") {
+        if (simState == DeviceState::ACTIVE_SESSION ||
+            simState == DeviceState::SESSION_PAUSED) {
+            endSimSession(millis(), "console stop");
+        }
+        else {
+            Serial.println("[SIM] No active session to stop.");
+        }
+    }
+    else if (line == "SIM:CALIB:FAIL") {
+        simCalibrationMotion = true;
+        Serial.println("[SIM] Calibration motion injection enabled; baselines fail until SIM:CALIB:OK.");
+    }
+    else if (line == "SIM:CALIB:OK") {
+        simCalibrationMotion = false;
+        Serial.println("[SIM] Calibration motion injection disabled.");
+    }
+    else if (line.startsWith("SIM:CUE:")) {
+        const int code = line.substring(8).toInt();
+        if (code >= 1 && code <= 6) {
+            simForcedCue = (uint8_t)code;
+            Serial.printf("[SIM] Cue %d (%s) queued for the next realtime packet.\n",
+                          code, cueName((uint8_t)code));
+        }
+        else {
+            Serial.println("[SIM] Cue code must be 1..6.");
         }
     }
     else {
-        Serial.println("[FAKE BLE CMD] Unhandled command: " + message);
+        Serial.println("[SIM] Commands: SIM:STATUS | SIM:CALIB | SIM:START | SIM:STOP | "
+                       "SIM:CUE:<1-6> | SIM:CALIB:FAIL | SIM:CALIB:OK");
+    }
+}
+
+static void pollSerial() {
+    while (Serial.available() > 0) {
+        const char c = (char)Serial.read();
+
+        if (c == '\n' || c == '\r') {
+            if (simSerialLine.length() > 0) {
+                handleSerialCommand(simSerialLine);
+                simSerialLine = "";
+            }
+        }
+        else if (simSerialLine.length() < 48) {
+            simSerialLine += c;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// State updates
+// ---------------------------------------------------------------------------
+
+static void updateCalibration(uint32_t now, uint32_t nowMicros) {
+    if (nowMicros - simLastCalibrationMicros >= SimConfig::SAMPLE_INTERVAL_MICROS) {
+        simLastCalibrationMicros = nowMicros;
+
+        // A still vest reads zero net acceleration. Injected motion alternates
+        // above and below zero, which exceeds the permitted net spread.
+        const float sampleG = simCalibrationMotion
+            ? ((simCalibrationSamples % 2u) ? 0.20f : -0.20f)
+            : 0.0f;
+
+        if (sampleG < simCalibrationMinG) simCalibrationMinG = sampleG;
+        if (sampleG > simCalibrationMaxG) simCalibrationMaxG = sampleG;
+        simCalibrationSamples++;
+    }
+
+    if (now - simCalibrationProgressMs >= CPReadyConfig::CALIBRATION_PROGRESS_INTERVAL_MS) {
+        simCalibrationProgressMs = now;
+        const uint16_t elapsedSec = (uint16_t)((now - simCalibrationStartMs) / 1000);
+        simBle.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_PROGRESS, elapsedSec));
+        Serial.printf("[CALIB TX] Progress %u s.\n", (unsigned)elapsedSec);
+    }
+
+    if (now - simCalibrationStartMs < CPReadyConfig::CALIBRATION_DURATION_MS) return;
+
+    const bool enoughSamples = simCalibrationSamples >= CPReadyConfig::CALIBRATION_MIN_SAMPLE_COUNT;
+    const float spreadG = simCalibrationMaxG - simCalibrationMinG;
+    const bool stable = spreadG <= CPReadyConfig::CALIBRATION_MAX_NET_SPREAD_G;
+
+    if (enoughSamples && stable) {
+        simState = DeviceState::CALIBRATED_READY;
+        simBle.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
+        Serial.printf("[FLOW] Calibration complete: %u samples, net spread %.2f g. Ready to start.\n",
+                      (unsigned)simCalibrationSamples, spreadG);
+    }
+    else {
+        simState = DeviceState::STANDBY;
+        simBle.sendPacket(makeErrorPacket());
+        Serial.printf("[CALIB FAIL] Samples %u (min %u), net spread %.2f g (max %.2f g).\n",
+                      (unsigned)simCalibrationSamples,
+                      (unsigned)CPReadyConfig::CALIBRATION_MIN_SAMPLE_COUNT,
+                      spreadG,
+                      CPReadyConfig::CALIBRATION_MAX_NET_SPREAD_G);
+    }
+}
+
+static void updateActiveSession(uint32_t now, uint32_t nowMicros) {
+    if (nowMicros - simLastSampleMicros < SimConfig::SAMPLE_INTERVAL_MICROS) return;
+    simLastSampleMicros = nowMicros;
+
+    const uint8_t phaseIndex = simVest.phaseIndexAt(now);
+    if ((int8_t)phaseIndex != simLastPhase) {
+        simLastPhase = (int8_t)phaseIndex;
+        const SimConfig::Phase& phase = SimConfig::PHASES[phaseIndex];
+        Serial.printf("[SIM] Phase %u/%u: %s (%u cpm, %.1f cm, trough %.2f g)\n",
+                      (unsigned)(phaseIndex + 1),
+                      (unsigned)SimConfig::PHASE_COUNT,
+                      phase.label,
+                      (unsigned)phase.rateCpm,
+                      phase.depthCm,
+                      phase.troughG);
+    }
+
+    const float netAccelG = simVest.netAccelAt(now);
+    const bool strokeCompleted = simTracker.processSample(netAccelG, now);
+
+    if (!strokeCompleted && (now - simLastNotifyMs < CPReadyConfig::BLE_NOTIFY_INTERVAL_MS)) {
+        return;
+    }
+    simLastNotifyMs = now;
+
+    const CPRReading& reading = simTracker.getReading();
+    CPRMetricsPacket pkt = reading.toPacket(PKT_TYPE_REALTIME);
+
+    // A queued console cue replaces the engine's decision for one packet, which
+    // allows each speaker cue to be checked without waiting for the scenario.
+    if (simForcedCue != PROMPT_NONE) {
+        pkt.audio_prompt_code = simForcedCue;
+        simForcedCue = PROMPT_NONE;
+    }
+
+    simBle.sendPacket(pkt);
+
+    if (strokeCompleted) {
+        Serial.println("[STROKE] " + reading.toDebugString());
+    }
+
+    // The tracker keeps the last cue in the reading until the next stroke, and
+    // the 5 Hz heartbeat repeats it; log the transition only, not every copy.
+    if (pkt.audio_prompt_code != PROMPT_NONE &&
+        pkt.audio_prompt_code != simLastLoggedCue) {
+        Serial.printf("[CUE] %s (%u) at %u s\n",
+                      cueName(pkt.audio_prompt_code),
+                      (unsigned)pkt.audio_prompt_code,
+                      (unsigned)pkt.session_elapsed_sec);
+    }
+    simLastLoggedCue = pkt.audio_prompt_code;
+
+    if (simPracticeDurationSec > 0 &&
+        simTracker.getReading().elapsed_seconds >= simPracticeDurationSec) {
+        endSimSession(now, "duration reached");
     }
 }
 
@@ -159,60 +519,63 @@ static void fakeHandleCommand(String message) {
 void setup() {
     Serial.begin(115200);
     Serial.println("\n=========================================");
-    Serial.println("     CPReady FAKE-PACKET BLE Firmware    ");
+    Serial.println("     CPReady SIMULATION Firmware         ");
     Serial.println("=========================================");
-    Serial.println("[FAKE] No sensors required. Advertising as CPReady.");
 
-    fakeBle.begin(CPReadyConfig::BLE_DEVICE_NAME);
-    Serial.printf("[OK] BLE GATT Server Advertising as '%s'.\n", CPReadyConfig::BLE_DEVICE_NAME);
+    simPrefs.begin(SimConfig::NVS_NAMESPACE, false);
+
+    const float savedK = simPrefs.getFloat("depth_k", CPReadyConfig::DEPTH_CALIBRATION_K);
+    const uint8_t savedProfile = simPrefs.getUChar(
+        "profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+
+    // setProfile() restores that profile's default scalar, so the profile is
+    // applied first and the stored scalar afterwards; the reverse order would
+    // discard the stored value.
+    simTracker.setProfile((CPReadyConfig::KinematicProfile)savedProfile);
+    simTracker.setDepthK(savedK);
+
+    Serial.printf("[NVS] Profile %s | Depth K %.2f\n",
+                  profileName(simTracker.getProfile()),
+                  simTracker.getDepthK());
+
+    simBle.begin(CPReadyConfig::BLE_DEVICE_NAME);
+    Serial.printf("[OK] BLE GATT server advertising as '%s'.\n", CPReadyConfig::BLE_DEVICE_NAME);
+    Serial.println("[SIM] No sensors required.");
+    Serial.println("[SIM] Console: SIM:STATUS | SIM:CALIB | SIM:START | SIM:STOP | "
+                   "SIM:CUE:<1-6> | SIM:CALIB:FAIL | SIM:CALIB:OK");
 }
 
 void loop() {
-    uint32_t now = millis();
+    const uint32_t now = millis();
+    const uint32_t nowMicros = micros();
 
-    // Process incoming BLE commands
-    if (fakeBle.hasPendingCommand()) {
-        String cmd = fakeBle.consumeCommand();
-        fakeHandleCommand(cmd);
-    }
+    pollSerial();
 
-    // Fake calibration progress notifications
-    if (fakeState == DeviceState::CALIBRATING) {
-        if (now - fakeLastCalibProgressMillis >= 500) {
-            fakeLastCalibProgressMillis = now;
-            fakeBle.sendPacket(makeFakeCalibProgress());
-        }
-
-        if (now - fakeCalibrationStartMillis >= CPReadyConfig::CALIBRATION_DURATION_MS) {
-            Serial.println("[FAKE] Calibration complete -> send success packet");
-            fakeBle.sendPacket(makeFakeCalibSuccess());
-            fakeLastNotifyMillis = now;
-            fakeState = DeviceState::ACTIVE_SESSION;
+    // A dropped link aborts an in-flight session, as in the sensor build.
+    if (simBle.checkAndClearDisconnectionEvent()) {
+        if (simState == DeviceState::CALIBRATING ||
+            simState == DeviceState::ACTIVE_SESSION ||
+            simState == DeviceState::SESSION_PAUSED ||
+            simState == DeviceState::CALIBRATED_READY) {
+            Serial.println("[BLE WARN] Disconnected during a session; aborting.");
+            simTracker.reset();
+            simState = DeviceState::STANDBY;
         }
     }
 
-    // Fake live telemetry stream
-    if (fakeState == DeviceState::ACTIVE_SESSION) {
-        if (now - fakeLastNotifyMillis >= CPReadyConfig::BLE_NOTIFY_INTERVAL_MS) {
-            fakeLastNotifyMillis = now;
+    if (simBle.hasPendingCommand()) {
+        handleBleCommand(simBle.consumeCommand());
+    }
 
-            fakeElapsedSec += 1;
-            if (now % FAKE_STROKE_INTERVAL_MS < CPReadyConfig::BLE_NOTIFY_INTERVAL_MS) {
-                fakeStrokeCount++;
-            }
-
-            fakeBle.sendPacket(makeFakeRealtime());
-            Serial.printf("[FAKE TX] Realtime: rate=%u cpm depth=%.1fmm ccf=%u%% strokes=%u t=%us\n",
-                          FAKE_RATE_CPM, FAKE_DEPTH_CM * 10.0f,
-                          FAKE_CCF_PERCENT, fakeStrokeCount, fakeElapsedSec);
-        }
-
-        if (fakePracticeDurationSec > 0 && fakeElapsedSec >= fakePracticeDurationSec) {
-            Serial.println("[FAKE] Practice time limit reached");
-            fakeState = DeviceState::STANDBY;
-            fakeBle.sendPacket(makeFakeFinalSummary());
-        }
+    if (simState == DeviceState::CALIBRATING) {
+        updateCalibration(now, nowMicros);
+    }
+    else if (simState == DeviceState::ACTIVE_SESSION) {
+        updateActiveSession(now, nowMicros);
+    }
+    else {
+        delay(5);
     }
 }
 
-#endif 
+#endif // CPREADY_SIMULATION

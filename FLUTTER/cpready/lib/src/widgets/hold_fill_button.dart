@@ -71,9 +71,10 @@ class _HoldFillButtonState extends State<HoldFillButton>
   Widget build(BuildContext context) {
     return Opacity(
       opacity: widget.enabled ? 1.0 : 0.5,
-      child: SizedBox(
-        width: double.infinity,
-        height: AppSizes.liveHoldButtonHeight,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minHeight: AppSizes.liveHoldButtonHeight,
+        ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(AppSizes.liveHoldButtonRadius),
           child: GestureDetector(
@@ -105,13 +106,20 @@ class _HoldFillButtonState extends State<HoldFillButton>
                     ),
                   ),
                 ),
-                Center(
-                  child: Text(
-                    widget.label,
-                    style: AppTypography.style(
-                      size: AppTypography.flowActionSize,
-                      weight: AppTypography.headingWeight,
-                      color: AppColors.homeWelcomeText,
+                Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppSpacing.flowActionLabelInsetH,
+                    vertical: AppSpacing.flowActionLabelInsetV,
+                  ),
+                  child: Center(
+                    child: Text(
+                      widget.label,
+                      textAlign: TextAlign.center,
+                      style: AppTypography.style(
+                        size: AppTypography.flowActionSize,
+                        weight: AppTypography.headingWeight,
+                        color: AppColors.homeWelcomeText,
+                      ),
                     ),
                   ),
                 ),

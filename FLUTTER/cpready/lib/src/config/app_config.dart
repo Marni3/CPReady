@@ -26,6 +26,7 @@ class AppRoutes {
   static const String beginCompression = '/begin_compression';
   static const String livePractice = '/live_practice';
   static const String sessionComplete = '/session_complete';
+  static const String manikinCalibration = '/manikin_calibration';
 
   static const List<String> all = <String>[
     splash,
@@ -40,6 +41,7 @@ class AppRoutes {
     beginCompression,
     livePractice,
     sessionComplete,
+    manikinCalibration,
   ];
 }
 

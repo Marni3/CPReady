@@ -8,6 +8,8 @@
 /// Every visual value comes from `lib/src/config/`; this file only composes
 /// widgets.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -42,7 +44,7 @@ class GuideScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: <Widget>[
                     const GuideBackButton(),
-                    const SizedBox(width: AppSpacing.guideBackTitleGap),
+                    SizedBox(width: AppSpacing.guideBackTitleGap),
                     Expanded(
                       child: Text(
                         AppStrings.guideTitle,
@@ -55,15 +57,15 @@ class GuideScreen extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: AppSpacing.guideTitleGap),
+                SizedBox(height: AppSpacing.guideTitleGap),
                 Expanded(
                   child: ListView.separated(
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.guideCardSideInset,
                     ),
                     itemCount: AppGuideSteps.steps.length,
                     separatorBuilder: (_, _) =>
-                        const SizedBox(height: AppSpacing.guideStepGap),
+                        SizedBox(height: AppSpacing.guideStepGap),
                     itemBuilder: (_, int index) => GuideStepCard(
                       number: index + 1,
                       step: AppGuideSteps.steps[index],
@@ -89,7 +91,7 @@ class GuideBackButton extends StatelessWidget {
     return GestureDetector(
       onTap: () => context.pop(),
       behavior: HitTestBehavior.opaque,
-      child: const Padding(
+      child: Padding(
         padding: EdgeInsets.only(
           top: AppSpacing.guideBackTapV,
           bottom: AppSpacing.guideBackTapV,
@@ -118,9 +120,21 @@ class GuideStepCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final TextStyle numberStyle = AppTypography.style(
+      size: AppTypography.guideNumberSize,
+      weight: FontWeight.bold,
+      color: AppColors.guideStepNumberText,
+    );
+    // The badge stays circular, so its diameter grows with the rendered digit.
+    final double badgeSize = math.max(
+      AppSizes.guideNumberCircleSize,
+      measureTextHeight(context, '$number', numberStyle) +
+          2 * AppSizes.guideNumberCirclePadding,
+    );
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(
+      padding: EdgeInsets.symmetric(
         horizontal: AppSpacing.guideStepPaddingH,
         vertical: AppSpacing.guideStepPaddingV,
       ),
@@ -136,23 +150,16 @@ class GuideStepCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Container(
-            width: AppSizes.guideNumberCircleSize,
-            height: AppSizes.guideNumberCircleSize,
+            width: badgeSize,
+            height: badgeSize,
             alignment: Alignment.center,
             decoration: const BoxDecoration(
               color: AppColors.guideStepNumberBackground,
               shape: BoxShape.circle,
             ),
-            child: Text(
-              '$number',
-              style: AppTypography.style(
-                size: AppTypography.guideNumberSize,
-                weight: FontWeight.bold,
-                color: AppColors.guideStepNumberText,
-              ),
-            ),
+            child: Text('$number', style: numberStyle),
           ),
-          const SizedBox(width: AppSpacing.guideNumberGap),
+          SizedBox(width: AppSpacing.guideNumberGap),
           Expanded(
             child: Text.rich(
               TextSpan(

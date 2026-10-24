@@ -24,9 +24,14 @@ MetricRating? rateRating(int? cpm) {
 }
 
 /// Grade for the compression depth, or null when there is no value yet.
+///
+/// The target is a band, not a floor: a stroke that is too deep is graded poor
+/// just like one that is too shallow.
 MetricRating? depthRating(double? cm) {
   if (cm == null) return null;
-  return cm >= AppTargets.depthMinCm ? MetricRating.good : MetricRating.poor;
+  final bool inRange =
+      cm >= AppTargets.depthMinCm && cm <= AppTargets.depthMaxCm;
+  return inRange ? MetricRating.good : MetricRating.poor;
 }
 
 /// Grade for recoil, or null when there is no value yet.

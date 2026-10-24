@@ -10,11 +10,14 @@
 /// widgets.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import '../../config/config.dart';
 import '../../core/app_scope.dart';
+import '../../core/audio/voice_coach.dart';
+import '../../core/audio/voice_cue_gate.dart';
 import '../../core/ble/ble_controller.dart';
 import '../../core/feedback/metric_feedback.dart';
 import '../../core/history/history_revision.dart';
@@ -38,6 +41,7 @@ class LivePracticeScreen extends StatefulWidget {
 class _LivePracticeScreenState extends State<LivePracticeScreen> {
   BleController? _controller;
   SessionRepository? _repository;
+  VoiceCoach? _coach;
   bool _initialized = false;
 
   StreamSubscription<CprMetrics>? _packetSub;
@@ -49,6 +53,18 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   bool _ending = false;
   bool _finished = false;
 
+  /// Consecutive real-time packets that reported an unsteady rhythm.
+  int _unsteadyPackets = 0;
+
+  /// True once the run above lasted long enough to show the warning.
+  bool _cadenceWarning = false;
+
+  /// Voice cues are on by default; the header toggle mutes them per session.
+  bool _muted = false;
+
+  /// Duplicate and overlap guard for the firmware's cue codes.
+  final VoiceCueGate _cueGate = VoiceCueGate();
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -58,6 +74,12 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     final controller = AppScope.of(context);
     _controller = controller;
     _repository = AppScope.history(context);
+    _coach = AppScope.voice(context);
+    unawaited(
+      _coach!.preload().catchError((Object error) {
+        debugPrint('Voice cue preload failed: $error');
+      }),
+    );
 
     controller.startRecording();
     controller.addListener(_onControllerChanged);
@@ -84,12 +106,25 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   void _onPacket(CprMetrics metrics) {
     if (!mounted) return;
     final int count = metrics.totalCompressions;
+
+    // The first stroke and the packet after a pause also report unsteady
+    // cadence; only a sustained run should raise the banner.
+    final bool realtime = metrics.packetType == AppBleConfig.packetRealtime;
+    if (realtime) {
+      final bool unsteady = !metrics.isSteadyCadence && !metrics.isFirstStroke;
+      _unsteadyPackets = unsteady ? _unsteadyPackets + 1 : 0;
+    }
+
     setState(() {
       _latest = metrics;
       if (_lastCount == null || count > _lastCount!) {
         _lastCompressionAt = DateTime.now();
       }
       _lastCount = count;
+      if (realtime) {
+        _cadenceWarning =
+            _unsteadyPackets >= AppDurations.liveCadenceWarningPackets;
+      }
     });
 
     // Firmware auto-stop: a FINAL_SUMMARY arrives without a STOP command.
@@ -97,7 +132,23 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         !_ending &&
         !_finished) {
       unawaited(_finish(saved: true, summary: metrics));
+      return;
     }
+
+    // The firmware already throttles and prioritizes its prompts; play the cue
+    // it asked for unless the session is ending or the user muted the voice.
+    if (metrics.packetType == AppBleConfig.packetRealtime &&
+        !_muted &&
+        !_ending &&
+        !_finished &&
+        _cueGate.allows(metrics.audioPromptCode)) {
+      unawaited(_coach?.play(metrics.audioPromptCode));
+    }
+  }
+
+  void _toggleMute() {
+    setState(() => _muted = !_muted);
+    if (_muted) unawaited(_coach?.stop());
   }
 
   void _onControllerChanged() {
@@ -110,6 +161,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     _finished = true;
     _tick?.cancel();
     _controller?.stopRecording();
+    unawaited(_coach?.stop());
     unawaited(abortFlowToHome(context));
   }
 
@@ -150,6 +202,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     _packetSub?.cancel();
     _tick?.cancel();
     controller?.removeListener(_onControllerChanged);
+    unawaited(_coach?.stop());
 
     if (!mounted || controller == null) return;
 
@@ -236,6 +289,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     _packetSub?.cancel();
     _tick?.cancel();
     _controller?.removeListener(_onControllerChanged);
+    unawaited(_coach?.stop());
     super.dispose();
   }
 
@@ -244,11 +298,11 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       text: text,
       background: ValueCapsule.gradedBackground(rating),
       foreground: AppColors.liveCapsuleText,
-      height: AppSizes.liveCapsuleHeight,
+      minHeight: AppSizes.liveCapsuleHeight,
       radius: AppSizes.liveCapsuleRadius,
       textSize: AppTypography.liveCapsuleSize,
       textWeight: AppTypography.headingWeight,
-      width: AppSizes.liveCapsuleWidth,
+      minWidth: AppSizes.liveCapsuleWidth,
     );
   }
 
@@ -276,15 +330,28 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  if (controller != null) _StatusHeader(controller: controller),
-                  const SizedBox(height: AppSpacing.liveTimerTopGap),
-                  _TimerBlock(startedAt: controller?.sessionStartedAt),
-                  const SizedBox(height: AppSpacing.liveSectionTopGap),
                   Expanded(
                     child: SingleChildScrollView(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: <Widget>[
+                          if (controller != null)
+                            _StatusHeader(
+                              controller: controller,
+                              muted: _muted,
+                              onToggleMute: _toggleMute,
+                            ),
+                          SizedBox(height: AppSpacing.liveTimerTopGap),
+                          _TimerBlock(startedAt: controller?.sessionStartedAt),
+                          if (latest?.isBenchMode ?? false) ...<Widget>[
+                            SizedBox(height: AppSpacing.liveBenchBadgeTopGap),
+                            const Center(child: _BenchBadge()),
+                          ],
+                          if (_cadenceWarning) ...<Widget>[
+                            SizedBox(height: AppSpacing.liveNoticeTopGap),
+                            const _CadenceWarning(),
+                          ],
+                          SizedBox(height: AppSpacing.liveSectionTopGap),
                           LayoutBuilder(
                             builder:
                                 (BuildContext context, BoxConstraints bounds) {
@@ -311,7 +378,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                                     return Column(
                                       children: <Widget>[
                                         rate,
-                                        const SizedBox(
+                                        SizedBox(
                                           height:
                                               AppSpacing.liveSectionStackGap,
                                         ),
@@ -323,7 +390,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                                   return Row(
                                     children: <Widget>[
                                       Expanded(child: rate),
-                                      const SizedBox(
+                                      SizedBox(
                                         width: AppSpacing.liveSectionGap,
                                       ),
                                       Expanded(child: recoil),
@@ -331,9 +398,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                                   );
                                 },
                           ),
-                          const SizedBox(
-                            height: AppSpacing.liveSectionStackGap,
-                          ),
+                          SizedBox(height: AppSpacing.liveSectionStackGap),
                           _MetricSection(
                             label: AppStrings.liveDepthLabel,
                             capsule: _capsule(
@@ -341,9 +406,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                               depthRating(latest?.depthCm),
                             ),
                           ),
-                          const SizedBox(
-                            height: AppSpacing.liveSectionStackGap,
-                          ),
+                          SizedBox(height: AppSpacing.liveSectionStackGap),
                           Center(
                             child: _CompressionCounter(
                               count: latest?.totalCompressions ?? 0,
@@ -354,7 +417,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.liveSectionStackGap),
+                  SizedBox(height: AppSpacing.liveSectionStackGap),
                   HoldFillButton(
                     label: AppStrings.liveHoldEndSession,
                     duration: AppDurations.holdSession,
@@ -371,29 +434,60 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   }
 }
 
-/// Title plus live connection status, both indented past the rest of the
-/// content.
+/// Title, voice-cue toggle, and live connection status, all indented past the
+/// rest of the content.
 class _StatusHeader extends StatelessWidget {
   final BleController controller;
+  final bool muted;
+  final VoidCallback onToggleMute;
 
-  const _StatusHeader({required this.controller});
+  const _StatusHeader({
+    required this.controller,
+    required this.muted,
+    required this.onToggleMute,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(left: AppSpacing.liveHeaderInset),
+      padding: EdgeInsets.only(left: AppSpacing.liveHeaderInset),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            AppStrings.livePracticeTitle,
-            style: AppTypography.style(
-              size: AppTypography.liveTitleSize,
-              weight: AppTypography.headingWeight,
-              color: AppColors.liveLabelText,
-            ),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  AppStrings.livePracticeTitle,
+                  style: AppTypography.style(
+                    size: AppTypography.liveTitleSize,
+                    weight: AppTypography.headingWeight,
+                    color: AppColors.liveLabelText,
+                  ),
+                ),
+              ),
+              Semantics(
+                button: true,
+                label: muted
+                    ? AppStrings.liveUnmuteCues
+                    : AppStrings.liveMuteCues,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onToggleMute,
+                  child: SizedBox(
+                    width: AppSizes.liveMuteTapSize,
+                    height: AppSizes.liveMuteTapSize,
+                    child: Icon(
+                      muted ? Icons.volume_off : Icons.volume_up,
+                      size: AppSizes.liveMuteIconSize,
+                      color: AppColors.liveLabelText,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: AppSpacing.liveStatusGap),
+          SizedBox(height: AppSpacing.liveStatusGap),
           _StatusLine(controller: controller),
         ],
       ),
@@ -452,7 +546,7 @@ class _StatusLine extends StatelessWidget {
               size: AppSizes.liveStatusGlyphSize,
               color: color,
             ),
-            const SizedBox(width: AppSpacing.small),
+            SizedBox(width: AppSpacing.small),
             Expanded(
               child: Text(
                 label,
@@ -468,6 +562,65 @@ class _StatusLine extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// Amber notice shown once the firmware reports a sustained unsteady rhythm.
+class _CadenceWarning extends StatelessWidget {
+  const _CadenceWarning();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: AppSpacing.liveNoticePaddingH,
+        vertical: AppSpacing.liveNoticePaddingV,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.liveWarningBackground,
+        borderRadius: BorderRadius.circular(AppSizes.liveNoticeRadius),
+        border: Border.all(
+          color: AppColors.liveWarningBorder,
+          width: AppSizes.liveNoticeBorderWidth,
+        ),
+      ),
+      child: Text(
+        AppStrings.liveCadenceWarning,
+        textAlign: TextAlign.center,
+        style: AppTypography.style(
+          size: AppTypography.liveNoticeSize,
+          weight: FontWeight.bold,
+          color: AppColors.liveWarningText,
+        ),
+      ),
+    );
+  }
+}
+
+/// Capsule marking a session that runs the relaxed bench profile.
+class _BenchBadge extends StatelessWidget {
+  const _BenchBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: AppSpacing.liveBenchBadgePaddingH,
+        vertical: AppSpacing.liveBenchBadgePaddingV,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.liveBenchBadgeBackground,
+        borderRadius: BorderRadius.circular(AppSizes.liveBenchBadgeRadius),
+      ),
+      child: Text(
+        AppStrings.liveBenchBadge,
+        style: AppTypography.style(
+          size: AppTypography.liveBenchBadgeSize,
+          weight: FontWeight.bold,
+          color: AppColors.liveBenchBadgeText,
+        ),
+      ),
     );
   }
 }
@@ -496,7 +649,7 @@ class _TimerBlock extends StatelessWidget {
             color: AppColors.liveLabelText,
           ),
         ),
-        const SizedBox(height: AppSpacing.liveTimerLabelGap),
+        SizedBox(height: AppSpacing.liveTimerLabelGap),
         Text(
           AppStrings.liveElapsedLabel,
           textAlign: TextAlign.center,
@@ -521,9 +674,7 @@ class _MetricSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(
-        minHeight: AppSizes.liveSectionMinHeight,
-      ),
+      constraints: BoxConstraints(minHeight: AppSizes.liveSectionMinHeight),
       decoration: BoxDecoration(
         color: AppColors.liveSectionBackground,
         borderRadius: BorderRadius.circular(AppSizes.liveSectionRadius),
@@ -544,9 +695,9 @@ class _MetricSection extends StatelessWidget {
               color: AppColors.liveLabelText,
             ),
           ),
-          const SizedBox(height: AppSpacing.liveSectionLabelGap),
+          SizedBox(height: AppSpacing.liveSectionLabelGap),
           Padding(
-            padding: const EdgeInsets.symmetric(
+            padding: EdgeInsets.symmetric(
               horizontal: AppSizes.liveSectionPaddingH,
             ),
             child: capsule,
@@ -567,54 +718,78 @@ class _CompressionCounter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(
-        maxWidth: AppSizes.liveCounterWidth,
-        minWidth: AppSizes.liveCounterWidth,
-        minHeight: AppSizes.liveCounterHeight,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.liveSectionBackground,
-        borderRadius: BorderRadius.circular(AppSizes.liveSectionRadius),
-        border: Border.all(
-          color: AppColors.liveSectionBorder,
-          width: AppSizes.liveSectionBorderWidth,
-        ),
-      ),
-      child: Center(
-        child: Container(
-          width: AppSizes.liveCounterCircleSize,
-          height: AppSizes.liveCounterCircleSize,
+    final TextStyle countStyle = AppTypography.style(
+      size: AppTypography.liveCounterSize,
+      weight: AppTypography.headingWeight,
+      color: AppColors.liveCounterText,
+    );
+    final TextStyle labelStyle = AppTypography.style(
+      size: AppTypography.liveCounterLabelSize,
+      weight: FontWeight.normal,
+      color: AppColors.liveCounterText,
+    );
+    final String countText = '$count';
+    const String labelText = AppStrings.liveCompressionsLabel;
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        // The circle is a floor plus whatever the two lines need, so a larger
+        // rendered text size widens both the circle and the card around it.
+        final double textWidth = math.max(
+          measureTextWidth(context, countText, countStyle),
+          measureTextWidth(context, labelText, labelStyle),
+        );
+        final double textHeight =
+            measureTextHeight(context, countText, countStyle) +
+            measureTextHeight(context, labelText, labelStyle);
+        final double diameter = math.min(
+          math.max(
+            AppSizes.liveCounterCircleSize,
+            math.max(textWidth, textHeight) +
+                2 * AppSizes.liveCounterCirclePadding,
+          ),
+          math.max(
+            0.0,
+            constraints.maxWidth - 2 * AppSizes.liveCounterCardPadding,
+          ),
+        );
+
+        return Container(
+          constraints: BoxConstraints(
+            minWidth: AppSizes.liveCounterWidth,
+            minHeight: AppSizes.liveCounterHeight,
+          ),
+          padding: EdgeInsets.all(AppSizes.liveCounterCardPadding),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: active
-                ? AppColors.liveCounterActive
-                : AppColors.liveCounterIdle,
+            color: AppColors.liveSectionBackground,
+            borderRadius: BorderRadius.circular(AppSizes.liveSectionRadius),
+            border: Border.all(
+              color: AppColors.liveSectionBorder,
+              width: AppSizes.liveSectionBorderWidth,
+            ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Text(
-                '$count',
-                style: AppTypography.style(
-                  size: AppTypography.liveCounterSize,
-                  weight: AppTypography.headingWeight,
-                  color: AppColors.liveCounterText,
-                ),
-              ),
-              Text(
-                AppStrings.liveCompressionsLabel,
-                style: AppTypography.style(
-                  size: AppTypography.liveCounterLabelSize,
-                  weight: FontWeight.normal,
-                  color: AppColors.liveCounterText,
-                ),
-              ),
-            ],
+          child: Container(
+            width: diameter,
+            height: diameter,
+            alignment: Alignment.center,
+            padding: EdgeInsets.all(AppSizes.liveCounterCirclePadding),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: active
+                  ? AppColors.liveCounterActive
+                  : AppColors.liveCounterIdle,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(countText, textAlign: TextAlign.center, style: countStyle),
+                Text(labelText, textAlign: TextAlign.center, style: labelStyle),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
