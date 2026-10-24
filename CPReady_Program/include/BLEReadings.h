@@ -30,7 +30,6 @@ constexpr uint8_t PROMPT_RELEASE_FULLY    = 3; // "Release chest completely" (le
 constexpr uint8_t PROMPT_SPEED_UP         = 4; // "Speed up" (rate < 100 cpm sustained >= 3.5s)
 constexpr uint8_t PROMPT_SLOW_DOWN        = 5; // "Slow down" (rate > 120 cpm sustained >= 3.5s)
 constexpr uint8_t PROMPT_GOOD_JOB         = 6; // "Good compressions" (positive praise after sustained target compliance)
-constexpr uint8_t PROMPT_STEADY_RHYTHM    = 7; // "Maintain steady rhythm" (cadence jitter > 25% sustained)
 
 // Cadence Quality & Engine State Bitmask Flags (Byte 11)
 constexpr uint8_t CADENCE_FLAG_STEADY       = (1 << 0); // Bit 0: 1 = Steady rhythmic cadence, 0 = Erratic/Unsteady
@@ -56,7 +55,7 @@ struct CPRMetricsPacket {
     // Byte Offset 6: Cumulative Chest Compression Fraction percentage (0..100%)
     uint8_t  ccf_percent;
 
-    // Byte Offset 7: Audio Coaching Trigger Code (0..7)
+    // Byte Offset 7: Audio Coaching Trigger Code (0..6)
     uint8_t  audio_prompt_code;
 
     // Byte Offset 8: Stroke sequence index (Live) or total session compressions count (Summary)
@@ -183,7 +182,7 @@ struct CPRReading {
    final double depthCm;         // Current or average depth (cm)
    final double depthMm;         // Current or average depth (mm)
    final int ccfPercent;         // Cumulative CCF %
-   final int audioPromptCode;    // 0=None, 1=Push Harder, 2=Push Less, 3=Release Fully, 4=Speed Up, 5=Slow Down, 6=Good, 7=Steady Rhythm
+   final int audioPromptCode;    // 0=None, 1=Push Harder, 2=Push Less, 3=Release Fully, 4=Speed Up, 5=Slow Down, 6=Good
    final int totalCompressions;  // Stroke count
    final int elapsedSeconds;     // Elapsed session duration
    final int qualityFlags;       // Bitmask: Bit 0 = Steady, Bit 1 = First/Post-Pause, Bit 2 = Bench Mode

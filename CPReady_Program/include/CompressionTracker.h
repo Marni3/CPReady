@@ -28,8 +28,6 @@ private:
     uint16_t recentCyclePeriods[PERIOD_HISTORY_SIZE];
     uint8_t  periodHistoryCount;
     uint8_t  periodHistoryIndex;
-    uint8_t  unsteadyStreak;
-    uint32_t unsteadyStartTime;
 
     // Cumulative Session Aggregators
     uint32_t totalStrokeCount;
@@ -75,8 +73,6 @@ public:
 
         periodHistoryCount = 0;
         periodHistoryIndex = 0;
-        unsteadyStreak = 0;
-        unsteadyStartTime = 0;
 
         totalStrokeCount = 0;
         goodRecoilCount = 0;
@@ -305,7 +301,6 @@ public:
                         leaningStreak = 0;   leaningStartTime = 0;
                         slowRateStreak = 0;  slowRateStartTime = 0;
                         fastRateStreak = 0;  fastRateStartTime = 0;
-                        unsteadyStreak = 0;  unsteadyStartTime = 0;
                     }
                     reading.audio_prompt_code = PROMPT_NONE;
                     evaluateAudioGuidance(currentMillis, isCadenceSteady, isPostPause);
@@ -371,14 +366,6 @@ private:
             fastRateStartTime = 0;
         }
 
-        // Track unsteady cadence streak (ignore post-pause recovery stroke)
-        if (!isCadenceSteady && !isPostPause) {
-            if (unsteadyStreak == 0) unsteadyStartTime = currentMillis;
-            unsteadyStreak++;
-        } else {
-            unsteadyStreak = 0;
-            unsteadyStartTime = 0;
-        }
 
         if (isTarget) {
             if (targetStartTime == 0) targetStartTime = currentMillis;
@@ -440,16 +427,8 @@ private:
             return;
         }
 
-        // Priority 4: Cadence Rhythm Consistency
-        if (isSustained(unsteadyStartTime, unsteadyStreak)) {
-            reading.audio_prompt_code = PROMPT_STEADY_RHYTHM;
-            lastAudioPromptMillis = currentMillis;
-            unsteadyStreak = 0;
-            unsteadyStartTime = 0;
-            return;
-        }
 
-        // Priority 5: Positive Reinforcement (Good compressions every 15s)
+        // Priority 4: Positive Reinforcement (Good compressions every 15s)
         if (isTarget && targetStartTime > 0 && 
             (currentMillis - targetStartTime >= CPReadyConfig::AUDIO_PROMPT_PRAISE_INTERVAL) &&
             (currentMillis - lastTargetPraiseMillis >= CPReadyConfig::AUDIO_PROMPT_PRAISE_INTERVAL)) {

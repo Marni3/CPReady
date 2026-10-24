@@ -86,7 +86,7 @@ COMMAND CHAR UUID:   6e400003-b5a3-f393-e0a9-e50e24dcca9e  (Write)
 | **2..3** | `rate_cpm` | `uint16` | Instantaneous cadence (cpm) | Session Average Cadence (cpm) |
 | **4..5** | `depth_tenths_mm` | `uint16` | Stroke depth in 0.1 mm (e.g. 550 = 55mm) | Session Average Depth in 0.1 mm |
 | **6** | `ccf_percent` | `uint8` | Current cumulative CCF % (`0..100`) | Final Session CCF % (`0..100`) |
-| **7** | `audio_prompt_code` | `uint8` | Audio Guidance Cue Code (`0..7`) | `0` (Unused in summary) |
+| **7** | `audio_prompt_code` | `uint8` | Audio Guidance Cue Code (`0..6`) | `0` (Unused in summary) |
 | **8** | `total_compressions`| `uint8` | Current stroke sequence count | Total compressions delivered in session |
 | **9..10** | `session_elapsed_sec`| `uint16`| Elapsed session duration (seconds) | Total final session duration (seconds) |
 | **11** | `quality_flags` | `uint8` | Stroke quality bitfield (steady cadence, pause fallback, profile) | Final Session Quality Flags (steady rhythm, bench profile) |
@@ -115,7 +115,6 @@ The firmware contains a smart coaching engine with **3.5-second error persistenc
 | **4** | `PROMPT_SPEED_UP` | *"Speed up"* | Rate < 100 cpm sustained for $\ge 3.5\text{ s}$ |
 | **5** | `PROMPT_SLOW_DOWN` | *"Slow down"* | Rate > 120 cpm sustained for $\ge 3.5\text{ s}$ |
 | **6** | `PROMPT_GOOD_JOB` | *"Good compressions"* | Target metrics maintained continuously for $\ge 15\text{ s}$ |
-| **7** | `PROMPT_STEADY_RHYTHM` | *"Maintain steady rhythm"* | Cadence jitter ratio > 25% sustained for $\ge 3.5\text{ s}$ |
 
 ---
 
@@ -135,7 +134,7 @@ class CPRMetrics {
   final double depthCm;         // Current or average depth in cm
   final double depthMm;         // Current or average depth in mm
   final int ccfPercent;         // Cumulative CCF %
-  final int audioPromptCode;    // 0..7
+  final int audioPromptCode;    // 0..6
   final int totalCompressions;  // Total stroke count
   final int elapsedSeconds;     // Total duration in seconds
   final int qualityFlags;       // Bit 0=Steady, Bit 1=First/Pause, Bit 2=Bench Mode
@@ -261,7 +260,6 @@ class CPRSessionManager {
       case 4: tts.speak("Speed up"); break;
       case 5: tts.speak("Slow down"); break;
       case 6: tts.speak("Good compressions"); break;
-      case 7: tts.speak("Maintain steady rhythm"); break;
     }
   }
 
