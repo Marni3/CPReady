@@ -150,16 +150,26 @@ void setup() {
     #else
     if (!sensors.begin()) {
         #if USE_DUAL_MPU
-        Serial.println("[ERROR] Could not connect to both MPU6050 sensors (0x68 and 0x69). Check wiring!");
+        Serial.println("[ERROR] Failed to initialize MPU6050 sensors via PCA9548A multiplexer! Check wiring and 0x70 address.");
         #else
-        Serial.println("[ERROR] Could not connect to chest MPU6050 sensor (0x68). Check wiring!");
+        Serial.println("[ERROR] Failed to initialize chest MPU6050 sensor! Check wiring.");
         #endif
         state = DeviceState::FAULT_ERROR;
     } else {
         #if USE_DUAL_MPU
-        Serial.println("[OK] Dual-MPU mode initialized: Both sensors (0x68 and 0x69) ready.");
+        if (sensors.getHasMultiplexer()) {
+            Serial.printf("[OK] Dual-MPU mode initialized via PCA9548A: Chest on SD%d, Base on SD%d (both at 0x68).\n",
+                sensors.getChestChannel(), sensors.getBaseChannel());
+        } else {
+            Serial.println("[OK] Dual-MPU mode initialized.");
+        }
         #else
-        Serial.println("[OK] Single-MPU mode initialized: Chest sensor (0x68) ready. Base sensor bypassed.");
+        if (sensors.getHasMultiplexer()) {
+            Serial.printf("[OK] Single-MPU mode initialized via PCA9548A on SD%d. Base sensor bypassed.\n",
+                sensors.getChestChannel());
+        } else {
+            Serial.println("[OK] Single-MPU mode initialized: Direct bus mode (0x68). Base sensor bypassed.");
+        }
         #endif
     }
     #endif

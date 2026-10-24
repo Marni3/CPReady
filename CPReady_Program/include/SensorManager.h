@@ -13,6 +13,11 @@ private:
     #if USE_DUAL_MPU
     Adafruit_MPU6050 baseSensor;
     #endif
+    uint8_t chestMuxChannel;
+    #if USE_DUAL_MPU
+    uint8_t baseMuxChannel;
+    #endif
+    bool hasMultiplexer;
     float chestGravityOffset;
     float baseGravityOffset;
     float lastFilteredNetAccel;
@@ -32,12 +37,32 @@ private:
 
 public:
     SensorManager() 
-        : chestGravityOffset(0.0f), baseGravityOffset(0.0f),
+        : chestMuxChannel(CPReadyConfig::PCA_CHANNEL_CHEST_DEFAULT),
+          #if USE_DUAL_MPU
+          baseMuxChannel(CPReadyConfig::PCA_CHANNEL_BASE_DEFAULT),
+          #endif
+          hasMultiplexer(false),
+          chestGravityOffset(0.0f), baseGravityOffset(0.0f),
           lastFilteredNetAccel(0.0f), lastSampleMicros(0),
           calChestSum(0.0f), calBaseSum(0.0f), calSampleCount(0), isCalibrated(false),
           calNetMin(999.0f), calNetMax(-999.0f),
           calChestMin(999.0f), calChestMax(-999.0f),
           calBaseMin(999.0f), calBaseMax(-999.0f) {}
+
+    // Multiplexer Channel Switching Helpers
+    void selectMuxChannel(uint8_t channel) {
+        if (!hasMultiplexer || channel > 7) return;
+        Wire.beginTransmission(CPReadyConfig::PCA9548A_I2C_ADDR);
+        Wire.write(1 << channel);
+        Wire.endTransmission();
+    }
+
+    void disableMux() {
+        if (!hasMultiplexer) return;
+        Wire.beginTransmission(CPReadyConfig::PCA9548A_I2C_ADDR);
+        Wire.write(0x00);
+        Wire.endTransmission();
+    }
 
     // Hardware I2C bus recovery routine (NXP UM10204 9-clock cycle sequence)
     // Toggles SCL up to 9 times to force any stuck slave to release SDA,
@@ -87,9 +112,11 @@ public:
             if (error == 0) {
                 Serial.printf("[I2C SCAN]  -> Device detected at address 0x%02X", addr);
                 if (addr == 0x68) {
-                    Serial.print(" (Default MPU-6050 / Chest)");
+                    Serial.print(" (MPU-6050 Default / 0x68)");
                 } else if (addr == 0x69) {
-                    Serial.print(" (Alternate MPU-6050 / Base or AD0 HIGH)");
+                    Serial.print(" (MPU-6050 Alternate / 0x69)");
+                } else if (addr == CPReadyConfig::PCA9548A_I2C_ADDR) {
+                    Serial.print(" (PCA9548A I2C Multiplexer)");
                 }
                 Serial.println();
                 count++;
@@ -102,25 +129,131 @@ public:
         }
     }
 
+    // Dynamic PCA9548A channel scanner & automatic mapping
+    bool detectAndMapChannels() {
+        Wire.beginTransmission(CPReadyConfig::PCA9548A_I2C_ADDR);
+        if (Wire.endTransmission() != 0) {
+            hasMultiplexer = false;
+            return false;
+        }
+        hasMultiplexer = true;
+        Serial.printf("[I2C MUX] PCA9548A Multiplexer detected at address 0x%02X.\n", CPReadyConfig::PCA9548A_I2C_ADDR);
+
+        int8_t detectedChannels[8];
+        uint8_t detectedCount = 0;
+
+        for (uint8_t ch = 0; ch < 8; ch++) {
+            selectMuxChannel(ch);
+            Wire.beginTransmission(CPReadyConfig::CHEST_MPU_I2C_ADDR);
+            if (Wire.endTransmission() == 0) {
+                detectedChannels[detectedCount++] = ch;
+                Serial.printf("[I2C MUX]  -> Channel SD%d: Found MPU6050 at 0x%02X\n", ch, CPReadyConfig::CHEST_MPU_I2C_ADDR);
+            }
+        }
+        disableMux();
+
+        if (detectedCount == 0) {
+            Serial.println("[I2C MUX WARN] Multiplexer found, but NO MPU6050 sensors detected on any channel (SD0-SD7)!");
+            return false;
+        }
+
+        // 1. Assign chest sensor channel (prefers default SD0 if detected)
+        bool chestFound = false;
+        for (uint8_t i = 0; i < detectedCount; i++) {
+            if (detectedChannels[i] == CPReadyConfig::PCA_CHANNEL_CHEST_DEFAULT) {
+                chestMuxChannel = CPReadyConfig::PCA_CHANNEL_CHEST_DEFAULT;
+                chestFound = true;
+                break;
+            }
+        }
+        if (!chestFound) {
+            chestMuxChannel = detectedChannels[0];
+            Serial.printf("[I2C MUX] Chest sensor not on default SD%d; auto-mapped to SD%d.\n",
+                CPReadyConfig::PCA_CHANNEL_CHEST_DEFAULT, chestMuxChannel);
+        } else {
+            Serial.printf("[I2C MUX] Chest sensor mapped to SD%d.\n", chestMuxChannel);
+        }
+
+        #if USE_DUAL_MPU
+        if (detectedCount < 2) {
+            Serial.printf("[I2C MUX WARN] Dual MPU mode enabled, but only %d MPU sensor detected!\n", detectedCount);
+            return false;
+        }
+
+        // 2. Assign base sensor channel (prefers default SD1 if detected and not chest)
+        bool baseFound = false;
+        for (uint8_t i = 0; i < detectedCount; i++) {
+            if (detectedChannels[i] == CPReadyConfig::PCA_CHANNEL_BASE_DEFAULT &&
+                detectedChannels[i] != chestMuxChannel) {
+                baseMuxChannel = CPReadyConfig::PCA_CHANNEL_BASE_DEFAULT;
+                baseFound = true;
+                break;
+            }
+        }
+        if (!baseFound) {
+            for (uint8_t i = 0; i < detectedCount; i++) {
+                if (detectedChannels[i] != chestMuxChannel) {
+                    baseMuxChannel = detectedChannels[i];
+                    break;
+                }
+            }
+            Serial.printf("[I2C MUX] Base sensor not on default SD%d; auto-mapped to SD%d.\n",
+                CPReadyConfig::PCA_CHANNEL_BASE_DEFAULT, baseMuxChannel);
+        } else {
+            Serial.printf("[I2C MUX] Base sensor mapped to SD%d.\n", baseMuxChannel);
+        }
+        #endif
+
+        return true;
+    }
+
     bool begin() {
         recoverI2CBus();
         scanI2CBus();
 
-        if (!chestSensor.begin(CPReadyConfig::CHEST_MPU_I2C_ADDR, &Wire)) {
-            return false;
-        }
-        chestSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
-        chestSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+        bool muxDetected = detectAndMapChannels();
+        if (hasMultiplexer) {
+            if (!muxDetected) {
+                return false;
+            }
 
-        #if USE_DUAL_MPU
-        if (!baseSensor.begin(CPReadyConfig::BASE_MPU_I2C_ADDR, &Wire)) {
-            return false;
-        }
-        baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
-        baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
-        #endif
+            // Initialize chest sensor behind its multiplexer channel
+            selectMuxChannel(chestMuxChannel);
+            if (!chestSensor.begin(CPReadyConfig::CHEST_MPU_I2C_ADDR, &Wire)) {
+                Serial.printf("[ERROR] Failed to initialize Chest MPU6050 on Mux SD%d!\n", chestMuxChannel);
+                return false;
+            }
+            chestSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+            chestSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
 
-        return true;
+            #if USE_DUAL_MPU
+            // Initialize base sensor behind its multiplexer channel
+            selectMuxChannel(baseMuxChannel);
+            if (!baseSensor.begin(CPReadyConfig::BASE_MPU_I2C_ADDR, &Wire)) {
+                Serial.printf("[ERROR] Failed to initialize Base MPU6050 on Mux SD%d!\n", baseMuxChannel);
+                return false;
+            }
+            baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+            baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+            #endif
+
+            disableMux();
+            return true;
+        } else {
+            // Direct bus fallback (without multiplexer)
+            #if USE_DUAL_MPU
+            Serial.println("[ERROR] Dual MPU mode requires PCA9548A multiplexer at 0x70, but it was not detected!");
+            return false;
+            #else
+            Serial.println("[I2C] Direct bus mode (no multiplexer): initializing chest sensor at 0x68...");
+            if (!chestSensor.begin(CPReadyConfig::CHEST_MPU_I2C_ADDR, &Wire)) {
+                return false;
+            }
+            chestSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+            chestSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+            return true;
+            #endif
+        }
     }
 
     // Prepare non-blocking calibration state
@@ -139,6 +272,7 @@ public:
 
     // Called periodically during the idle baseline window
     void recordCalibrationSample() {
+        selectMuxChannel(chestMuxChannel);
         sensors_event_t aChest, gChest, tempChest;
         chestSensor.getEvent(&aChest, &gChest, &tempChest);
         float a1 = aChest.acceleration.z / SENSORS_GRAVITY_STANDARD;
@@ -151,6 +285,7 @@ public:
         if (a1 > calChestMax) calChestMax = a1;
 
         #if USE_DUAL_MPU
+        selectMuxChannel(baseMuxChannel);
         sensors_event_t aBase, gBase, tempBase;
         baseSensor.getEvent(&aBase, &gBase, &tempBase);
         float a2 = aBase.acceleration.z / SENSORS_GRAVITY_STANDARD;
@@ -228,11 +363,13 @@ public:
         }
         lastSampleMicros = currentMicros;
 
+        selectMuxChannel(chestMuxChannel);
         sensors_event_t aChest, gChest, tempChest;
         chestSensor.getEvent(&aChest, &gChest, &tempChest);
         float aChestG = (aChest.acceleration.z / SENSORS_GRAVITY_STANDARD) - chestGravityOffset;
 
         #if USE_DUAL_MPU
+        selectMuxChannel(baseMuxChannel);
         sensors_event_t aBase, gBase, tempBase;
         baseSensor.getEvent(&aBase, &gBase, &tempBase);
         float aBaseG  = (aBase.acceleration.z / SENSORS_GRAVITY_STANDARD) - baseGravityOffset;
@@ -249,6 +386,11 @@ public:
     }
 
     bool getIsCalibrated() const { return isCalibrated; }
+    bool getHasMultiplexer() const { return hasMultiplexer; }
+    uint8_t getChestChannel() const { return chestMuxChannel; }
+    #if USE_DUAL_MPU
+    uint8_t getBaseChannel() const { return baseMuxChannel; }
+    #endif
 };
 
 #endif // SENSOR_MANAGER_H

@@ -13,7 +13,7 @@
 #define DEMO_RATE_CPM          110       // AHA target: 100-120 /min
 #define DEMO_RECOIL_OK         true      // AHA: full recoil required
 // ---- Hardware Sensor Configuration ----
-#define USE_DUAL_MPU           false     // Set true for 2 MPUs (chest + base); false for 1 MPU (chest only)
+#define USE_DUAL_MPU           true      // Set true for 2 MPUs (chest + base); false for 1 MPU (chest only)
 
 
 // ==============================================================================
@@ -70,9 +70,13 @@ namespace CPReadyConfig {
     constexpr float       TARGET_DEPTH_MAX_CM           = 6.0f;   // AHA maximum target depth (6.0 cm / 2.4 inches)
     constexpr uint8_t     TARGET_CCF_MIN_PERCENT        = 60;     // AHA minimum chest compression fraction (60% active time)
 
-    // Internal I2C Bus & Sensor Addresses
+    // Internal I2C Bus, Multiplexer & Sensor Addresses
     constexpr uint8_t     CHEST_MPU_I2C_ADDR            = 0x68;    // Chest MPU6050 address (AD0 pin tied to GND)
-    constexpr uint8_t     BASE_MPU_I2C_ADDR             = 0x69;    // Base MPU6050 address (AD0 pin pulled up to 3.3V)
+    constexpr uint8_t     BASE_MPU_I2C_ADDR             = 0x68;    // Base MPU6050 address (behind PCA9548A channel, default 0x68)
+    constexpr uint8_t     PCA9548A_I2C_ADDR             = 0x70;    // PCA9548A / TCA9548A multiplexer address (A0/A1/A2 low)
+    constexpr uint8_t     PCA_CHANNEL_CHEST_DEFAULT     = 0;       // Default multiplexer channel for chest sensor (SD0)
+    constexpr uint8_t     PCA_CHANNEL_BASE_DEFAULT      = 1;       // Default multiplexer channel for base sensor (SD1)
+    constexpr bool        PCA_AUTO_SCAN_CHANNELS        = true;    // Dynamically scan channels 0-7 if sensors are plugged elsewhere
     constexpr uint32_t    I2C_CLOCK_SPEED_HZ            = 100000;  // I2C bus clock in Standard Mode (100 kHz) for noise immunity
     constexpr uint32_t    I2C_TIMEOUT_MS                = 25;      // Bus read timeout to prevent lockup on wire disconnection
 
