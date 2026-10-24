@@ -357,20 +357,20 @@ To eliminate I2C address collisions between dual MPU-6050 sensors operating at d
 | **ESP32 Master** | GPIO 22 | PCA9548A `SCL` | Primary I2C Clock (100 kHz) |
 | **ESP32 Master** | GPIO 25 | Buzzer Positive (+) | Onboard Piezoelectric Acoustic Guidance |
 | **PCA9548A** | `A0`, `A1`, `A2` | GND | Fixed I2C Address `0x70` |
-| **PCA9548A** | `SD0`, `SC0` | Chest MPU `SDA`, `SCL` | Downstream Channel 0 (Chest Sensor) |
-| **PCA9548A** | `SD1`, `SC1` | Base MPU `SDA`, `SCL` | Downstream Channel 1 (Spine / Baseplate Sensor) |
-| **MPU 1 (Chest)** | `AD0` | GND | I2C Address `0x68` |
-| **MPU 2 (Base)** | `AD0` | GND | I2C Address `0x68` (Isolated on Channel 1) |
+| **PCA9548A** | `SD3`, `SC3` | Chest MPU `SDA`, `SCL` | Downstream Channel 3 (Chest Sensor) |
+| **PCA9548A** | `SD2`, `SC2` | Base MPU `SDA`, `SCL` | Downstream Channel 2 (Spine / Baseplate Sensor) |
+| **MPU 1 (Chest)** | `AD0` | GND | I2C Address `0x68` (Isolated on Channel 3) |
+| **MPU 2 (Base)** | `AD0` | GND | I2C Address `0x68` (Isolated on Channel 2) |
 
 ### 7.2 Dynamic Multiplexer Auto-Scanning
 At boot (`SensorManager::begin()`):
 1. The firmware verifies the multiplexer is present at `0x70`.
 2. It cycles through all 8 multiplexer channels (`SD0` to `SD7`), probing for active MPU-6050 devices at `0x68`.
 3. Preferred channel assignments:
-   - **Chest Sensor**: Defaults to **Channel 0 (`SD0`)**. If not detected on SD0, auto-maps to the first detected channel.
-   - **Base Sensor**: Defaults to **Channel 1 (`SD1`)**. If plugged into an alternate channel (e.g., SD2, SD3), auto-maps to the second detected channel.
+   - **Chest Sensor**: Defaults to **Channel 3 (`SD3`)**. If not detected on SD3, auto-maps to the first detected channel.
+   - **Base Sensor**: Defaults to **Channel 2 (`SD2`)**. If plugged into an alternate channel, auto-maps to the second detected channel.
 4. **Single vs. Dual MPU Toggle (`USE_DUAL_MPU`)**:
-   - When `#define USE_DUAL_MPU false` in `CPReadyConfig.h`: Only Channel 0 (Chest) is sampled. Base sensor initialization and differential math are bypassed.
+   - When `#define USE_DUAL_MPU false` in `CPReadyConfig.h`: Only Channel 3 (Chest) is sampled. Base sensor initialization and differential math are bypassed.
    - When `#define USE_DUAL_MPU true`: Both channels are sampled sequentially at 100 Hz (~0.38 ms total I2C switching overhead) to compute net compression acceleration:
      $$\text{rawNet} = -(a_{\text{chest}} - a_{\text{base}})$$
 5. **Direct Bus Fallback**: If the PCA9548A is not connected and `USE_DUAL_MPU == false`, the firmware automatically falls back to direct main-bus communication with MPU 1 on GPIO 21/22.

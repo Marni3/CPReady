@@ -74,8 +74,8 @@ namespace CPReadyConfig {
     constexpr uint8_t     CHEST_MPU_I2C_ADDR            = 0x68;    // Chest MPU6050 address (AD0 pin tied to GND)
     constexpr uint8_t     BASE_MPU_I2C_ADDR             = 0x68;    // Base MPU6050 address (behind PCA9548A channel, default 0x68)
     constexpr uint8_t     PCA9548A_I2C_ADDR             = 0x70;    // PCA9548A / TCA9548A multiplexer address (A0/A1/A2 low)
-    constexpr uint8_t     PCA_CHANNEL_CHEST_DEFAULT     = 0;       // Default multiplexer channel for chest sensor (SD0)
-    constexpr uint8_t     PCA_CHANNEL_BASE_DEFAULT      = 1;       // Default multiplexer channel for base sensor (SD1)
+    constexpr uint8_t     PCA_CHANNEL_CHEST_DEFAULT     = 3;       // Default multiplexer channel for chest sensor (SD3/SC3)
+    constexpr uint8_t     PCA_CHANNEL_BASE_DEFAULT      = 2;       // Default multiplexer channel for base sensor (SD2/SC2)
     constexpr bool        PCA_AUTO_SCAN_CHANNELS        = true;    // Dynamically scan channels 0-7 if sensors are plugged elsewhere
     constexpr uint32_t    I2C_CLOCK_SPEED_HZ            = 100000;  // I2C bus clock in Standard Mode (100 kHz) for noise immunity
     constexpr uint32_t    I2C_TIMEOUT_MS                = 25;      // Bus read timeout to prevent lockup on wire disconnection
