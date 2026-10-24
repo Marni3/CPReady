@@ -15,10 +15,10 @@ class DottedBorder extends StatelessWidget {
     super.key,
     required this.child,
     this.color = AppColors.homeCardBorder,
-    this.strokeWidth = AppSizes.homeCardBorderWidth,
-    this.radius = AppSizes.homeCardRadius,
-    this.dash = AppSizes.homeDottedDash,
-    this.gap = AppSizes.homeDottedGap,
+    this.strokeWidth,
+    this.radius,
+    this.dash,
+    this.gap,
     this.padding = EdgeInsets.zero,
   });
 
@@ -28,17 +28,17 @@ class DottedBorder extends StatelessWidget {
   /// Border color.
   final Color color;
 
-  /// Border thickness.
-  final double strokeWidth;
+  /// Border thickness; defaults to [AppSizes.homeCardBorderWidth].
+  final double? strokeWidth;
 
-  /// Corner radius of the border.
-  final double radius;
+  /// Corner radius of the border; defaults to [AppSizes.homeCardRadius].
+  final double? radius;
 
-  /// Length of each dash.
-  final double dash;
+  /// Length of each dash; defaults to [AppSizes.homeDottedDash].
+  final double? dash;
 
-  /// Space between dashes.
-  final double gap;
+  /// Space between dashes; defaults to [AppSizes.homeDottedGap].
+  final double? gap;
 
   /// Padding between the border and [child].
   final EdgeInsetsGeometry padding;
@@ -48,10 +48,10 @@ class DottedBorder extends StatelessWidget {
     return CustomPaint(
       painter: _DashedBorderPainter(
         color: color,
-        strokeWidth: strokeWidth,
-        radius: radius,
-        dash: dash,
-        gap: gap,
+        strokeWidth: strokeWidth ?? AppSizes.homeCardBorderWidth,
+        radius: radius ?? AppSizes.homeCardRadius,
+        dash: dash ?? AppSizes.homeDottedDash,
+        gap: gap ?? AppSizes.homeDottedGap,
       ),
       child: Padding(padding: padding, child: child),
     );

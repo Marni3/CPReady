@@ -4,6 +4,8 @@
 /// title, one large panel holding the illustration and the instruction, and the
 /// Begin Session button near the bottom. Continue from here to Calibration.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -26,6 +28,11 @@ class HandPlacementScreen extends StatelessWidget {
     final double page = AppLayout.pagePaddingFor(
       MediaQuery.sizeOf(context).width,
     );
+    final TextStyle titleStyle = AppTypography.style(
+      size: AppTypography.flowTitleSize,
+      weight: AppTypography.headingWeight,
+      color: AppColors.flowHeadingText,
+    );
 
     return Scaffold(
       backgroundColor: AppColors.surfaceScaffold,
@@ -41,71 +48,72 @@ class HandPlacementScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: <Widget>[
-                    const FlowBackButton(),
-                    const SizedBox(width: AppSpacing.flowBackTitleGap),
-                    Expanded(
-                      child: Text(
-                        AppStrings.handPlacementTitle,
-                        style: AppTypography.style(
-                          size: AppTypography.flowTitleSize,
-                          weight: AppTypography.headingWeight,
-                          color: AppColors.flowHeadingText,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.flowTitleGap),
                 Expanded(
                   child: LayoutBuilder(
                     builder:
                         (BuildContext context, BoxConstraints constraints) {
+                          // The card takes the space the title leaves over. The
+                          // title is measured with the style it is painted with,
+                          // so the figure is exact; the whole block scrolls if
+                          // it still does not fit.
+                          final double titleHeight = measureTextHeight(
+                            context,
+                            AppStrings.handPlacementTitle,
+                            titleStyle,
+                            maxWidth:
+                                constraints.maxWidth -
+                                AppSizes.flowBackIconSize -
+                                AppSpacing.flowBackTapRight -
+                                AppSpacing.flowBackTitleGap,
+                          );
+                          final double cardSpace = math.max(
+                            0.0,
+                            constraints.maxHeight -
+                                math.max(
+                                  titleHeight,
+                                  AppSizes.flowBackIconSize +
+                                      2 * AppSpacing.flowBackTapV,
+                                ) -
+                                AppSpacing.flowTitleGap,
+                          );
+
                           return SingleChildScrollView(
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                minHeight: constraints.maxHeight,
-                              ),
-                              child: Align(
-                                alignment: AppSpacing.flowCardAlignment,
-                                child: FlowPanel(
-                                  width: AppSizes.flowCardWidth,
-                                  minHeight: AppSizes.flowCardMinHeight,
-                                  border: AppColors.flowCardBorder,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: <Widget>[
-                                      Image.asset(
-                                        AppAssets.handPlacementGuide,
-                                        width: AppSizes.flowHandImageSize,
-                                        height: AppSizes.flowHandImageSize,
-                                        fit: BoxFit.contain,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: <Widget>[
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: <Widget>[
+                                    const FlowBackButton(),
+                                    SizedBox(
+                                      width: AppSpacing.flowBackTitleGap,
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        AppStrings.handPlacementTitle,
+                                        style: titleStyle,
                                       ),
-                                      const SizedBox(
-                                        height: AppSpacing.flowPanelContentGap,
-                                      ),
-                                      Text(
+                                    ),
+                                  ],
+                                ),
+                                SizedBox(height: AppSpacing.flowTitleGap),
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    minHeight: cardSpace,
+                                  ),
+                                  child: FlowIllustrationCard(
+                                    caption:
                                         AppStrings.handPlacementInstruction,
-                                        textAlign: TextAlign.center,
-                                        style: AppTypography.style(
-                                          size: AppTypography
-                                              .flowPanelHeadingSize,
-                                          weight: AppTypography.headingWeight,
-                                          color: AppColors.flowHeadingText,
-                                        ),
-                                      ),
-                                    ],
+                                    availableHeight: cardSpace,
                                   ),
                                 ),
-                              ),
+                              ],
                             ),
                           );
                         },
                   ),
                 ),
-                const SizedBox(height: AppSpacing.section),
+                SizedBox(height: AppSpacing.section),
                 FlatActionButton(
                   label: AppStrings.handPlacementBegin,
                   onPressed: () => _begin(context),

@@ -33,6 +33,22 @@ class AppBleConfig {
   /// Finalises the session; the firmware answers with its FINAL_SUMMARY.
   static const String commandStop = 'STOP';
 
+  /// Selects the adult-manikin kinematic profile. The firmware also resets its
+  /// depth scalar to that profile's default value.
+  static const String commandProfileManikin = 'SET_PROFILE:MANIKIN';
+
+  /// Selects the relaxed bench-test kinematic profile.
+  static const String commandProfileBench = 'SET_PROFILE:BENCH';
+
+  /// Sets the firmware's auto-stop duration. The value is volatile: it lasts
+  /// until the device restarts and applies to the next session.
+  static String commandSetTime(int seconds) => 'SET_TIME:$seconds';
+
+  /// Scales the depth reading so a trial mean of the measured depth matches the
+  /// manikin's reported depth.
+  static String commandCalibrateTarget(double depthCm) =>
+      'CALIBRATE_TARGET:${depthCm.toStringAsFixed(1)}';
+
   // -----------------------------------------------------------------------
   // Telemetry packet types (see BLEReadings.h)
   // -----------------------------------------------------------------------
@@ -51,4 +67,29 @@ class AppBleConfig {
 
   /// Firmware error condition.
   static const int packetError = 5;
+
+  // -----------------------------------------------------------------------
+  // Quality flags (byte 11; see BLEReadings.h)
+  // -----------------------------------------------------------------------
+
+  /// Cadence is steady enough for a stable reading.
+  static const int qualitySteadyCadence = 0x01;
+
+  /// First stroke of a session, or the first after a pause. Cadence is not yet
+  /// synchronized, so the steady flag is cleared for this packet.
+  static const int qualityFirstStroke = 0x02;
+
+  /// The device is running the relaxed bench-test profile.
+  static const int qualityBenchMode = 0x04;
+
+  // -----------------------------------------------------------------------
+  // Audio coaching cue codes (byte 7)
+  // -----------------------------------------------------------------------
+
+  static const int cuePushHarder = 1;
+  static const int cuePushShallower = 2;
+  static const int cueReleaseFully = 3;
+  static const int cueSpeedUp = 4;
+  static const int cueSlowDown = 5;
+  static const int cueGoodJob = 6;
 }

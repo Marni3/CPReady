@@ -7,6 +7,8 @@
 /// Every visual value comes from `lib/src/config/`; this file only composes
 /// widgets.
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -33,35 +35,64 @@ class PracticeScreen extends StatelessWidget {
               child: ContentBounds(
                 child: Padding(
                   padding: EdgeInsets.symmetric(horizontal: page),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      const SizedBox(height: AppSpacing.practiceTopPadding),
-                      Text(
-                        AppStrings.practiceTitle,
-                        style: AppTypography.style(
-                          size: AppTypography.practiceTitleSize,
-                          weight: AppTypography.headingWeight,
-                          color: AppColors.practiceTitleText,
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.practiceTitleGap),
-                      const _ChooseOptionBox(),
-                      const SizedBox(height: AppSpacing.practiceOptionTopGap),
-                      PracticeOptionCard(
-                        title: AppStrings.practiceGuide,
-                        body: AppStrings.practiceGuideBody,
-                        iconAsset: AppAssets.iconBook,
-                        onTap: () => context.pushNamed(AppRoutes.guide),
-                      ),
-                      const SizedBox(height: AppSpacing.practiceOptionGap),
-                      PracticeOptionCard(
-                        title: AppStrings.practiceStart,
-                        body: AppStrings.practiceStartBody,
-                        iconAsset: AppAssets.iconHeartbeat,
-                        onTap: () => context.pushNamed(AppRoutes.setup),
-                      ),
-                    ],
+                  child: LayoutBuilder(
+                    builder:
+                        (BuildContext context, BoxConstraints constraints) {
+                          // Both cards take the height the taller of the two
+                          // needs, so one row is never longer than the other.
+                          final double textWidth =
+                              constraints.maxWidth -
+                              AppSpacing.practiceOptionPaddingH * 2 -
+                              AppSpacing.practiceOptionIconGap -
+                              AppSizes.practiceOptionIconWidth;
+                          final double cardHeight = math.max(
+                            PracticeOptionCard.requiredHeight(
+                              context,
+                              title: AppStrings.practiceGuide,
+                              body: AppStrings.practiceGuideBody,
+                              textWidth: textWidth,
+                            ),
+                            PracticeOptionCard.requiredHeight(
+                              context,
+                              title: AppStrings.practiceStart,
+                              body: AppStrings.practiceStartBody,
+                              textWidth: textWidth,
+                            ),
+                          );
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: <Widget>[
+                              SizedBox(height: AppSpacing.practiceTopPadding),
+                              Text(
+                                AppStrings.practiceTitle,
+                                style: AppTypography.style(
+                                  size: AppTypography.practiceTitleSize,
+                                  weight: AppTypography.headingWeight,
+                                  color: AppColors.practiceTitleText,
+                                ),
+                              ),
+                              SizedBox(height: AppSpacing.practiceTitleGap),
+                              const _ChooseOptionBox(),
+                              SizedBox(height: AppSpacing.practiceOptionTopGap),
+                              PracticeOptionCard(
+                                title: AppStrings.practiceGuide,
+                                body: AppStrings.practiceGuideBody,
+                                iconAsset: AppAssets.iconBook,
+                                minHeight: cardHeight,
+                                onTap: () => context.pushNamed(AppRoutes.guide),
+                              ),
+                              SizedBox(height: AppSpacing.practiceOptionGap),
+                              PracticeOptionCard(
+                                title: AppStrings.practiceStart,
+                                body: AppStrings.practiceStartBody,
+                                iconAsset: AppAssets.iconHeartbeat,
+                                minHeight: cardHeight,
+                                onTap: () => context.pushNamed(AppRoutes.setup),
+                              ),
+                            ],
+                          );
+                        },
                   ),
                 ),
               ),
@@ -85,7 +116,7 @@ class _ChooseOptionBox extends StatelessWidget {
       radius: AppSizes.practiceDottedRadius,
       dash: AppSizes.practiceDottedDash,
       gap: AppSizes.practiceDottedGap,
-      padding: const EdgeInsets.symmetric(
+      padding: EdgeInsets.symmetric(
         vertical: AppSpacing.practiceDottedPaddingV,
         horizontal: AppSpacing.practiceDottedPaddingH,
       ),
@@ -113,6 +144,7 @@ class PracticeOptionCard extends StatelessWidget {
     required this.title,
     required this.body,
     required this.iconAsset,
+    this.minHeight = 0.0,
     this.onTap,
   });
 
@@ -125,8 +157,40 @@ class PracticeOptionCard extends StatelessWidget {
   /// Logo shown on the left (see `AppAssets`); tinted white.
   final String iconAsset;
 
+  /// Smallest height the card may take. The Practice screen passes the height
+  /// the taller of its two cards needs, so both render at one size.
+  final double minHeight;
+
   /// Tap handler; the card is inert when null.
   final VoidCallback? onTap;
+
+  /// Bold title style, shared by the card and by [requiredHeight].
+  static TextStyle get titleStyle => AppTypography.style(
+    size: AppTypography.practiceOptionTitleSize,
+    weight: FontWeight.bold,
+    color: AppColors.practiceOptionText,
+  );
+
+  /// Supporting text style, shared by the card and by [requiredHeight].
+  static TextStyle get bodyStyle => AppTypography.style(
+    size: AppTypography.practiceOptionBodySize,
+    weight: FontWeight.normal,
+    color: AppColors.practiceOptionText,
+  );
+
+  /// Height the card needs to show [title] and [body] when the text column
+  /// beside the logo is [textWidth] wide.
+  static double requiredHeight(
+    BuildContext context, {
+    required String title,
+    required String body,
+    required double textWidth,
+  }) {
+    return AppSpacing.practiceOptionPaddingV * 2 +
+        measureTextHeight(context, title, titleStyle, maxWidth: textWidth) +
+        AppSpacing.small +
+        measureTextHeight(context, body, bodyStyle, maxWidth: textWidth);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -139,18 +203,19 @@ class PracticeOptionCard extends StatelessWidget {
 
   Widget _buildCard() {
     return Container(
+      constraints: BoxConstraints(minHeight: minHeight),
       decoration: BoxDecoration(
         gradient: AppGradients.brandVertical,
         borderRadius: BorderRadius.circular(AppSizes.practiceCardRadius),
       ),
-      padding: const EdgeInsets.symmetric(
+      padding: EdgeInsets.symmetric(
         horizontal: AppSpacing.practiceOptionPaddingH,
         vertical: AppSpacing.practiceOptionPaddingV,
       ),
       child: Stack(
         children: <Widget>[
           Padding(
-            padding: const EdgeInsets.only(
+            padding: EdgeInsets.only(
               left:
                   AppSpacing.practiceOptionIconGap +
                   AppSizes.practiceOptionIconWidth,
@@ -161,23 +226,9 @@ class PracticeOptionCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  Text(
-                    title,
-                    style: AppTypography.style(
-                      size: AppTypography.practiceOptionTitleSize,
-                      weight: FontWeight.bold,
-                      color: AppColors.practiceOptionText,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.small),
-                  Text(
-                    body,
-                    style: AppTypography.style(
-                      size: AppTypography.practiceOptionBodySize,
-                      weight: FontWeight.normal,
-                      color: AppColors.practiceOptionText,
-                    ),
-                  ),
+                  Text(title, style: titleStyle),
+                  SizedBox(height: AppSpacing.small),
+                  Text(body, style: bodyStyle),
                 ],
               ),
             ),

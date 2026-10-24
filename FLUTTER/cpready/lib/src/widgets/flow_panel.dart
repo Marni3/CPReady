@@ -54,7 +54,7 @@ class FlowPanel extends StatelessWidget {
       constraints: minHeight == null
           ? null
           : BoxConstraints(minHeight: minHeight!),
-      padding: padding ?? const EdgeInsets.all(AppSpacing.flowPanelPadding),
+      padding: padding ?? EdgeInsets.all(AppSpacing.flowPanelPadding),
       decoration: BoxDecoration(
         color: background ?? AppColors.flowPanelBackground,
         borderRadius: BorderRadius.circular(radius ?? AppSizes.flowPanelRadius),

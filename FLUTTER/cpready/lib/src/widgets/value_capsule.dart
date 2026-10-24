@@ -2,6 +2,10 @@
 ///
 /// Used by the live metric sections and the Session Summary rows; geometry,
 /// colors and type come from config so the two call sites can differ.
+///
+/// The pill grows with its label: [minHeight] and [minWidth] are floors, not
+/// fixed sizes, so a larger rendered text size makes the pill taller and
+/// wider instead of clipping the value.
 
 import 'package:flutter/material.dart';
 
@@ -15,11 +19,11 @@ class ValueCapsule extends StatelessWidget {
     required this.text,
     required this.background,
     required this.foreground,
-    required this.height,
+    required this.minHeight,
     required this.radius,
     required this.textSize,
     this.textWeight = FontWeight.bold,
-    this.width,
+    this.minWidth = 0,
   });
 
   /// Value shown inside the pill.
@@ -31,8 +35,8 @@ class ValueCapsule extends StatelessWidget {
   /// Value color.
   final Color foreground;
 
-  /// Pill height.
-  final double height;
+  /// Smallest pill height; the pill grows when its text needs more room.
+  final double minHeight;
 
   /// Corner radius (half the height for a pill).
   final double radius;
@@ -43,9 +47,9 @@ class ValueCapsule extends StatelessWidget {
   /// Value font weight.
   final FontWeight textWeight;
 
-  /// Optional fixed width. The live sections omit it, so the capsule fills the
-  /// section; the summary rows set it so all five capsules match.
-  final double? width;
+  /// Smallest pill width. The live sections omit it; the summary rows pass one
+  /// so all five capsules share a left edge.
+  final double minWidth;
 
   /// Fill for a graded capsule: green in range, red out of range, grey when
   /// there is no value yet.
@@ -58,27 +62,23 @@ class ValueCapsule extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: width,
-      height: height,
-      padding: const EdgeInsets.symmetric(
+      constraints: BoxConstraints(minWidth: minWidth, minHeight: minHeight),
+      padding: EdgeInsets.symmetric(
         horizontal: AppSizes.liveCapsulePaddingH,
+        vertical: AppSpacing.tiny,
       ),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(radius),
       ),
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Text(
-          text,
-          maxLines: 1,
-          softWrap: false,
-          style: AppTypography.style(
-            size: textSize,
-            weight: textWeight,
-            color: foreground,
-          ),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: AppTypography.style(
+          size: textSize,
+          weight: textWeight,
+          color: foreground,
         ),
       ),
     );

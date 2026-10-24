@@ -55,7 +55,7 @@ class SessionCompleteScreen extends StatelessWidget {
     return PopScope(
       canPop: false, // explicit exit only, never back into the session
       child: AdaptiveScreen(
-        padding: const EdgeInsets.only(
+        padding: EdgeInsets.only(
           top: AppSpacing.summaryTopPadding,
           bottom: AppSpacing.flowActionBottomPadding,
         ),
@@ -67,7 +67,7 @@ class SessionCompleteScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 Padding(
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.summaryTitleInsetH,
                   ),
                   child: Text(
@@ -80,16 +80,16 @@ class SessionCompleteScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: AppSpacing.summaryBannerGap),
+                SizedBox(height: AppSpacing.summaryBannerGap),
                 Padding(
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.summaryTitleInsetH,
                   ),
                   child: _SavedBanner(saved: saved, historySaved: historySaved),
                 ),
-                const SizedBox(height: AppSpacing.summaryTraineeGap),
+                SizedBox(height: AppSpacing.summaryTraineeGap),
                 Padding(
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.summaryTitleInsetH,
                   ),
                   child: Text(
@@ -101,10 +101,10 @@ class SessionCompleteScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: AppSpacing.summaryPanelGap),
+                SizedBox(height: AppSpacing.summaryPanelGap),
                 if (summary != null)
                   Padding(
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.summaryPanelInsetH,
                     ),
                     child: _MetricsPanel(
@@ -115,7 +115,7 @@ class SessionCompleteScreen extends StatelessWidget {
               ],
             ),
             Padding(
-              padding: const EdgeInsets.only(
+              padding: EdgeInsets.only(
                 top: AppSpacing.summaryActionTopGap,
                 left: AppSpacing.summaryActionInsetH,
                 right: AppSpacing.summaryActionInsetH,
@@ -157,7 +157,7 @@ class _SavedBanner extends StatelessWidget {
           constraints: BoxConstraints(
             minHeight: saved ? AppSizes.summarySavedBannerHeight : 0,
           ),
-          padding: const EdgeInsets.symmetric(
+          padding: EdgeInsets.symmetric(
             horizontal: AppSpacing.summaryBannerPaddingH,
             vertical: AppSpacing.summaryBannerPaddingV,
           ),
@@ -181,7 +181,7 @@ class _SavedBanner extends StatelessWidget {
                 ),
               ),
               if (!saved) ...<Widget>[
-                const SizedBox(height: AppSpacing.small),
+                SizedBox(height: AppSpacing.small),
                 Text(
                   AppStrings.sessionInterruptedDetail,
                   textAlign: TextAlign.center,
@@ -196,16 +196,16 @@ class _SavedBanner extends StatelessWidget {
           ),
         ),
         if (!historySaved) ...<Widget>[
-          const SizedBox(height: AppSpacing.small),
+          SizedBox(height: AppSpacing.small),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              const Icon(
+              Icon(
                 Icons.warning_amber_rounded,
                 size: AppSizes.iconSmall,
                 color: AppColors.summaryFailedText,
               ),
-              const SizedBox(width: AppSpacing.small),
+              SizedBox(width: AppSpacing.small),
               Expanded(
                 child: Text(
                   AppStrings.sessionHistoryFailed,
@@ -236,10 +236,10 @@ class _MetricsPanel extends StatelessWidget {
       text: text,
       background: ValueCapsule.gradedBackground(rating),
       foreground: AppColors.liveCapsuleText,
-      height: AppSizes.summaryCapsuleHeight,
+      minHeight: AppSizes.summaryCapsuleHeight,
       radius: AppSizes.summaryCapsuleRadius,
       textSize: AppTypography.summaryCapsuleSize,
-      width: AppSizes.summaryCapsuleWidth,
+      minWidth: AppSizes.summaryCapsuleWidth,
     );
   }
 
@@ -248,11 +248,11 @@ class _MetricsPanel extends StatelessWidget {
       text: text,
       background: AppColors.summaryCapsuleBackground,
       foreground: AppColors.summaryCapsuleText,
-      height: AppSizes.summaryCapsuleHeight,
+      minHeight: AppSizes.summaryCapsuleHeight,
       radius: AppSizes.summaryCapsuleRadius,
       textSize: AppTypography.summaryCapsuleSize,
       textWeight: AppTypography.headingWeight,
-      width: AppSizes.summaryCapsuleWidth,
+      minWidth: AppSizes.summaryCapsuleWidth,
     );
   }
 
@@ -279,7 +279,7 @@ class _MetricsPanel extends StatelessWidget {
               recoilRating(metrics.recoilPercentage),
             ),
           ),
-          const SizedBox(height: AppSpacing.summaryRowGap),
+          SizedBox(height: AppSpacing.summaryRowGap),
           _MetricRow(
             label: AppStrings.sessionRate,
             capsule: _gradedCapsule(
@@ -287,7 +287,7 @@ class _MetricsPanel extends StatelessWidget {
               rateRating(metrics.rateCpm),
             ),
           ),
-          const SizedBox(height: AppSpacing.summaryRowGap),
+          SizedBox(height: AppSpacing.summaryRowGap),
           _MetricRow(
             label: AppStrings.sessionDepth,
             capsule: _gradedCapsule(
@@ -295,19 +295,19 @@ class _MetricsPanel extends StatelessWidget {
               depthRating(metrics.depthCm),
             ),
           ),
-          const SizedBox(height: AppSpacing.summaryRowGap),
+          SizedBox(height: AppSpacing.summaryRowGap),
           _MetricRow(
             label: AppStrings.sessionCcf,
             capsule: _valueCapsule(percentText(metrics.ccfPercent)),
           ),
-          const SizedBox(height: AppSpacing.summaryRowGap),
+          SizedBox(height: AppSpacing.summaryRowGap),
           _MetricRow(
             label: AppStrings.sessionCompressions,
             capsule: _valueCapsule('${metrics.totalCompressions}'),
           ),
-          const SizedBox(height: AppSpacing.summaryDurationGap),
+          SizedBox(height: AppSpacing.summaryDurationGap),
           Padding(
-            padding: const EdgeInsets.symmetric(
+            padding: EdgeInsets.symmetric(
               horizontal: AppSpacing.summaryRowPaddingH,
             ),
             child: Row(
@@ -323,7 +323,7 @@ class _MetricsPanel extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(width: AppSpacing.summaryRowGap),
+                SizedBox(width: AppSpacing.summaryRowGap),
                 Text(
                   durationText(durationSeconds),
                   style: AppTypography.style(
@@ -335,7 +335,7 @@ class _MetricsPanel extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: AppSpacing.summaryDurationBottomPadding),
+          SizedBox(height: AppSpacing.summaryDurationBottomPadding),
         ],
       ),
     );
@@ -353,10 +353,10 @@ class _MetricRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(
+      constraints: BoxConstraints(
         minHeight: AppSizes.summaryRowMinHeight,
       ),
-      padding: const EdgeInsets.symmetric(
+      padding: EdgeInsets.symmetric(
         horizontal: AppSpacing.summaryRowPaddingH,
         vertical: AppSpacing.tiny,
       ),
@@ -373,8 +373,6 @@ class _MetricRow extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
               style: AppTypography.style(
                 size: AppTypography.summaryRowLabelSize,
                 weight: FontWeight.bold,
@@ -382,7 +380,7 @@ class _MetricRow extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: AppSpacing.summaryRowGap),
+          SizedBox(width: AppSpacing.summaryRowGap),
           capsule,
         ],
       ),

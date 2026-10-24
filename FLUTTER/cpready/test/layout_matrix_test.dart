@@ -1,8 +1,9 @@
 /// Layout regression gate: every screen, at every phone size the app supports,
-/// with the system text scale at its lowest, normal and maximum values.
+/// under each Android system font setting.
 ///
-/// The app clamps the system text scale (see [AppLayout.maxTextScale]), so the
-/// 2.0 case proves the clamp holds rather than proving 2.0 layouts exist.
+/// Size and type follow the app's own bounded scale, not the system font
+/// setting, so the four scale cases must render identically; they stay in the
+/// matrix to catch any layout that starts depending on the setting again.
 ///
 /// A RenderFlex overflow is reported as a test exception, so any screen that
 /// cannot fit its content fails the test with the size and scale in the reason.
@@ -15,6 +16,7 @@ import 'package:sqflite/sqflite.dart';
 
 import 'package:cpready/src/config/config.dart';
 import 'package:cpready/src/core/app_scope.dart';
+import 'package:cpready/src/core/audio/voice_coach.dart';
 import 'package:cpready/src/core/ble/ble_controller.dart';
 import 'package:cpready/src/core/history/session_repository.dart';
 import 'package:cpready/src/core/metrics/cpr_metrics.dart';
@@ -24,24 +26,27 @@ import 'package:cpready/src/screens/guide/guide_screen.dart';
 import 'package:cpready/src/screens/hand_placement/hand_placement_screen.dart';
 import 'package:cpready/src/screens/home/home_screen.dart';
 import 'package:cpready/src/screens/live_practice/live_practice_screen.dart';
+import 'package:cpready/src/screens/manikin_calibration/manikin_calibration_screen.dart';
 import 'package:cpready/src/screens/practice/practice_screen.dart';
 import 'package:cpready/src/screens/session_complete/session_complete_screen.dart';
 import 'package:cpready/src/screens/setup/practice_setup_screen.dart';
 import 'package:cpready/src/theme/app_theme.dart';
 import 'package:cpready/main.dart';
 
-/// Screen sizes the layout must survive, in logical pixels. 320 × 568 is the
-/// supported floor; the rest cover current budget and flagship phones.
+/// Screen sizes the layout must survive, in logical pixels: the supported
+/// floor, a compact phone, a standard phone, a large phone and an extra-large
+/// phone.
 const List<Size> _sizes = <Size>[
   Size(320, 568),
   Size(360, 640),
-  Size(393, 873),
-  Size(412, 915),
+  Size(393, 852),
+  Size(430, 932),
+  Size(480, 1040),
 ];
 
-/// Text scales to exercise: normal, Android's large setting, and the
-/// accessibility maximum (which the app clamps).
-const List<double> _scales = <double>[1.0, 1.3, 2.0];
+/// Android font settings to exercise: default, increased, large and the
+/// accessibility maximum. The app ignores all four.
+const List<double> _scales = <double>[1.0, 1.3, 1.5, 2.0];
 
 /// Device pixel ratio used for every case; 2.75 matches the reference phone.
 const double _pixelRatio = 2.75;
@@ -91,18 +96,27 @@ final List<_Case> _cases = <_Case>[
   _Case('Setup', () => const PracticeSetupScreen()),
   _Case(
     'HandPlacement',
-    () => const HandPlacementScreen(traineeName: 'Alexandra'),
+    () => const HandPlacementScreen(traineeName: 'Alexandra Konstantinopoulos'),
   ),
-  _Case('Calibration', () => const CalibrationScreen(traineeName: 'Alexandra')),
+  _Case(
+    'Calibration',
+    () => const CalibrationScreen(traineeName: 'Alexandra Konstantinopoulos'),
+  ),
   _Case(
     'Countdown',
-    () => const BeginCompressionScreen(traineeName: 'Alexandra'),
+    () => const BeginCompressionScreen(
+      traineeName: 'Alexandra Konstantinopoulos',
+    ),
   ),
-  _Case('Live', () => const LivePracticeScreen(traineeName: 'Alexandra')),
+  _Case(
+    'Live',
+    () => const LivePracticeScreen(traineeName: 'Alexandra Konstantinopoulos'),
+  ),
+  _Case('ManikinCalibration', ManikinCalibrationScreen.new),
   _Case(
     'SummarySaved',
     () => const SessionCompleteScreen(
-      traineeName: 'Alexandra',
+      traineeName: 'Alexandra Konstantinopoulos',
       saved: true,
       summary: _summary,
       durationSeconds: 83,
@@ -111,7 +125,7 @@ final List<_Case> _cases = <_Case>[
   _Case(
     'SummaryInterrupted',
     () => const SessionCompleteScreen(
-      traineeName: 'Alexandra',
+      traineeName: 'Alexandra Konstantinopoulos',
       saved: false,
       summary: null,
       durationSeconds: 4125,
@@ -141,32 +155,12 @@ void main() {
       testWidgets('no screen overflows at ${_label(size)} x$scale', (
         WidgetTester tester,
       ) async {
-        tester.view.physicalSize = Size(
-          size.width * _pixelRatio,
-          size.height * _pixelRatio,
-        );
-        tester.view.devicePixelRatio = _pixelRatio;
-        tester.view.padding = FakeViewPadding(
-          top: _topInset * _pixelRatio,
-          bottom: _bottomInset * _pixelRatio,
-        );
-        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        _configureView(tester, size, scale: scale);
         addTearDown(tester.view.reset);
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
         for (final _Case testCase in _cases) {
-          final BleController controller = BleController();
-          final SessionRepository repository = SessionRepository(
-            factory: const _FailingDatabaseFactory(),
-            databasePath: 'layout-test.db',
-          );
-
-          await tester.pumpWidget(
-            _harness(testCase.build(), controller, repository),
-          );
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 50));
-
+          await _pumpCase(tester, testCase);
           expect(
             tester.takeException(),
             isNull,
@@ -174,17 +168,109 @@ void main() {
                 '${testCase.name} overflowed at ${_label(size)} '
                 'with text scale $scale',
           );
-
-          // Unmount so the screen's timers and listeners are released.
-          await tester.pumpWidget(const SizedBox.shrink());
-          controller.dispose();
         }
       });
     }
   }
+
+  testWidgets('system font setting does not change typography', (
+    WidgetTester tester,
+  ) async {
+    _configureView(tester, const Size(393, 852), scale: 1.0);
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    Future<Size> measureAt(double scale) async {
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      await tester.pumpWidget(
+        _harness(
+          Center(
+            child: Text(
+              'Calibration',
+              style: AppTypography.style(
+                size: AppTypography.flowTitleSize,
+                weight: AppTypography.headingWeight,
+              ),
+            ),
+          ),
+          BleController(),
+          SessionRepository(
+            factory: const _FailingDatabaseFactory(),
+            databasePath: 'layout-test.db',
+          ),
+        ),
+      );
+      await tester.pump();
+      return tester.getSize(find.text('Calibration'));
+    }
+
+    final Size atDefault = await measureAt(1.0);
+    final Size atDouble = await measureAt(2.0);
+    expect(atDouble, atDefault);
+  });
+
+  testWidgets('setup keeps working with the keyboard open', (
+    WidgetTester tester,
+  ) async {
+    // A keyboard covers the bottom third of the screen while the name field
+    // has focus; the form must scroll rather than overflow.
+    const double keyboard = 300;
+    for (final Size size in _sizes) {
+      for (final double scale in _scales) {
+        _configureView(tester, size, scale: scale);
+        tester.view.viewInsets = FakeViewPadding(
+          bottom: keyboard * _pixelRatio,
+        );
+        addTearDown(tester.view.reset);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+        await _pumpCase(tester, const _Case('Setup', PracticeSetupScreen.new));
+        expect(
+          tester.takeException(),
+          isNull,
+          reason:
+              'Setup overflowed with the keyboard open at ${_label(size)} '
+              'with text scale $scale',
+        );
+      }
+    }
+  });
 }
 
-/// Wraps a screen in the app's theming, scope and text-scale clamp.
+/// Applies one phone size, text scale and inset set to the test view.
+void _configureView(WidgetTester tester, Size size, {required double scale}) {
+  tester.view.physicalSize = Size(
+    size.width * _pixelRatio,
+    size.height * _pixelRatio,
+  );
+  tester.view.devicePixelRatio = _pixelRatio;
+  tester.view.padding = FakeViewPadding(
+    top: _topInset * _pixelRatio,
+    bottom: _bottomInset * _pixelRatio,
+  );
+  tester.platformDispatcher.textScaleFactorTestValue = scale;
+  AppScale.update(size);
+}
+
+/// Pumps one screen and unmounts it again so its timers are released.
+Future<void> _pumpCase(WidgetTester tester, _Case testCase) async {
+  final BleController controller = BleController();
+  final SessionRepository repository = SessionRepository(
+    factory: const _FailingDatabaseFactory(),
+    databasePath: 'layout-test.db',
+  );
+
+  await tester.pumpWidget(_harness(testCase.build(), controller, repository));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 50));
+
+  await tester.pumpWidget(const SizedBox.shrink());
+  controller.dispose();
+}
+
+/// Wraps a screen in the app's theming, scope and root media overrides, the
+/// same way the running app does: the design factors follow the window and the
+/// system font setting is replaced with no scaling.
 Widget _harness(
   Widget screen,
   BleController controller,
@@ -193,16 +279,19 @@ Widget _harness(
   return AppScope(
     controller: controller,
     repository: repository,
+    voiceCoach: const SilentVoiceCoach(),
     child: MaterialApp(
       theme: appThemeData().theme,
       debugShowCheckedModeBanner: false,
+      home: screen,
       builder: (BuildContext context, Widget? child) {
-        return MediaQuery.withClampedTextScaling(
-          maxScaleFactor: AppLayout.maxTextScale,
+        AppScale.update(MediaQuery.sizeOf(context));
+        return MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.noScaling),
           child: child ?? const SizedBox.shrink(),
         );
       },
-      home: screen,
     ),
   );
 }

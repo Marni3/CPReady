@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:ui' show FlutterView;
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'src/config/config.dart';
 import 'src/core/app_scope.dart';
+import 'src/core/audio/voice_coach.dart';
 import 'src/core/ble/ble_controller.dart';
 import 'src/core/history/session_repository.dart';
 import 'src/core/metrics/cpr_metrics.dart';
@@ -22,6 +26,7 @@ import 'src/screens/hand_placement/hand_placement_screen.dart';
 import 'src/screens/calibration/calibration_screen.dart';
 import 'src/screens/begin_compression/begin_compression_screen.dart';
 import 'src/screens/live_practice/live_practice_screen.dart';
+import 'src/screens/manikin_calibration/manikin_calibration_screen.dart';
 import 'src/screens/session_complete/session_complete_screen.dart';
 
 /// Trainee name carried through the practice flow in GoRouter's `extra`.
@@ -29,6 +34,10 @@ String _traineeName(BuildContext context) =>
     GoRouterState.of(context).extra as String? ?? '';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  final FlutterView view =
+      WidgetsBinding.instance.platformDispatcher.views.first;
+  AppScale.update(view.physicalSize / view.devicePixelRatio);
   runApp(const CpReadyApp());
 }
 
@@ -40,14 +49,16 @@ class CpReadyApp extends StatefulWidget {
   State<CpReadyApp> createState() => _CpReadyAppState();
 }
 
-class _CpReadyAppState extends State<CpReadyApp> {
+class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
   final BleController _controller = BleController();
   final SessionRepository _repository = SessionRepository();
+  final VoiceCoach _voiceCoach = AssetVoiceCoach();
   late final GoRouter _router;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _router = buildRouter(
       initialRoute: AppRoutes.splash,
       routeBuilder: {
@@ -73,6 +84,8 @@ class _CpReadyAppState extends State<CpReadyApp> {
         ),
         AppRoutes.livePractice: (context) =>
             LivePracticeScreen(traineeName: _traineeName(context)),
+        AppRoutes.manikinCalibration: (_) =>
+            const FlowConnectionGuard(child: ManikinCalibrationScreen()),
         AppRoutes.sessionComplete: (context) {
           final extra = GoRouterState.of(context).extra as Map? ?? {};
           return SessionCompleteScreen(
@@ -89,9 +102,20 @@ class _CpReadyAppState extends State<CpReadyApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     _repository.close();
+    unawaited(_voiceCoach.dispose());
     super.dispose();
+  }
+
+  /// Keeps the design factors in step with the window (fold, multi-window and
+  /// display-size changes) and rebuilds the theme with them.
+  @override
+  void didChangeMetrics() {
+    final FlutterView view = View.of(context);
+    AppScale.update(view.physicalSize / view.devicePixelRatio);
+    setState(() {});
   }
 
   @override
@@ -99,6 +123,7 @@ class _CpReadyAppState extends State<CpReadyApp> {
     return AppScope(
       controller: _controller,
       repository: _repository,
+      voiceCoach: _voiceCoach,
       child: CpReadyTheme(
         data: appThemeData(),
         child: MaterialApp.router(
@@ -107,8 +132,10 @@ class _CpReadyAppState extends State<CpReadyApp> {
           routerConfig: _router,
           debugShowCheckedModeBanner: false,
           builder: (BuildContext context, Widget? child) {
-            return MediaQuery.withClampedTextScaling(
-              maxScaleFactor: AppLayout.maxTextScale,
+            AppScale.update(MediaQuery.sizeOf(context));
+            return MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.noScaling),
               child: child ?? const SizedBox.shrink(),
             );
           },
@@ -182,7 +209,7 @@ class _MainShellState extends State<MainShell> {
               color: AppColors.divider,
             ),
           ),
-          const SizedBox(height: AppSpacing.dividerGap),
+          SizedBox(height: AppSpacing.dividerGap),
           SafeArea(
             top: false,
             child: _BottomNavBar(currentIndex: _index, onTap: _onTabTapped),
@@ -284,9 +311,10 @@ class _NavButton extends StatelessWidget {
                 size: AppSizes.navIconSize,
                 color: color,
               ),
-              const SizedBox(height: AppSpacing.tiny),
+              SizedBox(height: AppSpacing.tiny),
               Text(
                 destination.label,
+                maxLines: 1,
                 style: AppTypography.style(
                   size: AppTypography.homePageSize,
                   weight: selected ? FontWeight.bold : FontWeight.w500,

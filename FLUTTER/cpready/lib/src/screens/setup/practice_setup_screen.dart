@@ -1,16 +1,21 @@
-/// Practice setup: capture the trainee name that the session is filed under.
+/// Practice setup: capture the trainee name that the session is filed under
+/// and pick the device's kinematic profile.
 ///
 /// Full-screen (no top header, no bottom nav), like the Step-by-step Guide:
 /// a small back arrow beside the title, the big heading, the name field with
-/// its helper line, and the Continue button near the bottom.
+/// its helper line, the training-mode options, and the Continue button near
+/// the bottom.
 ///
-/// This screen drives nothing on the device; the flow is:
+/// The name is the only value carried forward; the profile was already sent to
+/// the device when it was selected. The flow is:
 /// Setup → Hand Placement → Calibration → countdown → Live Practice.
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/config.dart';
+import '../../core/app_scope.dart';
+import '../../core/ble/kinematic_profile.dart';
 import '../../widgets/widgets.dart';
 
 /// Practice setup screen.
@@ -23,6 +28,9 @@ class PracticeSetupScreen extends StatefulWidget {
 
 class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   final TextEditingController _name = TextEditingController();
+
+  KinematicProfile _profile = KinematicProfile.manikin;
+  bool _profileFailed = false;
 
   @override
   void dispose() {
@@ -37,10 +45,34 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
     context.pushNamed(AppRoutes.handPlacement, extra: _name.text.trim());
   }
 
+  /// Sends the profile only when the user picks a different option.
+  ///
+  /// A failed write restores the previous option, because the device kept its
+  /// old profile; the error line then says the change did not go through.
+  Future<void> _selectProfile(KinematicProfile profile) async {
+    if (profile == _profile) return;
+
+    final KinematicProfile previous = _profile;
+    setState(() {
+      _profile = profile;
+      _profileFailed = false;
+    });
+
+    try {
+      await AppScope.of(context).sendCommand(profile.command);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _profile = previous;
+        _profileFailed = true;
+      });
+    }
+  }
+
   OutlineInputBorder _fieldBorder() {
     return OutlineInputBorder(
       borderRadius: BorderRadius.circular(AppSizes.flowFieldRadius),
-      borderSide: const BorderSide(
+      borderSide: BorderSide(
         color: AppColors.flowPanelBorder,
         width: AppSizes.flowPanelBorderWidth,
       ),
@@ -72,7 +104,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: <Widget>[
                   const FlowBackButton(),
-                  const SizedBox(width: AppSpacing.flowBackTitleGap),
+                  SizedBox(width: AppSpacing.flowBackTitleGap),
                   Expanded(
                     child: Text(
                       AppStrings.setupTitle,
@@ -85,7 +117,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: AppSpacing.flowTitleGap),
+              SizedBox(height: AppSpacing.flowTitleGap),
               Text(
                 AppStrings.setupHeading,
                 style: AppTypography.style(
@@ -94,9 +126,11 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                   color: AppColors.flowHeadingText,
                 ),
               ),
-              const SizedBox(height: AppSpacing.flowHeadingGap),
-              SizedBox(
-                height: AppSizes.flowFieldHeight,
+              SizedBox(height: AppSpacing.flowHeadingGap),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: AppSizes.flowFieldHeight,
+                ),
                 child: TextField(
                   controller: _name,
                   onChanged: (_) => setState(() {}),
@@ -114,7 +148,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                       weight: FontWeight.normal,
                       color: AppColors.flowFieldHint,
                     ),
-                    contentPadding: const EdgeInsets.symmetric(
+                    contentPadding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.flowFieldPaddingH,
                     ),
                     border: _fieldBorder(),
@@ -123,7 +157,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.flowHelperGap),
+              SizedBox(height: AppSpacing.flowHelperGap),
               Text(
                 AppStrings.setupHelper,
                 style: AppTypography.style(
@@ -132,10 +166,32 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                   color: AppColors.flowHelperText,
                 ),
               ),
+              SizedBox(height: AppSpacing.setupProfileTopGap),
+              Text(
+                AppStrings.setupTrainingMode,
+                style: AppTypography.style(
+                  size: AppTypography.setupProfileLabelSize,
+                  weight: FontWeight.bold,
+                  color: AppColors.flowHeadingText,
+                ),
+              ),
+              SizedBox(height: AppSpacing.setupProfileTitleGap),
+              ProfileSelector(profile: _profile, onChanged: _selectProfile),
+              if (_profileFailed) ...<Widget>[
+                SizedBox(height: AppSpacing.flowHelperGap),
+                Text(
+                  AppStrings.setupProfileSendFailed,
+                  style: AppTypography.style(
+                    size: AppTypography.flowHelperSize,
+                    weight: FontWeight.normal,
+                    color: AppColors.statusError,
+                  ),
+                ),
+              ],
             ],
           ),
           Padding(
-            padding: const EdgeInsets.only(top: AppSpacing.section),
+            padding: EdgeInsets.only(top: AppSpacing.section),
             child: FlatActionButton(
               label: AppStrings.setupContinue,
               onPressed: _valid ? _continue : null,

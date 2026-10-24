@@ -7,13 +7,7 @@ import 'ble.dart';
 import '../metrics/cpr_metrics.dart';
 
 /// High-level connection status surfaced to the UI.
-enum BleStatus {
-  disconnected,
-  scanning,
-  connecting,
-  connected,
-  error,
-}
+enum BleStatus { disconnected, scanning, connecting, connected, error }
 
 /// App-level BLE session state: connection status, live telemetry fan-out,
 /// command sending, and in-memory packet recording for the active session.
@@ -46,7 +40,8 @@ class BleController extends ChangeNotifier {
   }
 
   bool get isConnected => status == BleStatus.connected;
-  bool get isBusy => status == BleStatus.scanning || status == BleStatus.connecting;
+  bool get isBusy =>
+      status == BleStatus.scanning || status == BleStatus.connecting;
 
   /// Advertised name of the device found by the last scan (History provenance).
   String? get deviceName => ble.advertisedName;
@@ -147,6 +142,11 @@ class BleController extends ChangeNotifier {
 
   /// Send a text command to the ESP32 (e.g. START / STOP).
   Future<void> sendCommand(String command) => ble.sendCommand(command);
+
+  /// Runs a packet through the normal fan-out without a device, so widget
+  /// tests can drive the live screens.
+  @visibleForTesting
+  void debugDeliver(CprMetrics metrics) => _onPacket(metrics);
 
   /// Clear and start recording telemetry for a new practice session.
   void startRecording() {

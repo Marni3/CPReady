@@ -17,7 +17,7 @@ class FlowBackButton extends StatelessWidget {
     return GestureDetector(
       onTap: () => context.pop(),
       behavior: HitTestBehavior.opaque,
-      child: const Padding(
+      child: Padding(
         padding: EdgeInsets.only(
           top: AppSpacing.flowBackTapV,
           bottom: AppSpacing.flowBackTapV,

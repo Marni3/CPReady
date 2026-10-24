@@ -2,10 +2,10 @@
 /// session starts on its own.
 ///
 /// Full-screen and all white, with no back button: the flow only moves forward
-/// from here. When the count reaches zero the app sends START (the firmware
-/// expects it once the baseline is ready) and replaces this screen with the
-/// live session, so the app timer and the firmware session clock start
-/// together.
+/// from here. When the count reaches zero the app restores the normal session
+/// duration, sends START (the firmware expects it once the baseline is ready)
+/// and replaces this screen with the live session, so the app timer and the
+/// firmware session clock start together.
 
 import 'dart:async';
 
@@ -54,6 +54,19 @@ class _BeginCompressionScreenState extends State<BeginCompressionScreen> {
     _timer?.cancel();
 
     final controller = AppScope.of(context);
+
+    // The manikin trial shortens the firmware's auto-stop to 15 seconds, and
+    // that duration survives a killed app. Setting it here makes every
+    // practice session use the normal length regardless of what ran before.
+    try {
+      await controller.sendCommand(
+        AppBleConfig.commandSetTime(AppDurations.practiceSessionSeconds),
+      );
+    } catch (error) {
+      // The live screen surfaces a dropped link; keep the flow moving.
+      debugPrint('Practice duration set failed: $error');
+    }
+
     try {
       await controller.sendCommand(AppBleConfig.commandStart);
     } catch (error) {
@@ -97,14 +110,14 @@ class _BeginCompressionScreenState extends State<BeginCompressionScreen> {
                   color: AppColors.flowHeadingText,
                 ),
               ),
-              const SizedBox(height: AppSpacing.countdownNumberGap),
+              SizedBox(height: AppSpacing.countdownNumberGap),
               Image.asset(
                 AppAssets.beginSession,
                 width: AppSizes.countdownImageSize,
                 height: AppSizes.countdownImageSize,
                 fit: BoxFit.contain,
               ),
-              const SizedBox(height: AppSpacing.countdownImageGap),
+              SizedBox(height: AppSpacing.countdownImageGap),
               Text(
                 AppStrings.beginCompressionTitle,
                 textAlign: TextAlign.center,
@@ -114,7 +127,7 @@ class _BeginCompressionScreenState extends State<BeginCompressionScreen> {
                   color: AppColors.flowHeadingText,
                 ),
               ),
-              const SizedBox(height: AppSpacing.countdownHelperGap),
+              SizedBox(height: AppSpacing.countdownHelperGap),
               Text(
                 AppStrings.beginCompressionBody,
                 textAlign: TextAlign.center,

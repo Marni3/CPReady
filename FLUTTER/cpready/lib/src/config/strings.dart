@@ -70,6 +70,9 @@ class AppStrings {
   static const String homeScanning = 'Scanning';
   static const String homeConnected = 'Connected!';
 
+  /// Device card — connected: opens the manikin depth calibration flow.
+  static const String homeManikinCalibration = 'Manikin Calibration';
+
   /// Dotted info card paragraph.
   static const String homeInfoBody =
       'CPReady was developed to address challenges by serving as a '
@@ -152,6 +155,25 @@ class AppStrings {
   static const String setupContinue = 'Continue';
 
   // -----------------------------------------------------------------------
+  // Practice setup — training mode
+  // -----------------------------------------------------------------------
+
+  /// Section label above the two profile options.
+  static const String setupTrainingMode = 'Training mode';
+
+  static const String setupProfileManikin = 'Adult Manikin Mode';
+  static const String setupProfileManikinBody =
+      'Standard AHA thresholds for training manikins.';
+
+  static const String setupProfileBench = 'Bench Test Mode';
+  static const String setupProfileBenchBody =
+      'Relaxed sensitivity for desk and palm pressing.';
+
+  /// Shown under the options when the mode change could not be sent.
+  static const String setupProfileSendFailed =
+      'Could not send the mode change to the device.';
+
+  // -----------------------------------------------------------------------
   // Hand placement
   // -----------------------------------------------------------------------
 
@@ -175,6 +197,44 @@ class AppStrings {
       'Not ready. Keep hands still and release downward pressure.';
   static const String calibrationRetry = 'Retry Calibration';
   static const String calibrationBeginSession = 'Begin Session';
+
+  // -----------------------------------------------------------------------
+  // Manikin depth calibration (separate from the baseline Calibration step)
+  // -----------------------------------------------------------------------
+
+  static const String manikinTitle = 'Manikin Calibration';
+
+  /// Intro paragraph on the start screen.
+  static const String manikinIntroBody =
+      'Run a 15-second trial on the manikin, then enter the depth it reports. '
+      'The device uses that value to scale its depth readings.';
+
+  static const String manikinStart = 'Start 15 s Trial';
+  static const String manikinPreparing = 'Preparing sensor…';
+  static const String manikinTrialRunning = 'Trial running…';
+  static const String manikinTimeRemaining = 'Time remaining';
+  static const String manikinLiveDepth = 'Depth';
+  static const String manikinMeanDepth = 'Trial mean depth';
+  static const String manikinTargetLabel = 'Manikin reported depth';
+  static const String manikinTargetHint = 'e.g. 5.5';
+  static const String manikinTargetUnit = 'cm';
+  static const String manikinInvalidTarget =
+      'Enter a depth between 1.0 and 10.0 cm.';
+  static const String manikinSave = 'Save Calibration';
+  static const String manikinRetry = 'Retry Trial';
+  static const String manikinError =
+      'The trial did not finish. Check the device and try again.';
+  static const String manikinSendFailed =
+      'Could not send the calibration to the device.';
+  static const String manikinNoCompressions =
+      'No compressions were detected. Press firmly and try again.';
+
+  /// Result after the target command was sent.
+  static const String manikinSentTitle = 'Calibration sent';
+  static const String manikinSentBody =
+      'The device will use the new depth scale from the next session. '
+      'Confirm the depth reading on the next practice run.';
+  static const String manikinDone = 'Done';
 
   // -----------------------------------------------------------------------
   // Begin compression
@@ -214,6 +274,17 @@ class AppStrings {
   static const String livePercentUnit = '%';
 
   static const String liveHoldEndSession = 'Hold to End Session';
+
+  /// Accessibility labels for the voice-cue toggle in the live header.
+  static const String liveMuteCues = 'Mute voice cues';
+  static const String liveUnmuteCues = 'Unmute voice cues';
+
+  /// Shown after three consecutive packets report unsteady cadence.
+  static const String liveCadenceWarning =
+      'Rhythm unsteady — depth readings may fluctuate.';
+
+  /// Capsule marking a session running the relaxed bench profile.
+  static const String liveBenchBadge = 'BENCH MODE';
 
   // -----------------------------------------------------------------------
   // Session summary

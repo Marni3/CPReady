@@ -2,8 +2,8 @@
 ///
 /// Full-screen (no top header, no bottom nav): a small back arrow beside the
 /// title, one large panel holding the CPReady logo and the live calibration
-/// status, and two stacked buttons near the bottom — Retry Calibration and
-/// Begin Session.
+/// status, and the action buttons near the bottom. "Begin Session" is always
+/// present; "Retry Calibration" appears only after a failed attempt.
 ///
 /// CALIBRATE is sent when this screen opens — the firmware only starts its
 /// baseline window on that command, and reports progress/success as packet
@@ -11,6 +11,7 @@
 /// to the countdown, which is what sends START.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -107,6 +108,17 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
       _CalibrationState.ready => AppStrings.calibrationReady,
       _CalibrationState.error => AppStrings.calibrationError,
     };
+    final TextStyle titleStyle = AppTypography.style(
+      size: AppTypography.flowTitleSize,
+      weight: AppTypography.headingWeight,
+      color: AppColors.flowHeadingText,
+    );
+    final TextStyle helperStyle = AppTypography.style(
+      size: AppTypography.flowHelperSize,
+      weight: FontWeight.normal,
+      color: AppColors.summaryFailedText,
+    );
+    final String? helper = ready ? null : AppStrings.calibrationNotReady;
 
     return Scaffold(
       backgroundColor: AppColors.surfaceScaffold,
@@ -122,88 +134,96 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: <Widget>[
-                    const FlowBackButton(),
-                    const SizedBox(width: AppSpacing.flowBackTitleGap),
-                    Expanded(
-                      child: Text(
-                        AppStrings.calibrationTitle,
-                        style: AppTypography.style(
-                          size: AppTypography.flowTitleSize,
-                          weight: AppTypography.headingWeight,
-                          color: AppColors.flowHeadingText,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.flowTitleGap),
                 Expanded(
                   child: LayoutBuilder(
                     builder:
                         (BuildContext context, BoxConstraints constraints) {
+                          // The card takes the space the title and the helper
+                          // line leave over. Both are measured with the styles
+                          // they are painted with; the whole block scrolls if it
+                          // still does not fit.
+                          final double titleHeight = measureTextHeight(
+                            context,
+                            AppStrings.calibrationTitle,
+                            titleStyle,
+                            maxWidth:
+                                constraints.maxWidth -
+                                AppSizes.flowBackIconSize -
+                                AppSpacing.flowBackTapRight -
+                                AppSpacing.flowBackTitleGap,
+                          );
+                          final double helperHeight = helper == null
+                              ? 0
+                              : AppSpacing.small +
+                                    measureTextHeight(
+                                      context,
+                                      helper,
+                                      helperStyle,
+                                      maxWidth: constraints.maxWidth,
+                                    );
+                          final double cardSpace = math.max(
+                            0.0,
+                            constraints.maxHeight -
+                                math.max(
+                                  titleHeight,
+                                  AppSizes.flowBackIconSize +
+                                      2 * AppSpacing.flowBackTapV,
+                                ) -
+                                AppSpacing.flowTitleGap -
+                                helperHeight,
+                          );
+
                           return SingleChildScrollView(
-                            child: ConstrainedBox(
-                              constraints: BoxConstraints(
-                                minHeight: constraints.maxHeight,
-                              ),
-                              child: Align(
-                                alignment: AppSpacing.flowCardAlignment,
-                                child: FlowPanel(
-                                  width: AppSizes.flowCardWidth,
-                                  minHeight: AppSizes.flowCardMinHeight,
-                                  border: AppColors.flowCardBorder,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: <Widget>[
-                                      Image.asset(
-                                        AppAssets.handPlacementGuide,
-                                        width: AppSizes.flowHandImageSize,
-                                        height: AppSizes.flowHandImageSize,
-                                        fit: BoxFit.contain,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: <Widget>[
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: <Widget>[
+                                    const FlowBackButton(),
+                                    SizedBox(
+                                      width: AppSpacing.flowBackTitleGap,
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        AppStrings.calibrationTitle,
+                                        style: titleStyle,
                                       ),
-                                      const SizedBox(
-                                        height: AppSpacing.flowPanelContentGap,
-                                      ),
-                                      Text(
-                                        statusText,
-                                        textAlign: TextAlign.center,
-                                        style: AppTypography.style(
-                                          size: AppTypography
-                                              .flowPanelHeadingSize,
-                                          weight: AppTypography.headingWeight,
-                                          color: AppColors.flowHeadingText,
-                                        ),
-                                      ),
-                                    ],
+                                    ),
+                                  ],
+                                ),
+                                SizedBox(height: AppSpacing.flowTitleGap),
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    minHeight: cardSpace,
+                                  ),
+                                  child: FlowIllustrationCard(
+                                    caption: statusText,
+                                    availableHeight: cardSpace,
                                   ),
                                 ),
-                              ),
+                                if (helper != null) ...<Widget>[
+                                  SizedBox(height: AppSpacing.small),
+                                  Text(
+                                    helper,
+                                    textAlign: TextAlign.center,
+                                    style: helperStyle,
+                                  ),
+                                ],
+                              ],
                             ),
                           );
                         },
                   ),
                 ),
-                if (!ready) ...<Widget>[
-                  const SizedBox(height: AppSpacing.small),
-                  Text(
-                    AppStrings.calibrationNotReady,
-                    textAlign: TextAlign.center,
-                    style: AppTypography.style(
-                      size: AppTypography.flowHelperSize,
-                      weight: FontWeight.normal,
-                      color: AppColors.summaryFailedText,
-                    ),
+                SizedBox(height: AppSpacing.section),
+                if (_state == _CalibrationState.error) ...<Widget>[
+                  FlatActionButton(
+                    label: AppStrings.calibrationRetry,
+                    onPressed: () => unawaited(_retryCalibration()),
                   ),
+                  SizedBox(height: AppSpacing.flowActionStackGap),
                 ],
-                const SizedBox(height: AppSpacing.section),
-                FlatActionButton(
-                  label: AppStrings.calibrationRetry,
-                  onPressed: () => unawaited(_retryCalibration()),
-                ),
-                const SizedBox(height: AppSpacing.flowActionStackGap),
                 FlatActionButton(
                   label: AppStrings.calibrationBeginSession,
                   onPressed: ready ? _beginSession : null,

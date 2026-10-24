@@ -55,7 +55,7 @@ class _SplashScreenState extends State<SplashScreen> {
                   AppAssets.logoWhite,
                   width: AppSizes.splashLogoWidth,
                 ),
-                const SizedBox(height: AppSpacing.splashLogoGap),
+                SizedBox(height: AppSpacing.splashLogoGap),
                 Text(
                   AppStrings.splashTitle,
                   style: AppTypography.style(
@@ -65,7 +65,7 @@ class _SplashScreenState extends State<SplashScreen> {
                     letterSpacing: AppTypography.splashTitleLetterSpacing,
                   ),
                 ),
-                const SizedBox(height: AppSpacing.splashLoaderGap),
+                SizedBox(height: AppSpacing.splashLoaderGap),
                 const _SplashLoader(),
               ],
             ),
