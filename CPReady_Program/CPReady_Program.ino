@@ -145,17 +145,19 @@ void setup() {
     } else {
         #if USE_DUAL_MPU
         if (sensors.getHasMultiplexer()) {
-            Serial.printf("[OK] Dual-MPU mode initialized via PCA9548A: Chest on SD%d, Base on SD%d (both at 0x68).\n",
-                sensors.getChestChannel(), sensors.getBaseChannel());
+            Serial.printf("[OK] Dual-MPU mode initialized via PCA9548A: Chest on SD%d (0x%02X), Base on SD%d (0x%02X).\n",
+                sensors.getChestChannel(), sensors.getChestI2CAddress(),
+                sensors.getBaseChannel(), sensors.getBaseI2CAddress());
         } else {
             Serial.println("[OK] Dual-MPU mode initialized.");
         }
         #else
         if (sensors.getHasMultiplexer()) {
-            Serial.printf("[OK] Single-MPU mode initialized via PCA9548A on SD%d. Base sensor bypassed.\n",
-                sensors.getChestChannel());
+            Serial.printf("[OK] Single-MPU mode initialized via PCA9548A on SD%d (0x%02X). Base sensor bypassed.\n",
+                sensors.getChestChannel(), sensors.getChestI2CAddress());
         } else {
-            Serial.println("[OK] Single-MPU mode initialized: Direct bus mode (0x68). Base sensor bypassed.");
+            Serial.printf("[OK] Single-MPU mode initialized: Direct bus mode (0x%02X). Base sensor bypassed.\n",
+                sensors.getChestI2CAddress());
         }
         #endif
     }
@@ -189,10 +191,7 @@ void loop() {
     // State: CALIBRATING (Trainee rests hands idle on chest for configured duration)
     if (state == DeviceState::CALIBRATING) {
         #if !ENABLE_DEMO_MODE
-        float dummyAccel;
-        if (sensors.sample100Hz(dummyAccel, nowMicros)) {
-            sensors.recordCalibrationSample();
-        }
+        sensors.recordCalibrationSample(nowMicros);
         #endif
 
         // Periodically broadcast calibration progress packet (Packet Type 2)
