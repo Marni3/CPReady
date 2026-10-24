@@ -14,11 +14,13 @@ CPReady_Program/
 │   ├── CPRTypes.h             # Common state enums and command packet layout
 │   ├── SensorManager.h        # Dual MPU6050 I2C Fast Mode driver & differential subtraction
 │   ├── CompressionTracker.h   # Harmonic pedometer engine (Rate, Depth, Recoil, CCF)
-│   ├── BleManager.h           # BLE GATT Server, Notify characteristic, string command mailbox
-│   └── FeedbackController.h   # Non-blocking 1-2-3 acoustic buzzer pattern sequencer
+│   └── BleManager.h           # BLE GATT Server, Notify characteristic, string command mailbox
 ├── src/
 │   └── main.cpp               # Standard C++ entry point (PlatformIO / ESP-IDF)
 │   └── simulation.cpp         # Simulation of Fake Packets (PlatformIO / ESP-IDF)
+├── docs/
+│   ├── CALIBRATION_AND_TUNING_GUIDE.md # Step-by-step calibration & parameter guide
+│   ├── CPReady_Calibration_and_Tuning_Guide.pdf # Printable PDF walkthrough
 │   ├── SOFTWARE_DEVELOPER_GUIDE.md # Quick guide for mobile app developers & integration
 │   ├── ARCHITECTURE.md        # Object-oriented architecture & sequence diagrams
 │   ├── ALGORITHM_RESEARCH.md  # Deep dive into pedometer & CPR resuscitation literature
@@ -41,7 +43,6 @@ All parameters are heavily commented with their default values and tuning guidel
 - `RECOIL_THRESHOLD_G` (Default: `-0.35g`): Upward acceleration needed to confirm complete recoil.
 - `REFRACTORY_LOCKOUT_MS` (Default: `250 ms`): Minimum interval between strokes (rejects bounces).
 - `CALIBRATION_DURATION_MS` (Default: `2000 ms`): Idle hand-placement baseline window.
-- `BUZZER_PIN` (Default: `25`): GPIO output for the piezo buzzer.
 
 ---
 

@@ -1,7 +1,7 @@
 # CPReady Software Developer Integration Guide
 
 **Target Audience**: Flutter / Mobile Application Developers & Firmware Contributors  
-**Hardware Platform**: ESP32 Dev Module (Dual MPU6050 Accelerometers, Piezo Buzzer)  
+**Hardware Platform**: ESP32 Dev Module (Dual MPU6050 Accelerometers)  
 **Primary Communication**: Bluetooth Low Energy (Nordic UART Service GATT Profile)  
 **Document Status**: Official Protocol Specification (Aligned with Capstone Proposal)  
 
@@ -15,12 +15,10 @@ The **CPReady** firmware turns an ESP32 into a smart CPR training vest worn over
 - **Chest Recoil**: Verification of complete upward chest release between downstrokes (flags rescuer leaning).
 - **Chest Compression Fraction (CCF)**: Target $\ge 60\%$, ideally $> 80\%$ active compression time.
 
-### Audio Separation of Concerns
-- **ESP32 Hardware Buzzer**: Handles physical device state beeps:
-  - 1 beep: Calibration baseline window underway.
-  - 2 beeps: Baseline captured, compressions begin now!
-  - 3 beeps: Practice session finalized / completed.
-- **Smartphone Speaker (Flutter App)**: Delivers all spoken voice coaching (*"Push harder"*, *"Release completely"*, *"Speed up"*, *"Slow down"*, *"Good compressions"*) and sound effects.
+### Audio & Voice Guidance Architecture
+All audio guidance, pacing prompts, and status announcements are handled entirely on the mobile smartphone via the Flutter mobile application:
+- **Status Cues**: Delivered by the mobile app upon receiving BLE packet state transitions (`packet_type = 2` for calibration underway, `packet_type = 3` for session ready, `packet_type = 4` for session summary).
+- **Spoken Voice Coaching**: Delivers real-time spoken prompts (*"Push harder"*, *"Release completely"*, *"Speed up"*, *"Slow down"*, *"Good compressions"*) matching the packet's `audio_prompt_code`.
 
 ---
 
@@ -29,7 +27,7 @@ The **CPReady** firmware turns an ESP32 into a smart CPR training vest worn over
 Below are the explicit engineering agreements answering the **"For Technical Verification"** requirements in the student team's protocol specification:
 
 ### 1. Bluetooth Disconnection Handling
-- **Firmware Behavior**: The ESP32 detects client disconnection instantly via `onDisconnect()`. On the very next tick, the firmware calls `feedback.abort()` (silencing the buzzer), clears `tracker.reset()`, and resets `state = DeviceState::STANDBY`.
+- **Firmware Behavior**: The ESP32 detects client disconnection instantly via `onDisconnect()`. On the very next tick, the firmware clears `tracker.reset()`, resets `state = DeviceState::STANDBY`, and resumes BLE advertising.
 - **Flutter Behavior**: When disconnection occurs, Flutter immediately terminates the active session, clears displayed live metrics to avoid showing stale data, and displays the *"Session Interrupted"* notification screen. Interrupted sessions are **not** saved to History.
 - **Reconnection**: The ESP32 resumes advertising immediately. Once re-paired, the instructor can initiate a clean new practice session.
 
@@ -38,7 +36,7 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
   1. Instructor presses and holds "End Session" in Flutter.
   2. Flutter transmits the text string `"STOP"` to the Command Characteristic (`6e400003-...`).
   3. The ESP32 closes the measurement period, computes session averages (average depth, average rate, recoil compliance %, final CCF %, total compressions), and broadcasts an 11-byte summary packet with `packet_type = 4 (PKT_TYPE_FINAL_SUMMARY)`.
-  4. The ESP32 plays 3 beeps and transitions to `STANDBY`.
+  4. The ESP32 transitions to `STANDBY`.
   5. Flutter validates the packet, saves the session to local SQLite/Hive storage, and opens the Results screen.
 
 ### 3. Distinguishing Real-Time Telemetry from Finalized Results
@@ -269,11 +267,9 @@ sequenceDiagram
     participant App as Flutter App
     participant PhoneSPK as Phone Speaker
     participant ESP32 as ESP32 Vest
-    participant Buzzer as Onboard Buzzer
 
     Note over Instructor,App: Step 1: Hand Placement Confirmed
     App->>ESP32: Write "CALIBRATE" to Command Char
-    ESP32->>Buzzer: Beep 1x (Calibration Start)
     ESP32->>App: Notify Packet Type 2 (Calibrating)
     App->>Instructor: Show "Calibrating... Keep hands still"
     Note over Trainee,ESP32: 2.0s Baseline Calibration (200 samples)
@@ -292,7 +288,6 @@ sequenceDiagram
     Note over Instructor,App: Step 2: Instructor Taps "Begin Session"
     Instructor->>App: Tap "Begin Session"
     App->>ESP32: Write "START" to Command Char
-    ESP32->>Buzzer: Beep 2x (Compressions Begin Now!)
     App->>PhoneSPK: "Begin compressions now!"
     App->>Instructor: Open Live Practice Gauges
     
@@ -308,7 +303,7 @@ sequenceDiagram
     App->>ESP32: Write "STOP" to Command Char
     ESP32->>ESP32: Close Window & Aggregate Summary
     ESP32->>App: Notify Packet Type 4 (Final Summary Results)
-    ESP32->>Buzzer: Beep 3x (Session Complete)
+    App->>PhoneSPK: Play Session Complete Chime
     App->>App: Validate & Save to Local History
     App->>Instructor: Automatically Open Results Screen
 ```
@@ -319,11 +314,9 @@ sequenceDiagram
     autonumber
     participant App as Flutter App
     participant ESP32 as ESP32 Vest
-    participant Buzzer as Onboard Buzzer
 
     Note over App,ESP32: Active Session Running
     App-xESP32: Bluetooth Connection Lost (Out of range / Battery / OS Kill)
-    ESP32->>Buzzer: abort() (Immediate silence)
     ESP32->>ESP32: tracker.reset() & state = STANDBY
     ESP32->>ESP32: Start Advertising Immediately
     App->>App: Clear displayed metrics
@@ -341,7 +334,7 @@ You do **not** need the physical sensors or manikin connected to build and test 
 2. Set `#define ENABLE_DEMO_MODE true`.
 3. Flash the ESP32.
 
-When you send `"START"`, the device beeps once, sends `type=2`, beeps twice after 2s, sends `type=3`, streams realistic live AHA metrics (`55 mm` depth, `110 cpm`, recoil OK, `74%` CCF) at 5 Hz, and transmits a finalized `type=4` summary upon `"STOP"`.
+When you send `"START"`, the device broadcasts `type=2` (calibration underway), transitions after 2s to `type=3` (calibration ready), streams realistic live AHA metrics (`55 mm` depth, `110 cpm`, recoil OK, `74%` CCF) at 5 Hz, and transmits a finalized `type=4` summary upon `"STOP"`.
 
 ---
 
@@ -355,7 +348,6 @@ To eliminate I2C address collisions between dual MPU-6050 sensors operating at d
 | :--- | :--- | :--- | :--- |
 | **ESP32 Master** | GPIO 21 | PCA9548A `SDA` | Primary I2C Data (100 kHz) |
 | **ESP32 Master** | GPIO 22 | PCA9548A `SCL` | Primary I2C Clock (100 kHz) |
-| **ESP32 Master** | GPIO 25 | Buzzer Positive (+) | Onboard Piezoelectric Acoustic Guidance |
 | **PCA9548A** | `A0`, `A1`, `A2` | GND | Fixed I2C Address `0x70` |
 | **PCA9548A** | `SD3`, `SC3` | Chest MPU `SDA`, `SCL` | Downstream Channel 3 (Chest Sensor) |
 | **PCA9548A** | `SD2`, `SC2` | Base MPU `SDA`, `SCL` | Downstream Channel 2 (Spine / Baseplate Sensor) |

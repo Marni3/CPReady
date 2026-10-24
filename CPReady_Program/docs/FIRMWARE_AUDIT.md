@@ -9,13 +9,13 @@
 
 ## Executive Summary
 
-A comprehensive architectural and line-by-line audit of the CPReady firmware was performed across all subsystem modules (`include/`, `src/`, and `.ino`). While the modular design and single-threaded execution model provide a strong foundation, the audit surfaced **12 specific defects and vulnerabilities**, categorized by severity:
+A comprehensive architectural and line-by-line audit of the CPReady firmware was performed across all subsystem modules (`include/`, `src/`, and `.ino`). While the modular design and single-threaded execution model provide a strong foundation, the audit surfaced **11 specific defects and vulnerabilities**, categorized by severity:
 
 | Severity | Count | Summary of Key Areas |
 | :--- | :---: | :--- |
 | **Critical** | 4 | Stroke state machine latch-up, first-stroke calculation explosion, CCF pause freeze/drift, calibration underflow |
 | **Major** | 4 | Incomplete `SESSION_PAUSED` state handling, lack of calibration motion rejection, audio coaching state contamination across pauses, BLE command race conditions |
-| **Minor / Doc** | 4 | Documentation byte-size drift (8B vs 11B), stroke count clamp at 255, active vs. passive buzzer compatibility, entry point parity |
+| **Minor / Doc** | 3 | Documentation byte-size drift (8B vs 11B), stroke count clamp at 255, entry point parity |
 
 ---
 
@@ -145,14 +145,7 @@ A comprehensive architectural and line-by-line audit of the CPReady firmware was
 
 ---
 
-### 11. [MINOR] Active vs. Passive Buzzer Compatibility
-- **Location**: [include/FeedbackController.h:40-44](file:///c:/Users/reyna/CPready/CPReady/CPReady_Program/include/FeedbackController.h#L40-L44)
-- **Detail**: `FeedbackController` toggles GPIO 25 between digital `HIGH` and `LOW`. This works only with an active buzzer (integrated oscillator). If the student hardware prototype uses a passive piezo transducer, digital HIGH produces an inaudible DC click.
-- **Recommended Fix**: Add a `#define USE_PWM_BUZZER` option in `CPReadyConfig.h` utilizing ESP32 LEDC PWM (`ledcWriteTone`) to support both active and passive piezo buzzers.
-
----
-
-### 12. [MINOR] Arduino IDE Entry Point Parity (`CPReady_Program.ino`)
+### 11. [MINOR] Arduino IDE Entry Point Parity (`CPReady_Program.ino`)
 - **Location**: [CPReady_Program.ino](file:///c:/Users/reyna/CPready/CPReady/CPReady_Program/CPReady_Program.ino)
 - **Detail**: `CPReady_Program.ino` mirrors `src/main.cpp`. Any logic fixes applied to `src/main.cpp` must be mirrored in `CPReady_Program.ino` so Arduino IDE users maintain exact feature parity.
 
@@ -175,4 +168,3 @@ A comprehensive architectural and line-by-line audit of the CPReady firmware was
 3. **Phase 3 (Documentation & Parity - Minor)**:
    - Fix 9: Sync `ARCHITECTURE.md` and `README.md` to 11-byte packet specification.
    - Fix 10: Sync `CPReady_Program.ino` with `src/main.cpp`.
-   - Fix 11: Add passive buzzer LEDC tone option.

@@ -1,7 +1,7 @@
 # CPReady Hardware Testing, Calibration & Parameter Tuning Guide
 
 **Target Audience**: Testing Team, Capstone Evaluators & Lab Assistants  
-**Hardware Setup**: ESP32 Dev Module + PCA9548A I2C Multiplexer + Dual MPU-6050 Accelerometers + Onboard Buzzer  
+**Hardware Setup**: ESP32 Dev Module + PCA9548A I2C Multiplexer + Dual MPU-6050 Accelerometers  
 **Firmware Configuration File**: `CPReady_Program/include/CPReadyConfig.h`  
 
 ---
@@ -105,9 +105,9 @@ Before putting the vest on the manikin, verify that the electronics talk to each
 Whenever hand placement is confirmed on the manikin, the mobile app triggers pre-session calibration by sending the command `"CALIBRATE"`.
 
 ### What Happens During Calibration:
-- The ESP32 buzzer beeps **1 time**.
+- The mobile app triggers the calibration sequence and displays the 2.0-second progress countdown.
 - The vest measures gravity and resting baseline for **2.0 seconds** (taking 200 samples).
-- When complete and stable, the buzzer beeps **2 times**, signaling that the instructor can now tap *"Begin Session"* and compressions can start!
+- When complete and stable, the mobile app confirms that the baseline is captured, enabling the *"Begin Session"* button!
 
 ### Troubleshooting Calibration Failures
 If someone moves the manikin or fidgets during those 2 seconds, the firmware protects data integrity by failing the calibration and printing the exact reason to the Serial Monitor:
@@ -115,7 +115,7 @@ If someone moves the manikin or fidgets during those 2 seconds, the firmware pro
 | Serial Error Message | What It Means in Plain English | Practical Fix |
 | :--- | :--- | :--- |
 | `[CALIB FAIL] Sample count low: X / 200` | The sensor disconnected or lost communication mid-sample. | Check wire connections or ensure the I2C speed is set to 100 kHz. |
-| `[CALIB FAIL] Net motion spread: 0.45g > 0.30g` | The rescuer's hands were trembling or the table was bumped during the 2 seconds. | Keep hands completely still and release downward pressure until the beeps finish. |
+| `[CALIB FAIL] Net motion spread: 0.45g > 0.30g` | The rescuer's hands were trembling or the table was bumped during the 2 seconds. | Keep hands completely still and release downward pressure until the countdown finishes. |
 | `[CALIB FAIL] Chest gravity implausible` | The chest sensor is tilted at an extreme angle (> 45°) or upside-down. | Make sure the sensor plate sits flat on the manikin sternum, chip facing UP. |
 | `[CALIB FAIL] Tilt/pre-pressure divergence` | The rescuer was already leaning hard on the chest before calibration finished. | Rest hands lightly on the chest without pushing down before starting calibration. |
 
@@ -250,6 +250,6 @@ Before presenting your prototype or conducting a training trial, run through thi
 
 - [ ] **1. Sensor Flatness**: Both MPU chips face UP; the chest sensor sits flush on the manikin sternum and the base sensor sits flat beneath the back.
 - [ ] **2. Multiplexer Detection**: Open Serial Monitor; confirm `PCA9548A Multiplexer detected at address 0x70` and both sensors mapped cleanly (SD3 and SD2).
-- [ ] **3. Stationary Baseline**: Run `"CALIBRATE"`; confirm 1 beep, stable countdown, and 2 beeps on completion with no error warnings.
+- [ ] **3. Stationary Baseline**: Run `"CALIBRATE"`; confirm stable countdown and calibration success with no error warnings.
 - [ ] **4. Depth Verification**: Perform 10 strokes to the manikin internal clicker; confirm reported depth reads in the **5.0 to 5.5 cm** ballpark.
 - [ ] **5. Leaning & Rate Verification**: Compress at a steady 100–120 cadence; confirm rate matches a phone metronome and full recoil registers consistently when downward pressure is released.

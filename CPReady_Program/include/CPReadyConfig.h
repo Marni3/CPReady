@@ -59,7 +59,6 @@ namespace CPReadyConfig {
     constexpr uint32_t    BLE_FINAL_RESULT_TIMEOUT_MS   = 2000;      // Timeout waiting for final results packet (2.0s)
 
     // Hardware Pins
-    constexpr uint8_t     BUZZER_PIN                    = 25;        // ESP32 GPIO pin driving the buzzer
     constexpr uint8_t     I2C_SDA_PIN                   = 21;        // ESP32 I2C Serial Data pin
     constexpr uint8_t     I2C_SCL_PIN                   = 22;        // ESP32 I2C Serial Clock pin
 
@@ -89,15 +88,6 @@ namespace CPReadyConfig {
     constexpr uint32_t    PAUSE_DETECTION_TIMEOUT_MS    = 1500;    // Pause gap threshold before pausing active CCF accumulation
     constexpr float       DEPTH_MIN_LIMIT_CM            = 0.0f;    // Minimum allowable depth clamp to reject negative outliers
     constexpr float       DEPTH_MAX_LIMIT_CM            = 10.0f;   // Maximum allowable depth clamp to reject physical artifacts
-
-    // Acoustic Protocol Timings (ESP32 Onboard Buzzer)
-    constexpr uint16_t    BEEP_CALIB_START_ON_MS        = 200;     // Step 1: Calibration start tone duration (1 beep)
-    constexpr uint16_t    BEEP_CALIB_START_OFF_MS       = 100;     // Step 1: Post-beep silence duration
-    constexpr uint16_t    BEEP_COMPRESS_BEGIN_ON_MS     = 120;     // Step 2: Compressions begin tone duration (2 beeps)
-    constexpr uint16_t    BEEP_COMPRESS_BEGIN_OFF_MS    = 100;     // Step 2: Inter-beep silence duration
-    constexpr uint16_t    BEEP_SESSION_COMPLETE_ON_MS   = 150;     // Step 3: Session complete tone duration (3 beeps)
-    constexpr uint16_t    BEEP_SESSION_COMPLETE_OFF_MS  = 120;     // Step 3: Inter-beep silence duration
-    constexpr uint16_t    BEEP_METRONOME_CLICK_MS       = 30;      // Optional per-compression metronome tick click duration
 }
 
 #endif // CPREADY_CONFIG_H

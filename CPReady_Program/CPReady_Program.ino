@@ -5,13 +5,11 @@
 #include "SensorManager.h"
 #include "CompressionTracker.h"
 #include "BleManager.h"
-#include "FeedbackController.h"
 
 // Subsystem Instances
 SensorManager      sensors;
 CompressionTracker tracker;
 BleManager         ble;
-FeedbackController feedback;
 
 // System State Machine
 DeviceState state = DeviceState::STANDBY;
@@ -51,9 +49,6 @@ void endAndFinalizeSession(uint32_t now) {
     ble.sendPacket(finalPacket);
     Serial.printf("[FINAL TX] Rate: %.0f cpm | Depth: %.2f cm | Recoil: %.0f%% | CCF: %.0f%% | Total: %d\n",
         summary.avg_rate_cpm, summary.avg_depth_cm, summary.recoil_compliance_percent, summary.final_ccf_percent, summary.total_compressions);
-
-    // Protocol Step 3: Buzzer buzzes THREE times indicating practice is complete
-    feedback.playSessionComplete();
 }
 
 /**
@@ -76,15 +71,10 @@ void onReceiveMessage_BLE(String message) {
         // Broadcast initial calibration progress packet (Packet Type 2)
         CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
         ble.sendPacket(calibPkt);
-
-        // Protocol Step 1: Buzzer buzzes ONCE indicating calibration is underway
-        feedback.playCalibrationStart();
     }
     else if (message == "START") {
         if (state == DeviceState::CALIBRATED_READY) {
             Serial.println("[FLOW] Device is calibrated and ready. Starting active CPR session!");
-            // Protocol Step 2: Buzzer buzzes TWICE indicating compressions should begin!
-            feedback.playCompressionsBegin();
             tracker.startSession(millis());
             state = DeviceState::ACTIVE_SESSION;
             Serial.println("[FLOW] Live practice session started! Ready for compressions.");
@@ -104,7 +94,6 @@ void onReceiveMessage_BLE(String message) {
 
             CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0};
             ble.sendPacket(calibPkt);
-            feedback.playCalibrationStart();
         }
     }
     else if (message == "STOP") {
@@ -141,8 +130,6 @@ void setup() {
     Serial.println("\n=========================================");
     Serial.println("     CPReady Firmware Initializing       ");
     Serial.println("=========================================");
-
-    feedback.begin(CPReadyConfig::BUZZER_PIN);
 
     #if ENABLE_DEMO_MODE
     Serial.println("[DEMO] *** DEMO / SIMULATION MODE ENABLED ***");
@@ -187,7 +174,6 @@ void loop() {
         if (state == DeviceState::CALIBRATING || state == DeviceState::ACTIVE_SESSION || 
             state == DeviceState::SESSION_PAUSED || state == DeviceState::CALIBRATED_READY) {
             Serial.println("[BLE WARN] Disconnected during active session! Immediately aborting.");
-            feedback.abort();
             tracker.reset();
             sensors.resetCalibration();
             state = DeviceState::STANDBY;
@@ -200,10 +186,7 @@ void loop() {
         onReceiveMessage_BLE(cmd);
     }
 
-    // 3. Non-blocking audio sequencer update (handles 1, 2, or 3 beep patterns)
-    feedback.update(now);
-
-    // 4. State: CALIBRATING (Trainee rests hands idle on chest for configured duration)
+    // State: CALIBRATING (Trainee rests hands idle on chest for configured duration)
     if (state == DeviceState::CALIBRATING) {
         #if !ENABLE_DEMO_MODE
         float dummyAccel;

@@ -25,7 +25,6 @@
 #include "CPReadyConfig.h"
 #include "BLEReadings.h"
 #include "BleManager.h"
-#include "FeedbackController.h"
 
 // --- Fake telemetry parameters (tune here) ---------------------------------
 static const uint16_t FAKE_RATE_CPM           = 110;
@@ -36,7 +35,6 @@ static const uint16_t FAKE_STROKE_INTERVAL_MS = 550;   // fake stroke every ~550
 
 // --- File-local subsystem instances (avoid symbol collisions) --------------
 static BleManager         fakeBle;
-static FeedbackController fakeFeedback;
 
 // --- File-local fake session state -----------------------------------------
 static DeviceState fakeState                     = DeviceState::STANDBY;
@@ -122,13 +120,11 @@ static void fakeHandleCommand(String message) {
         fakeState                   = DeviceState::CALIBRATING;
 
         fakeBle.sendPacket(makeFakeCalibProgress());
-        fakeFeedback.playCalibrationStart();
     }
     else if (message == "STOP") {
         Serial.println("[FAKE] STOP -> finalize fake session");
         fakeState = DeviceState::STANDBY;
         fakeBle.sendPacket(makeFakeFinalSummary());
-        fakeFeedback.playSessionComplete();
     }
     else if (message == "GET_RESULTS") {
         Serial.println("[FAKE] GET_RESULTS -> retransmit fake summary");
@@ -167,7 +163,6 @@ void setup() {
     Serial.println("=========================================");
     Serial.println("[FAKE] No sensors required. Advertising as CPReady.");
 
-    fakeFeedback.begin(CPReadyConfig::BUZZER_PIN);
     fakeBle.begin(CPReadyConfig::BLE_DEVICE_NAME);
     Serial.printf("[OK] BLE GATT Server Advertising as '%s'.\n", CPReadyConfig::BLE_DEVICE_NAME);
 }
@@ -181,9 +176,6 @@ void loop() {
         fakeHandleCommand(cmd);
     }
 
-    // Non-blocking buzzer sequencer
-    fakeFeedback.update(now);
-
     // Fake calibration progress notifications
     if (fakeState == DeviceState::CALIBRATING) {
         if (now - fakeLastCalibProgressMillis >= 500) {
@@ -194,7 +186,6 @@ void loop() {
         if (now - fakeCalibrationStartMillis >= CPReadyConfig::CALIBRATION_DURATION_MS) {
             Serial.println("[FAKE] Calibration complete -> send success packet");
             fakeBle.sendPacket(makeFakeCalibSuccess());
-            fakeFeedback.playCompressionsBegin();
             fakeLastNotifyMillis = now;
             fakeState = DeviceState::ACTIVE_SESSION;
         }
@@ -220,7 +211,6 @@ void loop() {
             Serial.println("[FAKE] Practice time limit reached");
             fakeState = DeviceState::STANDBY;
             fakeBle.sendPacket(makeFakeFinalSummary());
-            fakeFeedback.playSessionComplete();
         }
     }
 }

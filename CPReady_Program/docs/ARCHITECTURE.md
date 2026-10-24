@@ -10,7 +10,7 @@
 ## 1. Architectural Principles & Constraints
 
 ### 1.1 Non-Blocking Execution Model
-The firmware strictly prohibits the use of blocking delay calls (`delay()`) inside the active operational loop. All temporal operations—such as sensor sampling intervals (100 Hz), peak detection refractory lockouts (250 ms), Bluetooth Low Energy notification throttling (5–10 Hz), and audio metronome/buzzer patterns—are governed by discrete `millis()` or `micros()` software timers.
+The firmware strictly prohibits the use of blocking delay calls (`delay()`) inside the active operational loop. All temporal operations—such as sensor sampling intervals (100 Hz), peak detection refractory lockouts (250 ms), and Bluetooth Low Energy notification throttling (5–10 Hz)—are governed by discrete `millis()` or `micros()` software timers.
 
 ### 1.2 Single-Threaded Application Orchestration
 While the ESP32 hardware employs dual Xtensa cores and runs FreeRTOS under the Arduino abstraction layer, all application logic, math pipelines, and state transitions are consolidated into a deterministic single-threaded execution flow within `loop()`. This prevents thread synchronization bugs, mutex contention, and race conditions, ensuring that software developers with Dart/Flutter or basic Arduino backgrounds can easily follow, debug, and modify the code.
@@ -20,34 +20,43 @@ Because the underlying ESP32 BLE stack (such as `NimBLEDevice` or standard `BLED
 
 ---
 
-## 2. Interactive Session & Audio Signaling Protocol
+## 2. Interactive Session Protocol & Mobile Audio Guidance
 
-To provide clear physical and acoustic feedback without requiring the trainee to stare continuously at the smartphone screen, the firmware implements a standardized **1-2-3 Buzzer Protocol** paired with mobile button triggers:
+All acoustic prompts, metronome pacing, and instructional voice coaching are delivered directly through the smartphone speaker via the mobile application, driven by standardized BLE packet notifications:
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant App as Flutter Mobile App
+    participant PhoneSPK as Phone Speaker
     participant ESP as ESP32 (CPReady)
-    participant Buzz as Piezo Buzzer
     participant Trainee as Trainee / Manikin
 
-    Note over App,Trainee: Step 1: Calibration Phase
-    App->>ESP: BLE Write: "START"
-    ESP->>Buzz: Beep ONCE (200 ms)
+    Note over App,Trainee: Step 1: Pre-Session Calibration
+    App->>ESP: BLE Write: "CALIBRATE"
+    ESP-->>App: BLE Notify: Packet Type 2 (Calibration in progress)
+    App->>Trainee: Displays "Calibrating... Keep hands still"
     Note over Trainee: Trainee rests hands idle on chest pad
     ESP->>ESP: Non-blocking 2-second static baseline sampling (200 samples)
+    ESP-->>App: BLE Notify: Packet Type 3 (Calibrated Ready)
+    App->>Trainee: Prompts "Ready to Begin Session"
     
     Note over App,Trainee: Step 2: Compressions Begin
-    ESP->>Buzz: Beep TWICE (120 ms on, 100 ms off, 120 ms on)
+    App->>ESP: BLE Write: "START"
+    App->>PhoneSPK: "Begin compressions now!"
     Note over Trainee: Trainee begins active rhythmic CPR compressions
     ESP->>ESP: 100 Hz differential sampling & harmonic pedometer tracking
     ESP-->>App: BLE Notify: 8-byte CPRMetricsPacket (at stroke end or 10 Hz)
+    opt Audio Prompt Code > 0
+        App->>PhoneSPK: Spoken voice cue ("Push harder", "Release completely", etc.)
+    end
     
     Note over App,Trainee: Step 3: Session Complete
     App->>ESP: BLE Write: "STOP" (or practice timer reaches limit)
-    ESP->>Buzz: Beep THREE times (150 ms each)
-    ESP-->>App: Final metrics summary & state returns to STANDBY
+    ESP->>ESP: Aggregate final averages & CCF %
+    ESP-->>App: BLE Notify: 11-byte summary packet (Packet Type 4)
+    App->>PhoneSPK: Plays session complete chime
+    ESP->>ESP: State returns to STANDBY
 ```
 
 ---
@@ -90,22 +99,9 @@ classDiagram
         -volatile bool hasCommandFlag
         -char mailboxString[64]
         +begin(deviceName) void
-        +sendMetrics(packet) bool
+        +sendPacket(packet) bool
         +hasPendingCommand() bool
         +consumeCommand() String
-    }
-
-    class FeedbackController {
-        -uint8_t pin
-        -uint32_t nextToggleMillis
-        -uint8_t beepsRemaining
-        -bool isBuzzerHigh
-        +begin(pin) void
-        +update(currentMillis) void
-        +playCalibrationStart() void
-        +playCompressionsBegin() void
-        +playSessionComplete() void
-        +playMetronomeTick() void
     }
 ```
 
@@ -120,17 +116,19 @@ void onReceiveMessage_BLE(String message) {
     message.trim();
     message.toUpperCase();
 
-    if (message == "START") {
-        // Triggers 1 beep -> 2-sec calibration -> 2 beeps -> active session
+    if (message == "CALIBRATE") {
         sensors.resetCalibration();
         calibrationStartMillis = millis();
         state = DeviceState::CALIBRATING;
-        feedback.playCalibrationStart();
+    }
+    else if (message == "START") {
+        if (state == DeviceState::CALIBRATED_READY) {
+            tracker.startSession(millis());
+            state = DeviceState::ACTIVE_SESSION;
+        }
     }
     else if (message == "STOP") {
-        // Triggers 3 beeps -> session finalization -> standby
-        state = DeviceState::STANDBY;
-        feedback.playSessionComplete();
+        endAndFinalizeSession(millis());
     }
     else if (message == "PAUSE") {
         state = DeviceState::SESSION_PAUSED;
