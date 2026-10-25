@@ -224,6 +224,8 @@ class AppStrings {
   static const String manikinRetry = 'Retry Trial';
   static const String manikinError =
       'The trial did not finish. Check the device and try again.';
+  static const String manikinNoDeviceConnected =
+      'No device connected. Please pair your CPReady device first.';
   static const String manikinSendFailed =
       'Could not send the calibration to the device.';
   static const String manikinNoCompressions =

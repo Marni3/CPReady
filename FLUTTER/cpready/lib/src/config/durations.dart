@@ -45,6 +45,7 @@ class AppDurations {
   /// How long the trial may run before the app gives up waiting for its
   /// FINAL_SUMMARY.
   static const int manikinSummaryTimeoutMs = 20000;
+  static const int manikinCalibrationTimeoutMs = 10000;
 
   // -----------------------------------------------------------------------
   // BLE / telemetry supervision

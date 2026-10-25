@@ -1,14 +1,11 @@
 /// Manikin depth calibration.
-///
 /// This is separate from the baseline Calibration step: CALIBRATE only zeroes
 /// the sensor, while CALIBRATE_TARGET rescales the depth reading so it matches
 /// the depth the manikin reports.
-///
 /// The trial reuses the firmware's normal session path: SET_TIME is shortened
 /// to 15 seconds, CALIBRATE runs the baseline, START begins the trial, and the
 /// firmware's own FINAL_SUMMARY supplies the mean depth. The practice duration
 /// is restored before the screen is left.
-///
 /// The firmware does not acknowledge CALIBRATE_TARGET over BLE, so the last
 /// state says the command was sent and asks for a check on the next run rather
 /// than claiming the value was stored.
@@ -43,6 +40,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   StreamSubscription<CprMetrics>? _sub;
   Timer? _ticker;
   Timer? _summaryTimeout;
+  Timer? _calibrationTimeout;
 
   _Stage _stage = _Stage.intro;
   int _trialRemaining = AppDurations.manikinTrialSeconds;
@@ -72,9 +70,20 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   // Trial
   // -------------------------------------------------------------------------
 
+  /// Starts the 15-second manikin depth calibration trial.
+  ///
+  /// Sends SET_TIME:15 to firmware, then waits for firmware's CALIBRATE completion
+  /// (packetCalibrationDone) before beginning the trial. If calibration doesn't
+  /// complete within the timeout, shows a specific error rather than the generic
+  /// "trial did not finish" message.
   Future<void> _startTrial() async {
     final BleController? controller = _controller;
     if (controller == null) return;
+
+    // If a calibration trial is already in progress, don't start another.
+    if (_stage == _Stage.running || _stage == _Stage.enterTarget || _stage == _Stage.sent) {
+      return;
+    }
 
     setState(() {
       _stage = _Stage.preparing;
@@ -87,22 +96,55 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       _targetValid = false;
     });
 
+    // Send SET_TIME to firmware for the 15-second trial duration.
     try {
       await controller.sendCommand(
         AppBleConfig.commandSetTime(AppDurations.manikinTrialSeconds),
       );
       _durationChanged = true;
+    } catch (error) {
+      debugPrint('Manikin trial SET_TIME failed: $error');
+      _fail();
+      return;
+    }
+
+    // Send CALIBRATE to firmware to begin baseline calibration window.
+    // The firmware will respond with packetCalibrationDone when calibration is ready.
+    try {
       await controller.sendCommand(AppBleConfig.commandCalibrate);
     } catch (error) {
-      debugPrint('Manikin trial start failed: $error');
+      debugPrint('Manikin trial CALIBRATE failed: $error');
+      _fail();
+      return;
+    }
+
+    // Wait for firmware's CALIBRATE completion packet. If it doesn't arrive
+    // within the calibration timeout, the trial cannot start.
+    _calibrationTimeout?.cancel();
+    _calibrationTimeout = Timer(Duration(milliseconds: AppDurations.manikinCalibrationTimeoutMs), () {
       if (!mounted) return;
       _fail();
-    }
+    });
+
+    debugPrint('Manikin trial started: waiting for calibration done (timeout ${AppDurations.manikinCalibrationTimeoutMs}ms)');
   }
 
   Future<void> _beginTrial() async {
     final BleController? controller = _controller;
     if (controller == null || !mounted || _stage != _Stage.preparing) return;
+
+    // Cancel the calibration timeout since we're beginning the trial.
+    _calibrationTimeout?.cancel();
+    _calibrationTimeout = null;
+
+    // Guard: refuse to begin the trial if no BLE device is connected.
+    if (!controller.isConnected) {
+      setState(() {
+        _stage = _Stage.error;
+        _error = AppStrings.manikinNoDeviceConnected;
+      });
+      return;
+    }
 
     setState(() {
       _stage = _Stage.running;
@@ -121,7 +163,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     try {
       await controller.sendCommand(AppBleConfig.commandStart);
     } catch (error) {
-      debugPrint('Manikin trial start failed: $error');
+      debugPrint('Manikin trial START failed: $error');
       if (mounted) _fail();
     }
   }
@@ -132,6 +174,8 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     switch (_stage) {
       case _Stage.preparing:
         if (metrics.packetType == AppBleConfig.packetCalibrationDone) {
+          _calibrationTimeout?.cancel();
+          _calibrationTimeout = null;
           unawaited(_beginTrial());
         } else if (metrics.packetType == AppBleConfig.packetError) {
           _fail();
@@ -183,7 +227,12 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     if (!mounted) return;
     setState(() {
       _stage = _Stage.error;
-      _error = AppStrings.manikinError;
+      // Show specific error based on what failed.
+      if (_controller == null || !_controller!.isConnected) {
+        _error = AppStrings.manikinNoDeviceConnected;
+      } else {
+        _error = AppStrings.manikinError;
+      }
     });
   }
 
@@ -252,6 +301,8 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     _ticker = null;
     _summaryTimeout?.cancel();
     _summaryTimeout = null;
+    _calibrationTimeout?.cancel();
+    _calibrationTimeout = null;
   }
 
   @override
@@ -380,7 +431,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
         Text(
           preparing
               ? AppStrings.manikinPreparing
-              : AppStrings.manikinTimeRemaining,
+              : AppStrings.manikinTrialRunning,
           textAlign: TextAlign.center,
           style: AppTypography.style(
             size: AppTypography.manikinLabelSize,
