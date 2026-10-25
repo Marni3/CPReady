@@ -209,6 +209,9 @@ class AppStrings {
       'Run a 15-second trial on the manikin, then enter the depth it reports. '
       'The device uses that value to scale its depth readings.';
 
+  static const String manikinStartZeroing = 'Zero Baseline';
+  static const String manikinBaselineReady =
+      'Baseline calibrated! Position hands and press Start when ready.';
   static const String manikinStart = 'Start 15 s Trial';
   static const String manikinPreparing = 'Preparing sensor…';
   static const String manikinTrialRunning = 'Trial running…';

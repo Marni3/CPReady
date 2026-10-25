@@ -85,7 +85,7 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
         AppRoutes.livePractice: (context) =>
             LivePracticeScreen(traineeName: _traineeName(context)),
         AppRoutes.manikinCalibration: (_) =>
-            FlowConnectionGuard(child: ManikinCalibrationScreen()),
+            const ManikinCalibrationScreen(),
         AppRoutes.sessionComplete: (context) {
           final extra = GoRouterState.of(context).extra as Map? ?? {};
           return SessionCompleteScreen(

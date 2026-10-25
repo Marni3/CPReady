@@ -64,10 +64,12 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.text(AppStrings.manikinStart));
+    // Step 1: Start zeroing baseline
+    await tester.tap(find.text(AppStrings.manikinStartZeroing));
     await tester.pump();
-    print('after trial start: ${controller.commands}');
+    print('after zeroing start: ${controller.commands}');
 
+    // Baseline finishes
     controller.debugDeliver(
       CprMetrics(
         packetType: AppBleConfig.packetCalibrationDone,
@@ -84,6 +86,11 @@ void main() {
     );
     await tester.pump();
     print('after calibration done: ${controller.commands}');
+
+    // Step 2: Start 15s trial run
+    await tester.tap(find.text(AppStrings.manikinStart));
+    await tester.pump();
+    print('after trial start: ${controller.commands}');
 
     controller.debugDeliver(_summary(5.5));
     await tester.pump();

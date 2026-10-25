@@ -1,14 +1,19 @@
 /// Manikin depth calibration.
+///
 /// This is separate from the baseline Calibration step: CALIBRATE only zeroes
 /// the sensor, while CALIBRATE_TARGET rescales the depth reading so it matches
 /// the depth the manikin reports.
-/// The trial reuses the firmware's normal session path: SET_TIME is shortened
-/// to 15 seconds, CALIBRATE runs the baseline, START begins the trial, and the
-/// firmware's own FINAL_SUMMARY supplies the mean depth. The practice duration
-/// is restored before the screen is left.
-/// The firmware does not acknowledge CALIBRATE_TARGET over BLE, so the last
-/// state says the command was sent and asks for a check on the next run rather
-/// than claiming the value was stored.
+///
+/// The trial runs as a multi-step workflow:
+/// 1. Baseline Zeroing: Trainee rests hands motionless on chest (CALIBRATE).
+/// 2. Ready Confirmation: Trainee positions hands and taps 'Start 15 s Trial'.
+/// 3. Compression Trial: 15 seconds of active CPR compressions (START).
+/// 4. Summary & Target Entry: Firmware's FINAL_SUMMARY provides the mean depth,
+///    and trainee inputs reference depth from manikin.
+/// 5. Calibration Saved: CALIBRATE_TARGET is committed to NVS.
+///
+/// Disconnections and link timeouts are trapped gracefully without crashing
+/// or leaking practice duration settings into regular practice sessions.
 
 import 'dart:async';
 
@@ -22,7 +27,15 @@ import '../../core/feedback/metric_feedback.dart';
 import '../../core/metrics/cpr_metrics.dart';
 import '../../widgets/widgets.dart';
 
-enum _Stage { intro, preparing, running, enterTarget, sent, error }
+enum _Stage {
+  intro,
+  zeroing,
+  ready,
+  running,
+  enterTarget,
+  sent,
+  error,
+}
 
 /// Manikin depth calibration screen.
 class ManikinCalibrationScreen extends StatefulWidget {
@@ -63,76 +76,90 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     super.didChangeDependencies();
     if (_controller != null) return;
     _controller = AppScope.of(context);
+    _controller!.addListener(_onConnectionChanged);
     _sub = _controller!.packets.listen(_onPacket);
   }
 
+  void _onConnectionChanged() {
+    if (!mounted) return;
+    final BleController? controller = _controller;
+    if (controller == null || !controller.isConnected) {
+      if (_stage == _Stage.zeroing || _stage == _Stage.running) {
+        _stopTimers();
+        _trialActive = false;
+        setState(() {
+          _stage = _Stage.error;
+          _error = AppStrings.manikinNoDeviceConnected;
+        });
+      }
+    }
+  }
+
   // -------------------------------------------------------------------------
-  // Trial
+  // Workflow Steps
   // -------------------------------------------------------------------------
 
-  /// Starts the 15-second manikin depth calibration trial.
+  /// Step 1: Zero Baseline
   ///
-  /// Sends SET_TIME:15 to firmware, then waits for firmware's CALIBRATE completion
-  /// (packetCalibrationDone) before beginning the trial. If calibration doesn't
-  /// complete within the timeout, shows a specific error rather than the generic
-  /// "trial did not finish" message.
-  Future<void> _startTrial() async {
+  /// Sends SET_TIME:15 and CALIBRATE to firmware. The software queue in
+  /// BleController paces both commands safely.
+  Future<void> _startZeroing() async {
     final BleController? controller = _controller;
     if (controller == null) return;
 
-    // If a calibration trial is already in progress, don't start another.
-    if (_stage == _Stage.running || _stage == _Stage.enterTarget || _stage == _Stage.sent) {
+    if (!controller.isConnected) {
+      setState(() {
+        _stage = _Stage.error;
+        _error = AppStrings.manikinNoDeviceConnected;
+      });
       return;
     }
 
-    // Send SET_TIME first, then wait for firmware to be ready before sending CALIBRATE.
-    // This prevents two consecutive BLE writes that can destabilize the GATT link.
+    if (_stage == _Stage.zeroing || _stage == _Stage.running) {
+      return;
+    }
+
+    setState(() {
+      _stage = _Stage.zeroing;
+      _error = null;
+      _meanDepth = null;
+      _latest = null;
+      _sending = false;
+      _trialRemaining = AppDurations.manikinTrialSeconds;
+      _target.clear();
+      _targetValid = false;
+    });
+
     try {
       await controller.sendCommand(
         AppBleConfig.commandSetTime(AppDurations.manikinTrialSeconds),
       );
       _durationChanged = true;
-    } catch (error) {
-      debugPrint('Manikin trial SET_TIME failed: $error');
-      _fail();
-      return;
-    }
 
-    // Send CALIBRATE to firmware to begin baseline calibration window.
-    // The firmware will respond with packetCalibrationDone when calibration is ready.
-    try {
       await controller.sendCommand(AppBleConfig.commandCalibrate);
     } catch (error) {
-      debugPrint('Manikin trial CALIBRATE failed: $error');
-      _fail();
+      debugPrint('Manikin zeroing start failed: ');
+      if (mounted) _fail();
       return;
     }
 
-    // Transition to preparing stage so _onPacket() can receive packetCalibrationDone.
-    setState(() {
-      _stage = _Stage.preparing;
-    });
-
-    // Wait for firmware's CALIBRATE completion packet. If it doesn't arrive
-    // within the calibration timeout, the trial cannot start.
     _calibrationTimeout?.cancel();
-    _calibrationTimeout = Timer(Duration(milliseconds: AppDurations.manikinCalibrationTimeoutMs), () {
-      if (!mounted) return;
-      _fail();
-    });
-
-    debugPrint('Manikin trial started: waiting for calibration done (timeout ${AppDurations.manikinCalibrationTimeoutMs}ms)');
+    _calibrationTimeout = Timer(
+      Duration(milliseconds: AppDurations.manikinCalibrationTimeoutMs),
+      () {
+        if (!mounted || _stage != _Stage.zeroing) return;
+        _fail();
+      },
+    );
   }
 
-  Future<void> _beginTrial() async {
+  /// Step 2: Start 15s Active Compression Trial
+  ///
+  /// Trainee taps Start after baseline is verified and hands are in position.
+  Future<void> _startTrialRun() async {
     final BleController? controller = _controller;
-    if (controller == null || !mounted || _stage != _Stage.preparing) return;
+    if (controller == null || !mounted || _stage != _Stage.ready) return;
 
-    // Cancel the calibration timeout since we're beginning the trial.
-    _calibrationTimeout?.cancel();
-    _calibrationTimeout = null;
-
-    // Guard: refuse to begin the trial if no BLE device is connected.
     if (!controller.isConnected) {
       setState(() {
         _stage = _Stage.error;
@@ -144,12 +171,17 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     setState(() {
       _stage = _Stage.running;
       _trialActive = true;
+      _trialRemaining = AppDurations.manikinTrialSeconds;
+      _error = null;
     });
 
+    _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (Timer _) {
       if (!mounted || _trialRemaining <= 0) return;
       setState(() => _trialRemaining -= 1);
     });
+
+    _summaryTimeout?.cancel();
     _summaryTimeout = Timer(AppDurations.manikinSummaryTimeout, () {
       if (!mounted || _stage != _Stage.running) return;
       _fail();
@@ -158,7 +190,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     try {
       await controller.sendCommand(AppBleConfig.commandStart);
     } catch (error) {
-      debugPrint('Manikin trial START failed: $error');
+      debugPrint('Manikin trial START failed: ');
       if (mounted) _fail();
     }
   }
@@ -167,11 +199,13 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     if (!mounted) return;
 
     switch (_stage) {
-      case _Stage.preparing:
+      case _Stage.zeroing:
         if (metrics.packetType == AppBleConfig.packetCalibrationDone) {
           _calibrationTimeout?.cancel();
           _calibrationTimeout = null;
-          unawaited(_beginTrial());
+          setState(() {
+            _stage = _Stage.ready;
+          });
         } else if (metrics.packetType == AppBleConfig.packetError) {
           _fail();
         }
@@ -222,7 +256,6 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     if (!mounted) return;
     setState(() {
       _stage = _Stage.error;
-      // Show specific error based on what failed.
       if (_controller == null || !_controller!.isConnected) {
         _error = AppStrings.manikinNoDeviceConnected;
       } else {
@@ -232,18 +265,27 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   }
 
   Future<void> _abortTrial() async {
+    final BleController? controller = _controller;
+    if (controller == null || !controller.isConnected) return;
     try {
-      await _controller?.sendCommand(AppBleConfig.commandStop);
+      await controller.sendCommand(AppBleConfig.commandStop);
     } catch (error) {
-      debugPrint('Manikin trial stop failed: $error');
+      debugPrint('Manikin trial stop failed: ');
     }
   }
 
-  /// Sends the target depth; the firmware computes and persists the new scale.
+  /// Sends the target depth; firmware persists new K to flash and acknowledges.
   Future<void> _save() async {
     final BleController? controller = _controller;
     final double? depth = double.tryParse(_target.text.trim());
     if (controller == null || depth == null || !_targetValid || _sending) {
+      return;
+    }
+
+    if (!controller.isConnected) {
+      setState(() {
+        _error = AppStrings.manikinNoDeviceConnected;
+      });
       return;
     }
 
@@ -256,7 +298,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
         _sending = false;
       });
     } catch (error) {
-      debugPrint('Manikin target send failed: $error');
+      debugPrint('Manikin target send failed: ');
       if (!mounted) return;
       setState(() {
         _sending = false;
@@ -278,16 +320,18 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     });
   }
 
-  /// Puts the firmware's auto-stop back to the normal practice length.
+  /// Puts the firmware session length back to normal practice (120s).
   Future<void> _restorePracticeDuration() async {
     if (!_durationChanged) return;
     _durationChanged = false;
+    final BleController? controller = _controller;
+    if (controller == null || !controller.isConnected) return;
     try {
-      await _controller?.sendCommand(
+      await controller.sendCommand(
         AppBleConfig.commandSetTime(AppDurations.practiceSessionSeconds),
       );
     } catch (error) {
-      debugPrint('Practice duration restore failed: $error');
+      debugPrint('Practice duration restore failed: ');
     }
   }
 
@@ -302,19 +346,22 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
 
   @override
   void dispose() {
+    _controller?.removeListener(_onConnectionChanged);
     _sub?.cancel();
     _stopTimers();
-    if (_trialActive) {
+    if (_trialActive && _controller != null && _controller!.isConnected) {
       _trialActive = false;
       unawaited(_abortTrial());
     }
-    unawaited(_restorePracticeDuration());
+    if (_durationChanged && _controller != null && _controller!.isConnected) {
+      unawaited(_restorePracticeDuration());
+    }
     _target.dispose();
     super.dispose();
   }
 
   // -------------------------------------------------------------------------
-  // UI
+  // UI Building
   // -------------------------------------------------------------------------
 
   OutlineInputBorder _fieldBorder() {
@@ -329,8 +376,9 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
 
   String get _actionLabel {
     return switch (_stage) {
-      _Stage.intro => AppStrings.manikinStart,
-      _Stage.preparing => AppStrings.manikinPreparing,
+      _Stage.intro => AppStrings.manikinStartZeroing,
+      _Stage.zeroing => AppStrings.manikinPreparing,
+      _Stage.ready => AppStrings.manikinStart,
       _Stage.running => AppStrings.manikinTrialRunning,
       _Stage.enterTarget => AppStrings.manikinSave,
       _Stage.sent => AppStrings.manikinDone,
@@ -340,10 +388,11 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
 
   VoidCallback? get _action {
     return switch (_stage) {
-      _Stage.intro || _Stage.error => () => unawaited(_startTrial()),
+      _Stage.intro || _Stage.error => () => unawaited(_startZeroing()),
+      _Stage.ready => () => unawaited(_startTrialRun()),
       _Stage.enterTarget => _targetValid && !_sending ? _save : null,
       _Stage.sent => () => Navigator.of(context).maybePop(),
-      _Stage.preparing || _Stage.running => null,
+      _Stage.zeroing || _Stage.running => null,
     };
   }
 
@@ -368,6 +417,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: <Widget>[
                     const FlowBackButton(),
                     SizedBox(width: AppSpacing.flowBackTitleGap),
@@ -398,7 +448,9 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   Widget _buildContent() {
     return switch (_stage) {
       _Stage.intro => _buildIntro(),
-      _Stage.preparing || _Stage.running => _buildTrial(),
+      _Stage.zeroing => _buildZeroing(),
+      _Stage.ready => _buildReady(),
+      _Stage.running => _buildRunning(),
       _Stage.enterTarget => _buildTargetEntry(),
       _Stage.sent => _buildSent(),
       _Stage.error => _buildError(),
@@ -406,27 +458,47 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   }
 
   Widget _buildIntro() {
-    return Text(
-      AppStrings.manikinIntroBody,
-      style: AppTypography.style(
-        size: AppTypography.manikinBodySize,
-        weight: FontWeight.normal,
-        color: AppColors.flowHelperText,
-        height: 1.5,
-      ),
-    );
-  }
-
-  Widget _buildTrial() {
-    final bool preparing = _stage == _Stage.preparing;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         Text(
-          preparing
-              ? AppStrings.manikinPreparing
-              : AppStrings.manikinTrialRunning,
+          AppStrings.manikinIntroBody,
+          style: AppTypography.style(
+            size: AppTypography.manikinBodySize,
+            weight: FontWeight.normal,
+            color: AppColors.flowHelperText,
+            height: 1.5,
+          ),
+        ),
+        SizedBox(height: AppSpacing.section),
+        Text(
+          'Step 1: Zero Baseline',
+          style: AppTypography.style(
+            size: AppTypography.manikinLabelSize,
+            weight: FontWeight.bold,
+            color: AppColors.flowHeadingText,
+          ),
+        ),
+        SizedBox(height: AppSpacing.small),
+        Text(
+          'Place the vest flat on the manikin chest. Keep your hands resting motionless on the chest while zeroing.',
+          style: AppTypography.style(
+            size: AppTypography.manikinBodySize,
+            weight: FontWeight.normal,
+            color: AppColors.flowHelperText,
+            height: 1.4,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildZeroing() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text(
+          AppStrings.manikinPreparing,
           textAlign: TextAlign.center,
           style: AppTypography.style(
             size: AppTypography.manikinLabelSize,
@@ -434,38 +506,106 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
             color: AppColors.flowHeadingText,
           ),
         ),
-        if (!preparing) ...<Widget>[
-          SizedBox(height: AppSpacing.manikinSectionGap),
-          Text(
-            '$_trialRemaining',
-            textAlign: TextAlign.center,
-            style: AppTypography.style(
-              size: AppTypography.countdownNumberSize,
-              weight: AppTypography.headingWeight,
-              color: AppColors.flowHeadingText,
-            ),
+        SizedBox(height: AppSpacing.section),
+        const Center(
+          child: CircularProgressIndicator(),
+        ),
+        SizedBox(height: AppSpacing.section),
+        Text(
+          'Calibrating motionless baseline… Keep your hands steady.',
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.manikinBodySize,
+            weight: FontWeight.normal,
+            color: AppColors.flowHelperText,
           ),
-          SizedBox(height: AppSpacing.manikinSectionGap),
-          Text(
-            AppStrings.manikinLiveDepth,
-            textAlign: TextAlign.center,
-            style: AppTypography.style(
-              size: AppTypography.manikinLabelSize,
-              weight: FontWeight.bold,
-              color: AppColors.flowHeadingText,
-            ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReady() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text(
+          'Baseline Calibrated',
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.flowHeadingSize,
+            weight: AppTypography.headingWeight,
+            color: AppColors.connected,
           ),
-          SizedBox(height: AppSpacing.manikinFieldGap),
-          Text(
-            depthText(_latest?.depthCm),
-            textAlign: TextAlign.center,
-            style: AppTypography.style(
-              size: AppTypography.manikinValueSize,
-              weight: AppTypography.headingWeight,
-              color: AppColors.flowHeadingText,
-            ),
+        ),
+        SizedBox(height: AppSpacing.manikinSectionGap),
+        Text(
+          AppStrings.manikinBaselineReady,
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.manikinBodySize,
+            weight: FontWeight.normal,
+            color: AppColors.flowHelperText,
+            height: 1.5,
           ),
-        ],
+        ),
+        SizedBox(height: AppSpacing.section),
+        Text(
+          'Compress continuously for 15 seconds at a steady rate of 100-120 CPM.',
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.manikinBodySize,
+            weight: FontWeight.bold,
+            color: AppColors.flowHeadingText,
+            height: 1.4,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRunning() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text(
+          AppStrings.manikinTrialRunning,
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.manikinLabelSize,
+            weight: FontWeight.bold,
+            color: AppColors.flowHeadingText,
+          ),
+        ),
+        SizedBox(height: AppSpacing.manikinSectionGap),
+        Text(
+          '$_trialRemaining',
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.countdownNumberSize,
+            weight: AppTypography.headingWeight,
+            color: AppColors.flowHeadingText,
+          ),
+        ),
+        SizedBox(height: AppSpacing.manikinSectionGap),
+        Text(
+          AppStrings.manikinLiveDepth,
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.manikinLabelSize,
+            weight: FontWeight.bold,
+            color: AppColors.flowHeadingText,
+          ),
+        ),
+        SizedBox(height: AppSpacing.manikinFieldGap),
+        Text(
+          depthText(_latest?.depthCm),
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.manikinValueSize,
+            weight: AppTypography.headingWeight,
+            color: AppColors.flowHeadingText,
+          ),
+        ),
       ],
     );
   }

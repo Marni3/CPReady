@@ -9,10 +9,66 @@ import '../metrics/cpr_metrics.dart';
 /// High-level connection status surfaced to the UI.
 enum BleStatus { disconnected, scanning, connecting, connected, error }
 
+/// Internal FIFO queue that executes BLE commands sequentially with safety pacing.
+class _CommandQueue {
+  final List<_QueuedCommand> _queue = [];
+  bool _processing = false;
+  static const Duration interCommandPacing = Duration(milliseconds: 150);
+
+  Future<void> enqueue(Future<void> Function() action) {
+    final completer = Completer<void>();
+    _queue.add(_QueuedCommand(action, completer));
+    _processNext();
+    return completer.future;
+  }
+
+  void clear() {
+    for (final item in _queue) {
+      if (!item.completer.isCompleted) {
+        item.completer.completeError(
+          StateError('BLE command cancelled due to disconnection'),
+        );
+      }
+    }
+    _queue.clear();
+  }
+
+  Future<void> _processNext() async {
+    if (_processing || _queue.isEmpty) return;
+    _processing = true;
+
+    while (_queue.isNotEmpty) {
+      final item = _queue.removeAt(0);
+      try {
+        await item.action();
+        if (!item.completer.isCompleted) {
+          item.completer.complete();
+        }
+      } catch (e, st) {
+        if (!item.completer.isCompleted) {
+          item.completer.completeError(e, st);
+        }
+      }
+      if (_queue.isNotEmpty) {
+        await Future<void>.delayed(interCommandPacing);
+      }
+    }
+
+    _processing = false;
+  }
+}
+
+class _QueuedCommand {
+  final Future<void> Function() action;
+  final Completer<void> completer;
+  _QueuedCommand(this.action, this.completer);
+}
+
 /// App-level BLE session state: connection status, live telemetry fan-out,
 /// command sending, and in-memory packet recording for the active session.
 class BleController extends ChangeNotifier {
   final EspBle ble = EspBle();
+  final _CommandQueue _commandQueue = _CommandQueue();
 
   BleStatus status = BleStatus.disconnected;
   String lastError = '';
@@ -50,6 +106,7 @@ class BleController extends ChangeNotifier {
   Stream<CprMetrics> get packets => _packets.stream;
 
   void _handleUnexpectedDisconnect() {
+    _commandQueue.clear();
     if (status == BleStatus.disconnected) return;
     status = BleStatus.error;
     lastError = 'BLE disconnected';
@@ -109,14 +166,14 @@ class BleController extends ChangeNotifier {
       return true;
     } catch (e) {
       status = BleStatus.error;
-      lastError = 'Connection failed: $e';
+      lastError = 'Connection failed: ';
       notifyListeners();
       return false;
     }
   }
 
   /// Error handler for a connect attempt made while Bluetooth is switched off:
-  /// records the error and opens Android's "turn on Bluetooth" prompt.
+  /// records the error and opens Android's 'turn on Bluetooth' prompt.
   Future<void> _handleBluetoothOff() async {
     status = BleStatus.error;
     lastError = AppStrings.bleErrorOff;
@@ -141,7 +198,16 @@ class BleController extends ChangeNotifier {
   }
 
   /// Send a text command to the ESP32 (e.g. START / STOP).
-  Future<void> sendCommand(String command) => ble.sendCommand(command);
+  ///
+  /// Serialized through a sequential FIFO queue with 150ms pacing between
+  /// successive GATT writes to protect the BLE stack and prevent command loss.
+  Future<void> sendCommand(String command) {
+    if (!isConnected) {
+      debugPrint('[BLE] Not connected; skipping command: ');
+      return Future.value();
+    }
+    return _commandQueue.enqueue(() => ble.sendCommand(command));
+  }
 
   /// Runs a packet through the normal fan-out without a device, so widget
   /// tests can drive the live screens.
@@ -165,6 +231,7 @@ class BleController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _commandQueue.clear();
     await _packetSub?.cancel();
     _packetSub = null;
     recording = false;
@@ -176,6 +243,7 @@ class BleController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _commandQueue.clear();
     ble.onDisconnected = null;
     _packetSub?.cancel();
     _packets.close();
