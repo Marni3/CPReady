@@ -85,18 +85,8 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       return;
     }
 
-    setState(() {
-      _stage = _Stage.preparing;
-      _error = null;
-      _meanDepth = null;
-      _latest = null;
-      _sending = false;
-      _trialRemaining = AppDurations.manikinTrialSeconds;
-      _target.clear();
-      _targetValid = false;
-    });
-
-    // Send SET_TIME to firmware for the 15-second trial duration.
+    // Send SET_TIME first, then wait for firmware to be ready before sending CALIBRATE.
+    // This prevents two consecutive BLE writes that can destabilize the GATT link.
     try {
       await controller.sendCommand(
         AppBleConfig.commandSetTime(AppDurations.manikinTrialSeconds),
@@ -117,6 +107,11 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       _fail();
       return;
     }
+
+    // Transition to preparing stage so _onPacket() can receive packetCalibrationDone.
+    setState(() {
+      _stage = _Stage.preparing;
+    });
 
     // Wait for firmware's CALIBRATE completion packet. If it doesn't arrive
     // within the calibration timeout, the trial cannot start.
