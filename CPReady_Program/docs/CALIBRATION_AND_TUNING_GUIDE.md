@@ -106,40 +106,47 @@ Before compressions begin, the system must capture static gravity. Sending `"CAL
 
 ---
 
-## 5. Phase 3: The 15-Second Two-Stage Manikin Calibration Protocol
+## 5. Phase 3: The 15-Second Decoupled Manikin Calibration Protocol
 
 Because CPR manikins (e.g., Laerdal Little Anne, Prestan) report **session mean depth** at the end of a trial, calibration is performed using this standardized **15-second comparative run**:
 
 ```
 +---------------------------------------------------------------------------------+
-|                       THE 15-SECOND CALIBRATION PROTOCOL                        |
+|                   DECOUPLED 15-SECOND CALIBRATION WORKFLOW                      |
 +---------------------------------------------------------------------------------+
-| Stage 1: Reference Manikin Run (No Vest)                                        |
-| 1. Perform 15 seconds of steady CPR directly on the manikin (to the clicker).   |
-| 2. Read the manikin's reported Mean Depth (e.g. D_manikin = 5.2 cm).             |
+| Step 1: Reference Manikin Run (No Vest or Mechanical Clicker Target)           |
+| Perform steady compressions directly on the manikin to establish ground truth   |
+| (e.g. D_manikin = 5.2 cm from the manikin app or 5.0 cm on mechanical clicker). |
 |                                                                                 |
-| Stage 2: CPReady Vest Trial Run                                                 |
-| 1. Put on the CPReady vest.                                                     |
-| 2. Deliver 15 seconds of steady CPR (SET_TIME:15 & START).                      |
-| 3. Read CPReady's reported Mean Depth (e.g. D_vest = 4.4 cm).                   |
+| Step 2: Zero Resting Baseline (Vest on Manikin Chest)                           |
+| 1. Place the CPReady vest flat on the manikin's chest plate.                    |
+| 2. Rest hands lightly on the chest handpiece.                                   |
+| 3. Tap "Zero Baseline" in the app (sends SET_TIME:15 and CALIBRATE).            |
+| 4. Hold hands completely still for 2.0 seconds until Type 3 Ready is received.  |
 |                                                                                 |
-| Stage 3: Proportional Calibration Calculation                                   |
+| Step 3: 15-Second Guided Vest Trial Run                                         |
+| 1. When the app displays "Baseline Calibrated! Position hands over sternum":    |
+| 2. Tap "Begin 15s Trial" (sends START).                                         |
+| 3. Compress steadily to the clicker depth for 15 seconds.                       |
+| 4. Vest auto-finalizes at 15s, transmits Type 4 summary, and resets duration.   |
+| 5. Read CPReady's reported Mean Depth (e.g. D_vest = 4.40 cm).                  |
 |                                                                                 |
-|             K_new = K_current * ( D_manikin / D_vest )                          |
-|                                                                                 |
-| Example: K_new = 11.2 * (5.2 / 4.4) = 13.24                                     |
-|                                                                                 |
-| Apply K_new via the mobile app or send BLE command: SET_K:13.24                |
+| Step 4: Proportional Calibration & Flash ACK                                    |
+| 1. In the app dialog, enter D_manikin (e.g. 5.2 cm) and tap "Save Calibration".|
+| 2. App sends: CALIBRATE_TARGET:5.2                                              |
+| 3. Vest computes: K_new = K_current * (5.2 / 4.40) = 13.24                     |
+| 4. Vest commits K_new to Flash NVS and notifies Type 3 ACK.                    |
+| 5. App displays "SUCCESS! Calibration saved to vest flash memory".              |
 +---------------------------------------------------------------------------------+
 ```
 
 > [!TIP]
 > **Automated 1-Step Calibration via BLE**:
-> Immediately after completing the 15-second vest run, send:
+> Immediately after completing the 15-second vest run, the mobile app sends:
 > ```text
 > CALIBRATE_TARGET:5.2
 > ```
-> The ESP32 will automatically compute $K_{\text{new}} = K_{\text{current}} \times (5.2 / \bar{D}_{\text{vest}})$, apply it immediately, and **save it to Flash NVS**!
+> The ESP32 calculates $K_{\text{new}} = K_{\text{current}} \times (5.2 / \bar{D}_{\text{vest}})$, commits it to Flash NVS, and immediately returns **Packet Type 3 (`PKT_TYPE_CALIB_SUCCESS`) as an ACK** so the mobile app can confirm successful flash persistence!
 
 ---
 
@@ -148,8 +155,10 @@ Because CPR manikins (e.g., Laerdal Little Anne, Prestan) report **session mean 
 Any calibration performed through the app or BLE is saved directly into the ESP32's **Non-Volatile Storage (Flash Memory)** under the `"cpready"` partition:
 
 * **Saved Across Power Off**: Turning off the vest or disconnecting the battery will **not** lose your calibration.
-* **Boot Restoration**: On boot, the ESP32 logs:
-  `[NVS] Flash configuration loaded: Profile=MANIKIN_STANDARD | Depth K=13.24`
+* **Boot Restoration Order**: At boot (`setup()`), the firmware restores the saved profile *before* restoring the depth scalar $K$. This ensures that user-calibrated $K$ values persist across reboots without being overwritten by profile defaults:
+  ```text
+  [NVS] Flash configuration loaded: Profile=MANIKIN_STANDARD | Depth K=13.24
+  ```
 * **Factory Reset**: Sending `RESET_CONFIG` wipes flash memory and restores the hardcoded defaults (`MANIKIN_STANDARD`, $K=11.2$).
 
 ---
@@ -182,16 +191,16 @@ Send plain-text commands to the BLE Command Characteristic (`6e400003-b5a3-f393-
 
 | BLE Command | What It Does | Stored in Flash? | Example Use Case |
 | :--- | :--- | :---: | :--- |
-| `CALIBRATE_TARGET:<cm>` | Auto-scales $K$ based on prior 15s session mean depth | **Yes** | `CALIBRATE_TARGET:5.2` after a 15s manikin run |
+| `CALIBRATE_TARGET:<cm>` | Auto-scales $K$ based on 15s trial mean depth, saves to NVS, and emits Type 3 ACK | **Yes** | `CALIBRATE_TARGET:5.2` after a 15s manikin run |
 | `SET_K:<val>` | Sets depth scalar $K$ directly | **Yes** | `SET_K:12.5` |
 | `SET_PROFILE:BENCH` | Switches to relaxed bench thresholds (`0.25g` start, `-0.18g` recoil, $K=9.5$) | **Yes** | Testing on a table without a manikin |
 | `SET_PROFILE:MANIKIN` | Restores standard AHA manikin thresholds (`0.45g` start, `-0.35g` recoil, $K=11.2$) | **Yes** | Training trials on training manikin |
 | `RESET_CONFIG` | Clears flash NVS and restores factory defaults | **Yes** | Resetting corrupted settings |
 | `GET_CONFIG` | Prints active profile, $K$, thresholds, and duration to Serial | No | Diagnostics |
-| `SET_TIME:<sec>` | Sets trial duration in seconds | In RAM | `SET_TIME:15` for calibration run |
+| `SET_TIME:<sec>` | Sets trial duration in seconds (auto-reverts to 120s on disconnect/end) | In RAM | `SET_TIME:15` for calibration run |
 | `CALIBRATE` | Triggers stationary 2.0s baseline calibration | In RAM | Pre-session setup |
 | `START` | Begins active practice session | In RAM | After calibration completes |
-| `STOP` | Ends active session & transmits final summary | In RAM | Early completion |
+| `STOP` | Ends active session, resets duration to 120s & transmits final summary | In RAM | Early completion |
 
 ---
 
@@ -216,6 +225,10 @@ Send plain-text commands to the BLE Command Characteristic (`6e400003-b5a3-f393-
 - [ ] **1. Sensor Flatness**: Both MPU chips face UP; chest sensor flush on sternum; base sensor flat beneath the back.
 - [ ] **2. Hardware Scan**: Power on ESP32; confirm PCA9548A multiplexer and both MPU sensors detected on SD3 and SD2.
 - [ ] **3. Profile Selection**: Set to `MANIKIN_STANDARD` for manikin practice (or `BENCH_TEST` for desk experiments).
-- [ ] **4. 15s Comparative Calibration**: Perform 15s run on manikin ($D_{\text{manikin}}$) $\implies$ Perform 15s run with vest ($D_{\text{vest}}$) $\implies$ Send `CALIBRATE_TARGET:<target>` to auto-sync.
+- [ ] **4. 15s Comparative Calibration**:
+  - Rest hands on chest piece $\implies$ Tap "Zero Baseline" (keep still for 2.0s).
+  - Tap "Begin 15s Trial" $\implies$ Compress steadily to the clicker for 15 seconds.
+  - In dialog, enter manikin reported depth (e.g. `5.2 cm`) $\implies$ Tap "Save Calibration".
+  - Confirm green success banner (Packet Type 3 ACK received and $K$ persisted to Flash NVS).
 - [ ] **5. Resting Baseline**: Send `"CALIBRATE"`; confirm 2-second countdown with no error warnings.
 - [ ] **6. Training Run**: Send `"START"`; deliver compressions at ~110 BPM. Confirm reported mean depth at trial completion matches the manikin clicker within $\pm 2$ to 3 mm.

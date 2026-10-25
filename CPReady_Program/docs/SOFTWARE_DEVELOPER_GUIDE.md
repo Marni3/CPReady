@@ -27,7 +27,8 @@ All audio guidance, pacing prompts, and status announcements are handled entirel
 Below are the explicit engineering agreements answering the **"For Technical Verification"** requirements in the student team's protocol specification:
 
 ### 1. Bluetooth Disconnection Handling
-- **Firmware Behavior**: The ESP32 detects client disconnection instantly via `onDisconnect()`. On the very next tick, the firmware clears `tracker.reset()`, resets `state = DeviceState::STANDBY`, and resumes BLE advertising.
+- **Firmware Behavior**: The ESP32 detects client disconnection instantly via `onDisconnect()`. On the very next tick, the firmware clears `tracker.reset()`, resets `state = DeviceState::STANDBY`, auto-heals `practiceDurationSec = DEFAULT_PRACTICE_DURATION_SEC` (120s), and resumes BLE advertising.
+- **Duration Self-Healing**: Regardless of whether the device was in an abbreviated 15-second calibration run or a custom-timed trial, disconnecting immediately restores the default 120-second practice limit. This guarantees that subsequent normal training sessions never experience abrupt 15-second premature terminations.
 - **Flutter Behavior**: When disconnection occurs, Flutter immediately terminates the active session, clears displayed live metrics to avoid showing stale data, and displays the *"Session Interrupted"* notification screen. Interrupted sessions are **not** saved to History.
 - **Reconnection**: The ESP32 resumes advertising immediately. Once re-paired, the instructor can initiate a clean new practice session.
 
@@ -36,14 +37,14 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
   1. Instructor presses and holds "End Session" in Flutter.
   2. Flutter transmits the text string `"STOP"` to the Command Characteristic (`6e400003-...`).
   3. The ESP32 closes the measurement period, computes session averages (average depth, average rate, recoil compliance %, final CCF %, total compressions), and broadcasts a 12-byte summary packet with `packet_type = 4 (PKT_TYPE_FINAL_SUMMARY)`.
-  4. The ESP32 transitions to `STANDBY`.
+  4. The ESP32 transitions to `STANDBY` and self-heals `practiceDurationSec = DEFAULT_PRACTICE_DURATION_SEC` (120s).
   5. Flutter validates the packet, saves the session to local SQLite/Hive storage, and opens the Results screen.
 
 ### 3. Distinguishing Real-Time Telemetry from Finalized Results
 - **Byte 0 of the packet** is an explicit `packet_type`:
   - `1`: Real-time streaming metrics (updated per stroke or at 5 Hz).
   - `2`: Baseline calibration in progress.
-  - `3`: Calibration successfully completed (trigger for app to say *"Begin Compressions"*).
+  - `3`: Calibration successfully completed or calibration target acknowledged (`PKT_TYPE_CALIB_SUCCESS`).
   - `4`: Finalized session summary results (trigger for app to auto-save and open Results).
   - `5`: Error / calibration failed.
 
@@ -68,6 +69,20 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
   4. *Sensor Alignment / Pre-Pressure*: Sternum vs. spine divergence $|a_{\text{chest}} - a_{\text{base}}| \le 0.35\text{g}$.
 - **Calibration Completion**: Once verified, the ESP32 transmits `packet_type = 3 (PKT_TYPE_CALIB_SUCCESS)` and transitions to `CALIBRATED_READY`. Flutter updates the UI to indicate the session is ready.
 - **Starting the Practice Session**: When the instructor taps *"Begin Session"*, Flutter writes `"START"`, and live CPR tracking starts immediately (`packet_type = 1`).
+
+### 7. Manikin Comparative Depth Calibration Protocol
+- **Purpose**: Dynamically tune the vest's depth constant $K$ to match the mechanical travel and spring resistance of specific training manikins (e.g. Laerdal, Prestan).
+- **Dual-Queue Resilience**:
+  - *Firmware*: An 8-entry FreeRTOS FIFO queue (`commandQueue`) in `BleManager` buffers incoming BLE write callbacks, ensuring commands are never dropped during rapid sequences.
+  - *Mobile App*: `BleController._commandQueue` paces all outgoing GATT writes sequentially with an enforced **150ms delay** between transmissions, preventing Android/iOS GATT 133/22 connection drops.
+- **Decoupled 5-Stage Protocol**:
+  1. *Stage 1 (Intro)*: User places vest on manikin and taps "Zero Baseline".
+  2. *Stage 2 (Zeroing)*: App sends `"SET_TIME:15"` followed by `"CALIBRATE"` (150ms paced). ESP32 samples 2.0s resting baseline (`packet_type = 2`).
+  3. *Stage 3 (Ready)*: ESP32 confirms baseline with `packet_type = 3`. App enables "Begin 15s Trial" button, allowing rescuer to position hands over sternum without rushing.
+  4. *Stage 4 (15s Trial)*: Rescuer taps "Begin 15s Trial" (`"START"`). Compressions run for 15s. On timeout, ESP32 auto-finalizes, restores `practiceDurationSec = 120s`, and notifies `packet_type = 4` with measured mean depth $\bar{D}_{\text{vest}}$.
+  5. *Stage 5 (Target Entry & ACK)*: User enters manikin clicker depth $D_{\text{manikin}}$ (e.g., 5.2 cm). App sends `"CALIBRATE_TARGET:5.2"`. ESP32 computes:
+     $$K_{\text{new}} = K_{\text{current}} \times \left(\frac{D_{\text{manikin}}}{\bar{D}_{\text{vest}}}\right)$$
+     commits $K_{\text{new}}$ to Flash NVS, and immediately broadcasts `packet_type = 3 (PKT_TYPE_CALIB_SUCCESS)` as confirmation ACK. App displays the "Calibration Saved!" banner.
 
 ---
 
@@ -300,11 +315,11 @@ The mobile application sends ASCII text commands to control session flow, calibr
 | `GET_RESULTS` | None | Retransmits the last session summary (Type 4) packet. | `GET_RESULTS` |
 | `PAUSE` | None | Temporarily pauses active session timer and CCF accrual. | `PAUSE` |
 | `RESUME` | None | Resumes paused session. | `RESUME` |
-| `SET_TIME:<sec>` | `<sec>` (integer) | Overrides trial duration limit (0 = indefinite). | `SET_TIME:120` |
+| `SET_TIME:<sec>` | `<sec>` (integer) | Overrides trial duration limit (0 = indefinite). **Auto-restores to 120s on session end, abort, STOP, or disconnect.** | `SET_TIME:120` |
 | `SET_K:<val>` | `<val>` (1.0..30.0) | Sets depth harmonic scalar $K$ and persists to flash NVS. | `SET_K:11.2` |
 | `SET_PROFILE:BENCH` | None | Activates bench test thresholds (0.25g start, -0.18g recoil, K=9.5) and persists to NVS. | `SET_PROFILE:BENCH` |
 | `SET_PROFILE:MANIKIN` | None | Activates standard adult manikin thresholds (0.45g start, -0.35g recoil, K=11.2) and persists to NVS. | `SET_PROFILE:MANIKIN` |
-| `CALIBRATE_TARGET:<target>` | `<target>` (float cm) | Performs proportional calibration: $K_{\text{new}} = K \times (\text{target} / \bar{D})$, saves to NVS. | `CALIBRATE_TARGET:5.5` |
+| `CALIBRATE_TARGET:<target>` | `<target>` (float cm) | Performs proportional calibration: $K_{\text{new}} = K \times (\text{target} / \bar{D})$, saves to NVS, and **emits Packet Type 3 (`PKT_TYPE_CALIB_SUCCESS`) ACK**. | `CALIBRATE_TARGET:5.5` |
 | `RESET_CONFIG` | None | Clears flash NVS partition and restores factory defaults. | `RESET_CONFIG` |
 | `GET_CONFIG` | None | Emits current configuration parameters over Serial for debugging. | `GET_CONFIG` |
 
@@ -354,6 +369,7 @@ sequenceDiagram
     Instructor->>App: Press & Hold "End Session"
     App->>ESP32: Write "STOP" to Command Char
     ESP32->>ESP32: Close Window & Aggregate Summary
+    ESP32->>ESP32: Auto-heal practiceDurationSec = 120s
     ESP32->>App: Notify Packet Type 4 (Final Summary Results)
     App->>PhoneSPK: Play Session Complete Chime
     App->>App: Validate & Save to Local History
@@ -370,10 +386,57 @@ sequenceDiagram
     Note over App,ESP32: Active Session Running
     App-xESP32: Bluetooth Connection Lost (Out of range / Battery / OS Kill)
     ESP32->>ESP32: tracker.reset() & state = STANDBY
+    ESP32->>ESP32: Auto-heal practiceDurationSec = 120s
     ESP32->>ESP32: Start Advertising Immediately
     App->>App: Clear displayed metrics
     App->>App: Classify session as Incomplete (Exclude from History)
     App->>App: Open "Session Interrupted" Screen
+```
+
+### 5.3 15-Second Manikin Depth Calibration Workflow
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Instructor
+    actor Trainee
+    participant App as Flutter App
+    participant ESP32 as ESP32 Vest
+    participant NVS as Flash NVS
+
+    Note over Instructor,App: Stage 1: Vest Placed Flat on Manikin Chest
+    Instructor->>App: Tap "Zero Baseline"
+    App->>ESP32: Write "SET_TIME:15" (Enqueued in BleController)
+    Note over App: 150ms Command Queue Safety Delay
+    App->>ESP32: Write "CALIBRATE" (Enqueued in BleController)
+    ESP32->>App: Notify Packet Type 2 (Calibrating Baseline)
+    App->>Instructor: Display "Zeroing Sensors... Keep hands still (2s)"
+    Note over ESP32: Samples 2.0s resting gravity baseline
+
+    ESP32->>App: Notify Packet Type 3 (Calibrated Ready)
+    App->>Instructor: Display Stage 3: "Baseline Calibrated! Position hands over sternum."
+
+    Note over Instructor,App: Stage 2: Ready for 15-Second Compression Trial
+    Instructor->>App: Tap "Begin 15s Trial"
+    App->>ESP32: Write "START"
+    App->>Instructor: Display 15s Countdown & Live Gauges
+
+    loop 15 Seconds Compression Trial
+        Trainee->>ESP32: Compresses to Manikin Clicker Depth
+        ESP32->>App: Notify Packet Type 1 (Live metrics)
+    end
+
+    Note over ESP32: 15.0s Limit Reached -> Auto-Finalize
+    ESP32->>ESP32: Auto-heal practiceDurationSec = 120s
+    ESP32->>App: Notify Packet Type 4 (Final Summary with mean depth)
+    App->>Instructor: Display Stage 5: Reference Depth Entry Dialog (Shows Vest Depth: e.g. 4.40 cm)
+
+    Note over Instructor,App: Stage 3: Enter Reference Depth & Commit
+    Instructor->>App: Enter Manikin Reported Depth (e.g. 5.2 cm) & Tap "Save Calibration"
+    App->>ESP32: Write "CALIBRATE_TARGET:5.2"
+    ESP32->>ESP32: Compute K_new = K_current * (5.2 / 4.40)
+    ESP32->>NVS: Commit K_new to Flash NVS partition
+    ESP32->>App: Notify Packet Type 3 (PKT_TYPE_CALIB_SUCCESS ACK)
+    App->>Instructor: Display Stage 6: "SUCCESS! Calibration saved to flash memory"
 ```
 
 ---

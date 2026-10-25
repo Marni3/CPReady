@@ -6,69 +6,146 @@
 
 ---
 
-## 1. Executive Summary: What Changed in Firmware
+## 1. Executive Summary: What Changed in Firmware & Architecture
 
-The CPReady firmware has recently been updated with three major feature subsystems:
+The CPReady firmware and mobile application have recently been upgraded with five major feature and resilience subsystems:
 
-1. **1-Step Manikin Depth Calibration**: The ESP32 can now auto-calculate and persist its harmonic depth constant $K$ directly into flash memory when provided with a target ground-truth depth from the manikin.
-2. **Dual Kinematic Profiles**: Support for two distinct operating modes—**Adult Manikin Mode** (stiff spring, AHA thresholds) and **Bench Test Mode** (hand/desk pressing, relaxed sensitivity).
-3. **Stroke Quality & Cadence Stability Bitfield (`quality_flags`)**: The BLE telemetry packet is now **12 bytes**, adding real-time flags for rhythm jitter, first-stroke/post-pause recovery, and active profile.
+1. **1-Step Manikin Depth Calibration**: The ESP32 auto-calculates and persists its harmonic depth constant $K$ directly into flash NVS when provided with a target ground-truth depth from the manikin, responding with a Packet Type 3 confirmation ACK.
+2. **Dual-Queue Command Architecture**:
+   - **ESP32 Firmware**: An 8-slot FreeRTOS FIFO queue (`commandQueue`) absorbs rapid command bursts from BLE ISR callbacks without dropping packets.
+   - **Flutter App**: A sequential command queue in `BleController` enforces a **150ms safety pacing delay** between consecutive GATT characteristic writes, preventing Android/iOS GATT Error 133 / 22 link drops.
+3. **Session Duration Self-Healing**: To prevent 15-second calibration runs from corrupting subsequent standard practice runs, `practiceDurationSec` automatically self-heals to `DEFAULT_PRACTICE_DURATION_SEC` (120s) upon session finalization, `STOP`, disconnect, or abort.
+4. **Decoupled Multi-Step Calibration Flow**: Motionless baseline zeroing is completely separated from active compression execution. The user verifies resting baseline first, gets in position, and explicitly initiates the 15-second trial run.
+5. **Dual Kinematic Profiles & 12-Byte Telemetry**:
+   - Runtime switching between **Adult Manikin Mode** (0.45g start, -0.35g recoil, $K=11.2$) and **Bench Test Mode** (0.25g start, -0.18g recoil, $K=9.5$).
+   - 12-byte telemetry packet with `quality_flags` (Byte 11) for cadence stability, first-stroke period bounding, and active profile detection.
 
 ```mermaid
 graph LR
-    A["New Firmware Capabilities"] --> B["1. Manikin Calibration Flow<br/>CALIBRATE_TARGET:cm"]
-    A --> C["2. Profile Mode Switcher<br/>SET_PROFILE:BENCH/MANIKIN"]
-    A --> D["3. Rhythm Stability Warnings<br/>quality_flags: 0x01"]
-
-    B --> F["New Calibration Screen / Dialog"]
-    C --> G["Setup / Mode Selection UI"]
-    D --> H["Live Practice Warning Banner"]
+    A["Firmware & App Upgrades"] --> B["1. Decoupled Calibration Flow<br/>Zeroing -> Ready -> 15s Trial -> Target ACK"]
+    A --> C["2. Dual-Queue Architecture<br/>FreeRTOS Queue + 150ms BLE Pacing"]
+    A --> D["3. Duration Self-Healing<br/>Auto-revert to 120s on disconnect/end"]
+    A --> E["4. Dual Kinematic Profiles<br/>SET_PROFILE:BENCH/MANIKIN"]
+    A --> F["5. Quality Telemetry Bitfield<br/>quality_flags: Byte 11"]
 ```
 
 ---
 
-## 2. Screen 1: Manikin Calibration Flow & Screen
+## 2. Screen 1: Decoupled Manikin Calibration Flow & Screen
 
 ### 2.1 The Problem It Solves
-Different CPR manikins (e.g., Laerdal Little Anne, Prestan Professional) have varying chest spring stiffnesses and friction. The instructor needs a simple, guided 30-second workflow to calibrate the vest to match the manikin's built-in mechanical clicker or proprietary app.
+Different CPR manikins (e.g., Laerdal Little Anne, Prestan Professional) have varying chest spring stiffnesses and mechanical travel. The instructor needs a simple, guided workflow to calibrate the vest to match the manikin's built-in mechanical clicker or reference sensor.
 
-### 2.2 User Journey & Interaction Flow
-The calibration flow consists of three sequential steps:
+Previously, attempting to send `SET_TIME:15` immediately followed by `CALIBRATE` with 0ms delay overwhelmed the BLE stack (GATT 133/22 disconnects) and silently dropped the second command in firmware. Furthermore, running zeroing and compressions in a single rushed screen caused high sensor movement errors.
+
+### 2.2 Decoupled 5-Stage Interaction Flow
 
 ```
-[ Step 1: Pre-Run Setup ]
+[ Stage 1: Intro & Preparation ]
       │
+      │ User taps "Zero Baseline"
       ▼
-[ Step 2: 15-Second Guided Vest Run ] ──(Auto-Stops via SET_TIME:15)
-      │
+[ Stage 2: Motionless Zeroing ] ────(SET_TIME:15 + CALIBRATE via 150ms Queue)
+      │                              Vest captures 2.0s resting gravity baseline
       ▼
-[ Step 3: Reference Input Dialog ] ──("What did the manikin report?")
-      │
+[ Stage 3: Baseline Ready! ] ───────(Packet Type 3: CALIBRATED_READY received)
+      │                              "Baseline Calibrated! Position hands over sternum."
+      │ User taps "Begin 15s Trial"
       ▼
-[ Step 4: Instant Flash NVS Confirmation ]
+[ Stage 4: 15-Second Compression Trial ] ──(START command sent)
+      │                                     Vest streams live metrics, auto-stops at 15s
+      ▼
+[ Stage 5: Reference Depth Entry ] ──(Packet Type 4: Summary received)
+      │                               Displays vest mean depth (e.g. 4.40 cm)
+      │ User enters manikin depth (e.g. 5.2 cm) and taps "Save Calibration"
+      ▼
+[ Stage 6: Confirmed Saved ] ────────(CALIBRATE_TARGET:5.2 -> Packet Type 3 ACK)
+                                     K_new persisted to Flash NVS; Success displayed!
 ```
 
-### 2.3 Proposed UI Wireframe & Layout
+### 2.3 Proposed UI Wireframes & Layouts
 
+#### Stage 1: Intro & Guidelines
 ```
 +-------------------------------------------------------+
 |  <- Back              Manikin Calibration             |
 +-------------------------------------------------------+
 |                                                       |
-|  [ Step 1 of 2: Practice Run ]                        |
-|  Perform 15 seconds of compressions to the manikin's  |
-|  built-in clicker depth.                              |
+|  [ Instructions ]                                     |
+|  1. Lay the CPReady vest flat on the manikin chest.   |
+|  2. Rest your hands lightly on the sensor piece.      |
+|  3. Tap "Zero Baseline" and keep hands still for 2s.  |
+|                                                       |
+|               +-----------------------+               |
+|               |       STEP 1 / 3      |               |
+|               |    SENSOR ZEROING     |               |
+|               +-----------------------+               |
+|                                                       |
+|               [    ZERO BASELINE    ]                 |
+|                                                       |
++-------------------------------------------------------+
+```
+
+#### Stage 2: Motionless Zeroing (2.0s)
+```
++-------------------------------------------------------+
+|  <- Back              Manikin Calibration             |
++-------------------------------------------------------+
+|                                                       |
+|                 Calibrating Baseline...               |
+|        Keep hands completely still on the sensor.     |
+|                                                       |
+|               +-----------------------+               |
+|               |         2 s           |               |
+|               |   ZEROING SENSORS     |               |
+|               +-----------------------+               |
+|                                                       |
+|               [  Zeroing in progress...  ] (Disabled) |
+|                                                       |
++-------------------------------------------------------+
+```
+
+#### Stage 3: Baseline Ready Confirmation
+```
++-------------------------------------------------------+
+|  <- Back              Manikin Calibration             |
++-------------------------------------------------------+
+|                                                       |
+|  ✓ Baseline Calibrated!                               |
+|  Position your hands over the sternum and prepare     |
+|  to compress to the manikin clicker depth.            |
 |                                                       |
 |               +-----------------------+               |
 |               |         15 s          |               |
+|               |    TRIAL DURATION     |               |
+|               +-----------------------+               |
+|                                                       |
+|               [   BEGIN 15s TRIAL   ]                 |
+|                                                       |
++-------------------------------------------------------+
+```
+
+#### Stage 4: 15-Second Compression Trial Run
+```
++-------------------------------------------------------+
+|  <- Back              Manikin Calibration             |
++-------------------------------------------------------+
+|                                                       |
+|                   Compressing to Clicker...           |
+|                                                       |
+|               +-----------------------+               |
+|               |         11 s          |               |
 |               |    TIME REMAINING     |               |
 |               +-----------------------+               |
 |                                                       |
-|               [  START CALIBRATION TRIAL  ]           |
+|                  RATE: 110 cpm                        |
+|                  DEPTH: 4.5 cm                        |
 |                                                       |
 +-------------------------------------------------------+
-                         │
-                         ▼ (Trial Ends)
+```
+
+#### Stage 5: Reference Input & Calibration Commit
+```
 +-------------------------------------------------------+
 |  CALIBRATION TRIAL COMPLETE                           |
 +-------------------------------------------------------+
@@ -83,34 +160,41 @@ The calibration flow consists of three sequential steps:
 |                                                       |
 |        [ CANCEL ]             [ SAVE CALIBRATION ]    |
 +-------------------------------------------------------+
-                         │
-                         ▼ (On Save Tap)
+```
+
+#### Stage 6: Instant Flash Confirmation (Packet Type 3 ACK)
+```
 +-------------------------------------------------------+
 |  SUCCESS!                                             |
 |  Calibration saved to vest flash memory.              |
-|  New Scale Factor: K = 13.24                          |
+|  Scale factor updated and persisted across reboots.   |
 |                                                       |
 |                   [ RETURN TO HOME ]                  |
 +-------------------------------------------------------+
 ```
 
 ### 2.4 BLE Protocol Sequence
-1. When the instructor taps **"Start Calibration Trial"**:
-   - App writes `"SET_TIME:15"` to Command Characteristic (`6e400003-...`).
-   - App writes `"CALIBRATE"` to initiate 2.0s baseline.
-   - Once `packet_type == 3` (Success), app writes `"START"`.
-2. Compressions occur for 15 seconds.
-3. Once timer reaches 15 seconds:
+1. When user taps **"Zero Baseline"**:
+   - App enqueues `"SET_TIME:15"` in `BleController._commandQueue`.
+   - App enqueues `"CALIBRATE"` in `BleController._commandQueue` (sent 150ms later).
+   - ESP32 processes both commands via FreeRTOS queue without packet loss.
+   - ESP32 broadcasts `packet_type == 2` during 2.0s stationary baseline sampling.
+2. When baseline passes validation:
+   - ESP32 transmits `packet_type == 3 (PKT_TYPE_CALIB_SUCCESS)`.
+   - App transitions UI to **Stage 3 (Baseline Ready)**.
+3. When user taps **"Begin 15s Trial"**:
+   - App enqueues `"START"`.
+   - ESP32 begins active session, streaming live metrics (`packet_type == 1`).
+4. At 15 seconds:
    - ESP32 automatically finalizes, transmits `packet_type = 4 (PKT_TYPE_FINAL_SUMMARY)`, and returns to `STANDBY`.
-   - App displays the dialog with the vest's measured depth (`summary.depthCm`).
-4. Instructor inputs the manikin's ground truth (e.g. `5.2`) and taps **"Save Calibration"**:
-   - App writes:
-     ```text
-     CALIBRATE_TARGET:5.2
-     ```
+   - ESP32 automatically restores `practiceDurationSec = DEFAULT_PRACTICE_DURATION_SEC` (120s).
+   - App displays the depth entry dialog with the vest's measured mean depth (`summary.depthCm`).
+5. Instructor inputs the manikin's ground truth (e.g. `5.2`) and taps **"Save Calibration"**:
+   - App enqueues `CALIBRATE_TARGET:5.2`.
    - The ESP32 calculates:
      $$K_{\text{new}} = K_{\text{current}} \times \left(\frac{5.2}{\bar{D}_{\text{vest}}}\right)$$
-   - The ESP32 persists $K_{\text{new}}$ into Flash NVS (survives power off).
+   - The ESP32 writes $K_{\text{new}}$ to Flash NVS and notifies `packet_type = 3 (PKT_TYPE_CALIB_SUCCESS)` as an immediate confirmation ACK.
+   - App displays the success screen and allows returning home.
 
 ---
 
@@ -216,21 +300,21 @@ bool isBenchModeActive(int flags)        => (flags & 0x04) != 0; // Bit 2
 
 ## 5. Complete BLE Command Reference for Mobile Developers
 
-All commands are sent as plain ASCII strings to the **Command Characteristic** (`6e400003-b5a3-f393-e0a9-e50e24dcca9e`):
+All commands are sent as plain ASCII strings to the **Command Characteristic** (`6e400003-b5a3-f393-e0a9-e50e24dcca9e`). Commands are enqueued in `BleController._commandQueue` with a **150ms safety pacing delay** between consecutive writes and received by a depth-8 FreeRTOS queue on the ESP32:
 
 | Command String | Arguments | Use Case in Mobile UI |
 | :--- | :--- | :--- |
-| `"CALIBRATE"` | None | User taps "Calibrate Hands" or enters Hand Placement screen. Starts 2.0s zero-gravity baseline. |
-| `"START"` | None | User taps "Begin Session". Allowed only after `packet_type == 3` (Calib Success). |
-| `"STOP"` | None | User presses and holds "End Session". Triggers Type 4 summary packet. |
+| `"CALIBRATE"` | None | User taps "Zero Baseline" or enters Hand Placement screen. Starts 2.0s zero-gravity baseline. |
+| `"START"` | None | User taps "Begin Session" or "Begin 15s Trial". Allowed only after `packet_type == 3` (Calib Success). |
+| `"STOP"` | None | User presses and holds "End Session". Triggers Type 4 summary packet and restores 120s duration. |
 | `"PAUSE"` | None | User taps "Pause Session". Pauses timer and CCF accrual. |
 | `"RESUME"` | None | User taps "Resume Session". Restores live monitoring. |
 | `"GET_RESULTS"` | None | Used if Type 4 packet was missed or dropped during disconnect. Requests immediate re-broadcast. |
-| `"SET_TIME:<sec>"` | `<sec>` (Integer) | Sets automatic practice duration (e.g. `"SET_TIME:120"` for 2 min, `"SET_TIME:15"` for calibration, `"SET_TIME:0"` for unlimited). |
-| `"SET_K:<val>"` | `<val>` (Float: `1.0..30.0`) | Directly sets depth scalar $K$ and persists to flash (e.g. `"SET_K:11.2"`). |
-| `"SET_PROFILE:BENCH"` | None | Switches to relaxed hand/desk testing thresholds. Persists to flash. |
-| `"SET_PROFILE:MANIKIN"` | None | Switches to standard adult manikin spring thresholds. Persists to flash. |
-| `"CALIBRATE_TARGET:<cm>"` | `<cm>` (Float: e.g. `5.2`) | Auto-computes $K_{\text{new}} = K \times (\text{target} / \bar{D})$ and persists to flash. |
+| `"SET_TIME:<sec>"` | `<sec>` (Integer) | Sets automatic practice duration (e.g. `"SET_TIME:120"` for 2 min, `"SET_TIME:15"` for calibration, `"SET_TIME:0"` for unlimited). **Self-heals to 120s on session end, abort, STOP, or disconnect.** |
+| `"SET_K:<val>"` | `<val>` (Float: `1.0..30.0`) | Directly sets depth scalar $K$ and persists to flash NVS (e.g. `"SET_K:11.2"`). |
+| `"SET_PROFILE:BENCH"` | None | Switches to relaxed hand/desk testing thresholds. Persists to flash NVS. |
+| `"SET_PROFILE:MANIKIN"` | None | Switches to standard adult manikin spring thresholds. Persists to flash NVS. |
+| `"CALIBRATE_TARGET:<cm>"` | `<cm>` (Float: e.g. `5.2`) | Auto-computes $K_{\text{new}} = K \times (\text{target} / \bar{D})$, persists to flash, and **emits Packet Type 3 (`PKT_TYPE_CALIB_SUCCESS`) ACK**. |
 | `"RESET_CONFIG"` | None | Clears flash storage partition and resets firmware to factory defaults (`MANIKIN_STANDARD`, $K=11.2$). |
 | `"GET_CONFIG"` | None | Emits current configuration parameters over ESP32 Serial console. |
 
@@ -244,7 +328,7 @@ Copy-paste this updated parser into your Flutter app's BLE service layer:
 import 'dart:typed_data';
 
 class CPRMetrics {
-  final int packetType;         // 1=Live, 2=Calib Progress, 3=Calib Success, 4=Summary, 5=Error
+  final int packetType;         // 1=Live, 2=Calib Progress, 3=Calib Success / ACK, 4=Summary, 5=Error
   final bool recoilComplete;    // (If packetType == 1: true=Full Recoil, false=Leaning)
   final int recoilPercentage;   // (If packetType == 4: 0..100%)
   final int rateCpm;            // Current or average rate (cpm)
@@ -314,14 +398,22 @@ class CPRMetrics {
 
 ## 7. Summary Checklist for Flutter Developers
 
-- [ ] **Create Calibration Screen / Dialog**:
-  - Implement 15-second guided run (`SET_TIME:15`, `START`).
-  - Capture user input for reference depth ($D_{\text{manikin}}$).
-  - Transmit `CALIBRATE_TARGET:<val>` and show success banner.
+- [ ] **Sequential Command Queue**:
+  - Route all `writeCharacteristic` calls through `_CommandQueue` in `BleController` with 150ms safety pacing between writes.
+  - Guard `sendCommand` against `!isConnected` to prevent unhandled write exceptions on disconnect.
+- [ ] **Decoupled Calibration Flow (`ManikinCalibrationScreen`)**:
+  - Implement Stage 1: Intro / Setup guidelines with "Zero Baseline" button.
+  - Implement Stage 2: 2.0s motionless baseline zeroing (`SET_TIME:15` + `CALIBRATE`).
+  - Implement Stage 3: Baseline Calibrated Ready! confirmation with "Begin 15s Trial" button (`START`).
+  - Implement Stage 4: 15-second guided compression trial with countdown and live gauges.
+  - Implement Stage 5: Reference depth entry dialog ($D_{\text{manikin}}$) showing vest mean depth ($D_{\text{vest}}$).
+  - Implement Stage 6: Success confirmation banner upon receiving `PKT_TYPE_CALIB_SUCCESS` (Packet Type 3 ACK) following `CALIBRATE_TARGET:<target>`.
+  - Guard screen disposal against sending cleanup commands if disconnected.
+  - Unwrap screen from `FlowConnectionGuard` modal dialogs to avoid jarring disconnect ejections.
 - [ ] **Add Mode Selector**:
   - Add segmented control / radio buttons for **Adult Manikin** vs. **Bench Test** mode.
   - Send `SET_PROFILE:MANIKIN` or `SET_PROFILE:BENCH`.
 - [ ] **Add Cadence Warning Pill in Live Practice**:
-  - Check `isSteadyCadence`. Show warning when `false`.
+  - Check `isSteadyCadence`. Show yellow warning pill when `false`.
 - [ ] **Update Packet Parser**:
   - Adopt 12-byte `CPRMetrics.fromBytes()` with `quality_flags`.
