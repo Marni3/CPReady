@@ -27,6 +27,7 @@ void endAndFinalizeSession(uint32_t now) {
     Serial.println("[FLOW] Finalizing CPR practice session...");
     state = DeviceState::STANDBY;
     sensors.resetCalibration();
+    practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
 
     #if ENABLE_DEMO_MODE
     CPRSessionSummary summary;
@@ -148,8 +149,12 @@ void onReceiveMessage_BLE(String message) {
         if (tracker.calibrateFromLastSummary(targetCm, newK)) {
             prefs.putFloat("depth_k", newK);
             Serial.printf("[CALIB] Auto-calibrated scalar K to %.2f based on target %.2f cm (persisted to flash)\n", newK, targetCm);
+            CPRMetricsPacket calibDonePkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0, CADENCE_FLAG_STEADY};
+            ble.sendPacket(calibDonePkt);
         } else {
             Serial.printf("[CALIB ERR] Failed to calibrate target %.2f cm: no valid completed session depth found!\n", targetCm);
+            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0, 0};
+            ble.sendPacket(errPkt);
         }
     }
     else if (message == "RESET_CONFIG") {
@@ -176,11 +181,12 @@ void setup() {
     Serial.println("=========================================");
 
     // Initialize Flash NVS Preferences & Load Calibrated Parameters
+    // Note: setProfile resets depthCalibrationK to profile default, so setProfile MUST run before setDepthK.
     prefs.begin(CPReadyConfig::NVS_NAMESPACE, false);
     float savedK = prefs.getFloat("depth_k", CPReadyConfig::DEPTH_CALIBRATION_K);
     uint8_t savedProfile = prefs.getUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
-    tracker.setDepthK(savedK);
     tracker.setProfile((CPReadyConfig::KinematicProfile)savedProfile);
+    tracker.setDepthK(savedK);
     Serial.printf("[NVS] Flash configuration loaded: Profile=%s | Depth K=%.2f\n",
         savedProfile == (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST ? "BENCH_TEST" : "MANIKIN_STANDARD", savedK);
 
@@ -226,6 +232,7 @@ void loop() {
 
     // 1. Check for Bluetooth Disconnection during active operation
     if (ble.checkAndClearDisconnectionEvent()) {
+        practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
         if (state == DeviceState::CALIBRATING || state == DeviceState::ACTIVE_SESSION || 
             state == DeviceState::SESSION_PAUSED || state == DeviceState::CALIBRATED_READY) {
             Serial.println("[BLE WARN] Disconnected during active session! Immediately aborting.");
@@ -236,9 +243,11 @@ void loop() {
     }
 
     // 2. Process incoming BLE string commands safely in the main thread
-    if (ble.hasPendingCommand()) {
+    while (ble.hasPendingCommand()) {
         String cmd = ble.consumeCommand();
-        onReceiveMessage_BLE(cmd);
+        if (cmd.length() > 0) {
+            onReceiveMessage_BLE(cmd);
+        }
     }
 
     // State: CALIBRATING (Trainee rests hands idle on chest for configured duration)

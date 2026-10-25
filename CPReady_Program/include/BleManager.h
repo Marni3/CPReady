@@ -9,6 +9,9 @@
 #include "CPReadyConfig.h"
 #include "BLEReadings.h"
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+
 class BleManager : public BLEServerCallbacks, public BLECharacteristicCallbacks {
 private:
     BLEServer* pServer;
@@ -16,9 +19,8 @@ private:
     BLECharacteristic* pCommandChar;
     bool isClientConnected;
     
-    // Single-thread bridge mailbox for string commands
-    volatile bool hasCommandFlag;
-    char mailboxString[64];
+    // Thread-safe FIFO queue for string commands
+    QueueHandle_t commandQueue;
 
     // Single-thread bridge flag for disconnection events
     volatile bool hasDisconnectedFlag;
@@ -37,20 +39,20 @@ private:
     // Executed in FreeRTOS background task context when Flutter writes a command
     void onWrite(BLECharacteristic* pChar) override {
         std::string rxVal = pChar->getValue();
-        if (rxVal.length() > 0 && !hasCommandFlag) {
-            size_t copyLen = rxVal.length();
-            if (copyLen > 63) copyLen = 63;
-            memcpy((void*)mailboxString, rxVal.data(), copyLen);
-            mailboxString[copyLen] = '\0';
-            hasCommandFlag = true; // Signal main loop thread
+        if (rxVal.length() > 0 && commandQueue != nullptr) {
+            char cmdBuf[64];
+            size_t copyLen = rxVal.length() < 63 ? rxVal.length() : 63;
+            memcpy(cmdBuf, rxVal.data(), copyLen);
+            cmdBuf[copyLen] = '\0';
+            xQueueSend(commandQueue, cmdBuf, 0);
         }
     }
 
 public:
     BleManager() 
         : pServer(nullptr), pNotifyChar(nullptr), pCommandChar(nullptr),
-          isClientConnected(false), hasCommandFlag(false), hasDisconnectedFlag(false) {
-        mailboxString[0] = '\0';
+          isClientConnected(false), commandQueue(nullptr), hasDisconnectedFlag(false) {
+        commandQueue = xQueueCreate(8, 64);
     }
 
     void begin(const char* deviceName = CPReadyConfig::BLE_DEVICE_NAME) {
@@ -96,12 +98,16 @@ public:
     }
 
     // Checked inside main single-threaded loop()
-    bool hasPendingCommand() const { return hasCommandFlag; }
+    bool hasPendingCommand() const {
+        return commandQueue != nullptr && (uxQueueMessagesWaiting(commandQueue) > 0);
+    }
 
     String consumeCommand() {
-        String msg = String((char*)mailboxString);
-        hasCommandFlag = false; // Reset mailbox
-        return msg;
+        char cmdBuf[64] = {0};
+        if (commandQueue != nullptr && xQueueReceive(commandQueue, cmdBuf, 0) == pdTRUE) {
+            return String(cmdBuf);
+        }
+        return String();
     }
 
     // Checked inside main loop() to abort active session on disconnection

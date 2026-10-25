@@ -186,6 +186,7 @@ static void endSimSession(uint32_t now, const char* reason) {
     simBle.sendPacket(pkt);
     simState     = DeviceState::STANDBY;
     simLastPhase = -1;
+    simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
 
     Serial.printf("[FINAL TX] %s | Rate %.0f cpm | Depth %.2f cm | Recoil %.0f%% | "
                   "CCF %.0f%% | Strokes %u | Time %u s\n",
@@ -283,10 +284,12 @@ static void handleBleCommand(String message) {
             simPrefs.putFloat("depth_k", newK);
             Serial.printf("[CALIB] Target %.2f cm scales K %.2f -> %.2f.\n",
                           targetCm, previousK, newK);
+            simBle.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
         }
         else {
             Serial.printf("[CALIB] Target %.2f cm rejected: no completed session depth available.\n",
                           targetCm);
+            simBle.sendPacket(makeErrorPacket());
         }
     }
     else if (message == "RESET_CONFIG") {
@@ -553,6 +556,7 @@ void loop() {
 
     // A dropped link aborts an in-flight session, as in the sensor build.
     if (simBle.checkAndClearDisconnectionEvent()) {
+        simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
         if (simState == DeviceState::CALIBRATING ||
             simState == DeviceState::ACTIVE_SESSION ||
             simState == DeviceState::SESSION_PAUSED ||
@@ -563,8 +567,11 @@ void loop() {
         }
     }
 
-    if (simBle.hasPendingCommand()) {
-        handleBleCommand(simBle.consumeCommand());
+    while (simBle.hasPendingCommand()) {
+        String cmd = simBle.consumeCommand();
+        if (cmd.length() > 0) {
+            handleBleCommand(cmd);
+        }
     }
 
     if (simState == DeviceState::CALIBRATING) {
