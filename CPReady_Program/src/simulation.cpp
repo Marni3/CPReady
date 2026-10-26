@@ -120,6 +120,26 @@ static CPRMetricsPacket makeErrorPacket(uint8_t reason = ERR_NONE) {
     return pkt;
 }
 
+static CPRConfigPacket makeConfigPacket(uint8_t profile, float depthK, uint32_t autoStopDurationSec) {
+    bool isBench = (profile == 1);
+    float defaultK = isBench ? CPReadyConfig::BENCH_DEPTH_CALIBRATION_K : CPReadyConfig::DEPTH_CALIBRATION_K;
+    bool hasCustomK = fabsf(depthK - defaultK) > 0.05f;
+    uint8_t flags = 0;
+    if (isBench) flags |= 0x01;
+    if (hasCustomK) flags |= 0x02;
+
+    CPRConfigPacket cfgPkt{};
+    cfgPkt.packet_type           = PKT_TYPE_CONFIG_REPORT;
+    cfgPkt.profile               = profile;
+    cfgPkt.depth_k_x100          = (uint16_t)roundf(depthK * 100.0f);
+    cfgPkt.config_flags          = flags;
+    cfgPkt.practice_duration_sec = (uint16_t)autoStopDurationSec;
+    cfgPkt.default_duration_sec  = (uint16_t)CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+    cfgPkt.protocol_version      = 1;
+    cfgPkt.reserved              = 0;
+    return cfgPkt;
+}
+
 // ---------------------------------------------------------------------------
 // Flow
 // ---------------------------------------------------------------------------
@@ -272,13 +292,11 @@ static void handleBleCommand(String message) {
     else if (message == "SET_PROFILE:BENCH") {
         simTracker.setProfile(CPReadyConfig::KinematicProfile::BENCH_TEST);
         simPrefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST);
-        simPrefs.putFloat("depth_k", simTracker.getDepthK());
         Serial.printf("[NVS] Profile BENCH_TEST applied (K %.2f).\n", simTracker.getDepthK());
     }
     else if (message == "SET_PROFILE:MANIKIN") {
         simTracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         simPrefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
-        simPrefs.putFloat("depth_k", simTracker.getDepthK());
         Serial.printf("[NVS] Profile MANIKIN_STANDARD applied (K %.2f).\n", simTracker.getDepthK());
     }
     else if (message.startsWith("CALIBRATE_TARGET:")) {
@@ -287,7 +305,11 @@ static void handleBleCommand(String message) {
         float newK = 0.0f;
 
         if (simTracker.calibrateFromLastSummary(targetCm, newK)) {
-            simPrefs.putFloat("depth_k", newK);
+            if (simTracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST) {
+                simPrefs.putFloat("k_bench", newK);
+            } else {
+                simPrefs.putFloat("k_manikin", newK);
+            }
             Serial.printf("[CALIB] Target %.2f cm scales K %.2f -> %.2f.\n",
                           targetCm, previousK, newK);
             simBle.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
@@ -306,6 +328,12 @@ static void handleBleCommand(String message) {
         Serial.println("[NVS] Simulation configuration cleared.");
     }
     else if (message == "GET_CONFIG") {
+        CPRConfigPacket cfgPkt = makeConfigPacket(
+            (uint8_t)simTracker.getProfile(),
+            simTracker.getDepthK(),
+            simPracticeDurationSec
+        );
+        simBle.sendPacket(cfgPkt);
         Serial.printf("[CONFIG] Profile: %s | Depth K: %.2f | Start: %.2fg | Recoil: %.2fg | Duration: %u s\n",
                       profileName(simTracker.getProfile()),
                       simTracker.getDepthK(),
@@ -536,15 +564,25 @@ void setup() {
 
     simPrefs.begin(SimConfig::NVS_NAMESPACE, false);
 
-    const float savedK = simPrefs.getFloat("depth_k", CPReadyConfig::DEPTH_CALIBRATION_K);
     const uint8_t savedProfile = simPrefs.getUChar(
         "profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+    float savedKManikin = simPrefs.getFloat("k_manikin", 0.0f);
+    float savedKBench = simPrefs.getFloat("k_bench", 0.0f);
 
-    // setProfile() restores that profile's default scalar, so the profile is
-    // applied first and the stored scalar afterwards; the reverse order would
-    // discard the stored value.
+    if (savedKManikin <= 0.0f && savedKBench <= 0.0f) {
+        float legacyK = simPrefs.getFloat("depth_k", 0.0f);
+        if (legacyK >= 2.0f && legacyK <= 25.0f) {
+            savedKManikin = legacyK;
+            savedKBench = legacyK;
+        }
+    }
+    if (savedKManikin >= 2.0f && savedKManikin <= 25.0f) {
+        simTracker.setManikinDepthK(savedKManikin);
+    }
+    if (savedKBench >= 2.0f && savedKBench <= 25.0f) {
+        simTracker.setBenchDepthK(savedKBench);
+    }
     simTracker.setProfile((CPReadyConfig::KinematicProfile)savedProfile);
-    simTracker.setDepthK(savedK);
 
     Serial.printf("[NVS] Profile %s | Depth K %.2f\n",
                   profileName(simTracker.getProfile()),
@@ -590,8 +628,9 @@ void loop() {
         updateActiveSession(now, nowMicros);
     }
     else {
-        delay(5);
+        delay(4);
     }
+    delay(1);
 }
 
 #endif // CPREADY_SIMULATION

@@ -121,6 +121,15 @@ public:
         return true;
     }
 
+    // Transmits a 12-byte Type 6 configuration report packet
+    bool sendPacket(const CPRConfigPacket& packet) {
+        if (!isClientConnected || pNotifyChar == nullptr || pServer == nullptr) return false;
+        if (pServer->getConnectedCount() == 0) return false;
+        pNotifyChar->setValue((uint8_t*)&packet, sizeof(CPRConfigPacket));
+        pNotifyChar->notify();
+        return true;
+    }
+
     // Backwards-compatible alias for existing code
     bool sendMetrics(const CPRMetricsPacket& packet) {
         return sendPacket(packet);

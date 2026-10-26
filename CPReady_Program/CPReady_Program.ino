@@ -137,6 +137,8 @@ void onReceiveMessage_BLE(String message) {
         float k = message.substring(6).toFloat();
         if (k >= 1.0f && k <= 30.0f) {
             tracker.setDepthK(k);
+            bool isBench = (tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST);
+            prefs.putFloat(isBench ? "k_bench" : "k_manikin", k);
             prefs.putFloat("depth_k", k);
             Serial.printf("[NVS] Depth calibration scalar K updated to %.2f (persisted to flash)\n", k);
         }
@@ -144,19 +146,19 @@ void onReceiveMessage_BLE(String message) {
     else if (message == "SET_PROFILE:BENCH") {
         tracker.setProfile(CPReadyConfig::KinematicProfile::BENCH_TEST);
         prefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST);
-        prefs.putFloat("depth_k", tracker.getDepthK());
-        Serial.println("[NVS] Kinematic profile set to BENCH_TEST (persisted to flash: start 0.25g, recoil -0.18g, K=9.5)");
+        Serial.printf("[NVS] Kinematic profile set to BENCH_TEST (active K=%.2f)\n", tracker.getDepthK());
     }
     else if (message == "SET_PROFILE:MANIKIN") {
         tracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         prefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
-        prefs.putFloat("depth_k", tracker.getDepthK());
-        Serial.println("[NVS] Kinematic profile set to MANIKIN_STANDARD (persisted to flash: start 0.45g, recoil -0.35g, K=11.2)");
+        Serial.printf("[NVS] Kinematic profile set to MANIKIN_STANDARD (active K=%.2f)\n", tracker.getDepthK());
     }
     else if (message.startsWith("CALIBRATE_TARGET:")) {
         float targetCm = message.substring(17).toFloat();
         float newK = 0.0f;
         if (tracker.calibrateFromLastSummary(targetCm, newK)) {
+            bool isBench = (tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST);
+            prefs.putFloat(isBench ? "k_bench" : "k_manikin", newK);
             prefs.putFloat("depth_k", newK);
             Serial.printf("[CALIB] Auto-calibrated scalar K to %.2f based on target %.2f cm (persisted to flash)\n", newK, targetCm);
             CPRMetricsPacket calibDonePkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0, CADENCE_FLAG_STEADY};
@@ -169,14 +171,34 @@ void onReceiveMessage_BLE(String message) {
     }
     else if (message == "RESET_CONFIG") {
         prefs.clear();
+        tracker.setManikinK(CPReadyConfig::DEPTH_CALIBRATION_K);
+        tracker.setBenchK(CPReadyConfig::BENCH_DEPTH_CALIBRATION_K);
         tracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
-        tracker.setDepthK(CPReadyConfig::DEPTH_CALIBRATION_K);
         practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
         Serial.println("[NVS] Flash cleared! Restored factory defaults (MANIKIN_STANDARD, K=11.2).");
     }
     else if (message == "GET_CONFIG") {
+        bool isBench = (tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST);
+        float defaultK = isBench ? CPReadyConfig::BENCH_DEPTH_CALIBRATION_K : CPReadyConfig::DEPTH_CALIBRATION_K;
+        bool hasCustomK = fabsf(tracker.getDepthK() - defaultK) > 0.05f;
+        uint8_t flags = 0;
+        if (isBench) flags |= 0x01;
+        if (hasCustomK) flags |= 0x02;
+
+        CPRConfigPacket cfgPkt{};
+        cfgPkt.packet_type           = PKT_TYPE_CONFIG_REPORT;
+        cfgPkt.profile               = isBench ? 1 : 0;
+        cfgPkt.depth_k_x100          = (uint16_t)roundf(tracker.getDepthK() * 100.0f);
+        cfgPkt.config_flags          = flags;
+        cfgPkt.practice_duration_sec = (uint16_t)practiceDurationSec;
+        cfgPkt.default_duration_sec  = (uint16_t)CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+        cfgPkt.protocol_version      = 1;
+        cfgPkt.reserved              = 0;
+
+        ble.sendPacket(cfgPkt);
+
         Serial.printf("[CONFIG] Profile: %s | Depth K: %.2f | StartThresh: %.2fg | RecoilThresh: %.2fg | Duration: %d sec\n",
-            tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST ? "BENCH_TEST" : "MANIKIN_STANDARD",
+            isBench ? "BENCH_TEST" : "MANIKIN_STANDARD",
             tracker.getDepthK(), tracker.getCompressionStartThresholdG(), tracker.getRecoilThresholdG(), practiceDurationSec);
     }
     else {
@@ -191,14 +213,26 @@ void setup() {
     Serial.println("=========================================");
 
     // Initialize Flash NVS Preferences & Load Calibrated Parameters
-    // Note: setProfile resets depthCalibrationK to profile default, so setProfile MUST run before setDepthK.
     prefs.begin(CPReadyConfig::NVS_NAMESPACE, false);
-    float savedK = prefs.getFloat("depth_k", CPReadyConfig::DEPTH_CALIBRATION_K);
     uint8_t savedProfile = prefs.getUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+    if (savedProfile > 1) savedProfile = 0;
+
+    // Load per-profile K factors (with legacy fallback to "depth_k")
+    float savedLegacyK = prefs.getFloat("depth_k", CPReadyConfig::DEPTH_CALIBRATION_K);
+    float savedManikinK = prefs.getFloat("k_manikin", savedLegacyK);
+    float savedBenchK = prefs.getFloat("k_bench", CPReadyConfig::BENCH_DEPTH_CALIBRATION_K);
+
+    // Sanity-check bounds to prevent runaway persisted K
+    if (savedManikinK < 2.0f || savedManikinK > 25.0f) savedManikinK = CPReadyConfig::DEPTH_CALIBRATION_K;
+    if (savedBenchK < 2.0f || savedBenchK > 25.0f) savedBenchK = CPReadyConfig::BENCH_DEPTH_CALIBRATION_K;
+
+    tracker.setManikinK(savedManikinK);
+    tracker.setBenchK(savedBenchK);
     tracker.setProfile((CPReadyConfig::KinematicProfile)savedProfile);
-    tracker.setDepthK(savedK);
-    Serial.printf("[NVS] Flash configuration loaded: Profile=%s | Depth K=%.2f\n",
-        savedProfile == (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST ? "BENCH_TEST" : "MANIKIN_STANDARD", savedK);
+
+    Serial.printf("[NVS] Flash configuration loaded: Profile=%s | Manikin K=%.2f | Bench K=%.2f (Active K=%.2f)\n",
+        savedProfile == (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST ? "BENCH_TEST" : "MANIKIN_STANDARD",
+        savedManikinK, savedBenchK, tracker.getDepthK());
 
     #if ENABLE_DEMO_MODE
     Serial.println("[DEMO] *** DEMO / SIMULATION MODE ENABLED ***");

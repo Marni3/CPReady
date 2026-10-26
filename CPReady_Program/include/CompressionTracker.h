@@ -19,6 +19,8 @@ private:
 
     // Runtime Dynamic Configuration
     float depthCalibrationK;
+    float manikinDepthK;
+    float benchDepthK;
     float compressionStartThresholdG;
     float recoilThresholdG;
     CPReadyConfig::KinematicProfile currentProfile;
@@ -34,6 +36,9 @@ private:
     uint32_t goodRecoilCount;
     float    cumulativeDepthSum;
     float    cumulativeRateSum;
+    float    validDepthSum;
+    uint32_t validStrokeCount;
+    bool     summaryAlreadyCalibrated;
     CPRSessionSummary lastFinalSummary;
 
     // Audio Coaching Tracking & Hysteresis
@@ -55,9 +60,14 @@ public:
     CompressionTracker() 
         : state(StrokeState::WAITING_FOR_DOWNSLICK),
           depthCalibrationK(CPReadyConfig::DEPTH_CALIBRATION_K),
+          manikinDepthK(CPReadyConfig::DEPTH_CALIBRATION_K),
+          benchDepthK(CPReadyConfig::BENCH_DEPTH_CALIBRATION_K),
           compressionStartThresholdG(CPReadyConfig::COMPRESSION_START_THRESHOLD_G),
           recoilThresholdG(CPReadyConfig::RECOIL_THRESHOLD_G),
-          currentProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD) {
+          currentProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD),
+          validDepthSum(0.0f),
+          validStrokeCount(0),
+          summaryAlreadyCalibrated(false) {
         reset();
     }
 
@@ -78,6 +88,9 @@ public:
         goodRecoilCount = 0;
         cumulativeDepthSum = 0.0f;
         cumulativeRateSum = 0.0f;
+        validDepthSum = 0.0f;
+        validStrokeCount = 0;
+        summaryAlreadyCalibrated = false;
 
         lastAudioPromptMillis = 0;
         lastTargetPraiseMillis = 0;
@@ -111,24 +124,40 @@ public:
     void setDepthK(float k) {
         if (k >= 1.0f && k <= 30.0f) {
             depthCalibrationK = k;
+            if (currentProfile == CPReadyConfig::KinematicProfile::BENCH_TEST) {
+                benchDepthK = k;
+            } else {
+                manikinDepthK = k;
+            }
         }
     }
     float getDepthK() const { return depthCalibrationK; }
+    float getManikinK() const { return manikinDepthK; }
+    float getBenchK() const { return benchDepthK; }
+    void setManikinK(float k) { if (k >= 1.0f && k <= 30.0f) manikinDepthK = k; }
+    void setBenchK(float k) { if (k >= 1.0f && k <= 30.0f) benchDepthK = k; }
+    void setManikinDepthK(float k) { setManikinK(k); }
+    void setBenchDepthK(float k) { setBenchK(k); }
 
     float getRunningAverageDepth() const {
+        if (validStrokeCount > 0) return validDepthSum / (float)validStrokeCount;
         return totalStrokeCount > 0 ? (cumulativeDepthSum / (float)totalStrokeCount) : 0.0f;
     }
 
     // Proportional comparative calibration: K_new = K_current * (targetDepth / measuredMeanDepth)
     bool calibrateFromLastSummary(float targetDepthCm, float& outNewK) {
-        if (targetDepthCm <= 0.0f || lastFinalSummary.avg_depth_cm <= 0.0f) {
+        if (summaryAlreadyCalibrated || targetDepthCm <= 0.0f || lastFinalSummary.avg_depth_cm <= 0.0f) {
+            return false;
+        }
+        if (lastFinalSummary.total_compressions < 5) {
             return false;
         }
         float ratio = targetDepthCm / lastFinalSummary.avg_depth_cm;
         float newK = depthCalibrationK * ratio;
         if (newK >= 1.0f && newK <= 30.0f) {
-            depthCalibrationK = newK;
+            setDepthK(newK);
             outNewK = newK;
+            summaryAlreadyCalibrated = true;
             return true;
         }
         return false;
@@ -149,11 +178,11 @@ public:
         if (profile == CPReadyConfig::KinematicProfile::BENCH_TEST) {
             compressionStartThresholdG = CPReadyConfig::BENCH_COMPRESSION_START_THRESHOLD_G;
             recoilThresholdG           = CPReadyConfig::BENCH_RECOIL_THRESHOLD_G;
-            depthCalibrationK          = CPReadyConfig::BENCH_DEPTH_CALIBRATION_K;
+            depthCalibrationK          = benchDepthK;
         } else {
             compressionStartThresholdG = CPReadyConfig::COMPRESSION_START_THRESHOLD_G;
             recoilThresholdG           = CPReadyConfig::RECOIL_THRESHOLD_G;
-            depthCalibrationK          = CPReadyConfig::DEPTH_CALIBRATION_K;
+            depthCalibrationK          = manikinDepthK;
         }
     }
     CPReadyConfig::KinematicProfile getProfile() const { return currentProfile; }
@@ -250,18 +279,27 @@ public:
                     }
 
                     // 3. Compute Algebraic Harmonic Depth: D = K * a_pp * T_clamped^2
-                    // Clamping period prevents quadratic explosion during bench testing or after pauses
+                    // Clamping and smoothing prevents quadratic explosion during bench testing or cadence jitter
                     float cyclePeriodSec;
                     if (isPostPause) {
                         // Anchor to typical CPR period (~110 CPM = 0.55s) to eliminate false 10 cm ceilings
                         cyclePeriodSec = CPReadyConfig::FALLBACK_CADENCE_PERIOD_SEC;
+                    } else if (periodHistoryCount >= 3) {
+                        // 3-stroke running median filter on cycle period to reject timing noise
+                        uint16_t p0 = recentCyclePeriods[(periodHistoryIndex + PERIOD_HISTORY_SIZE - 1) % PERIOD_HISTORY_SIZE];
+                        uint16_t p1 = recentCyclePeriods[(periodHistoryIndex + PERIOD_HISTORY_SIZE - 2) % PERIOD_HISTORY_SIZE];
+                        uint16_t p2 = recentCyclePeriods[(periodHistoryIndex + PERIOD_HISTORY_SIZE - 3) % PERIOD_HISTORY_SIZE];
+                        uint16_t med = (p0 <= p1) ? ((p1 <= p2) ? p1 : ((p0 <= p2) ? p2 : p0))
+                                                   : ((p0 <= p2) ? p0 : ((p1 <= p2) ? p2 : p1));
+                        cyclePeriodSec = (float)med / 1000.0f;
                     } else {
                         cyclePeriodSec = (float)rawPeriodMs / 1000.0f;
-                        if (cyclePeriodSec < CPReadyConfig::MIN_CPR_PERIOD_SEC) {
-                            cyclePeriodSec = CPReadyConfig::MIN_CPR_PERIOD_SEC;
-                        } else if (cyclePeriodSec > CPReadyConfig::MAX_CPR_PERIOD_SEC) {
-                            cyclePeriodSec = CPReadyConfig::MAX_CPR_PERIOD_SEC;
-                        }
+                    }
+
+                    if (cyclePeriodSec < CPReadyConfig::MIN_CPR_PERIOD_SEC) {
+                        cyclePeriodSec = CPReadyConfig::MIN_CPR_PERIOD_SEC;
+                    } else if (cyclePeriodSec > CPReadyConfig::MAX_CPR_PERIOD_SEC) {
+                        cyclePeriodSec = CPReadyConfig::MAX_CPR_PERIOD_SEC;
                     }
 
                     float peakToPeakAccel = peakAccel - troughAccel;
@@ -293,6 +331,12 @@ public:
                     }
                     cumulativeDepthSum += reading.depth_cm;
                     cumulativeRateSum += reading.rate_cpm;
+
+                    // Stroke-Qualified Mean accumulation: exclude first-strokes and clamped limit saturation
+                    if (!(flags & CADENCE_FLAG_FIRST_STROKE) && reading.depth_cm < CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
+                        validDepthSum += reading.depth_cm;
+                        validStrokeCount++;
+                    }
 
                     // 7. Audio Coaching Engine Evaluation
                     if (rawPeriodMs > CPReadyConfig::PAUSE_DETECTION_TIMEOUT_MS) {
@@ -449,7 +493,9 @@ public:
                           (CADENCE_FLAG_STEADY | CADENCE_FLAG_BENCH_MODE) : CADENCE_FLAG_STEADY;
         
         if (totalStrokeCount > 0) {
-            s.avg_depth_cm = cumulativeDepthSum / (float)totalStrokeCount;
+            // Stroke-qualified mean ignores hesitant first strokes and physical ceiling clamp artifacts
+            s.avg_depth_cm = (validStrokeCount > 0) ? (validDepthSum / (float)validStrokeCount) 
+                                                    : (cumulativeDepthSum / (float)totalStrokeCount);
             s.avg_rate_cpm = cumulativeRateSum / (float)totalStrokeCount;
             s.recoil_compliance_percent = ((float)goodRecoilCount / (float)totalStrokeCount) * 100.0f;
         } else {
