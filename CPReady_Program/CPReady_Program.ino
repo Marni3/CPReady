@@ -100,8 +100,12 @@ void onReceiveMessage_BLE(String message) {
         }
     }
     else if (message == "STOP") {
-        Serial.println("[FLOW] Stop received from app.");
-        endAndFinalizeSession(millis());
+        if (state == DeviceState::ACTIVE_SESSION || state == DeviceState::SESSION_PAUSED || state == DeviceState::CALIBRATING) {
+            Serial.println("[FLOW] Stop received from app during active operation.");
+            endAndFinalizeSession(millis());
+        } else {
+            Serial.println("[FLOW] Stop received while idle; ignoring to preserve session summary.");
+        }
     }
     else if (message == "GET_RESULTS") {
         Serial.println("[FLOW] Retransmission requested via GET_RESULTS.");
@@ -347,4 +351,7 @@ void loop() {
         // Standby, Calibrated Ready, or Fault Error: yield CPU to feed IDLE and BLE background tasks
         delay(5);
     }
+
+    // Yield CPU slice to feed FreeRTOS BLE stack and IDLE watchdog
+    delay(1);
 }

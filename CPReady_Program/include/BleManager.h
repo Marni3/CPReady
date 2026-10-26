@@ -28,12 +28,39 @@ private:
     void onConnect(BLEServer* pServer) override {
         isClientConnected = true;
         hasDisconnectedFlag = false;
+        Serial.printf("[BLE] Client connected. Active clients: %d\n", pServer->getConnectedCount());
+    }
+
+    void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override {
+        isClientConnected = true;
+        hasDisconnectedFlag = false;
+        Serial.printf("[BLE] Client connected (conn_id=%d). Active clients: %d\n",
+                      param->connect.conn_id, pServer->getConnectedCount());
     }
 
     void onDisconnect(BLEServer* pServer) override {
-        isClientConnected = false;
-        hasDisconnectedFlag = true; // Signal main thread to abort any active session
-        pServer->startAdvertising(); // Resume advertising immediately for re-pairing
+        if (pServer->getConnectedCount() == 0) {
+            isClientConnected = false;
+            hasDisconnectedFlag = true; // Signal main thread to abort any active session
+            pServer->startAdvertising(); // Resume advertising immediately for re-pairing
+            Serial.println("[BLE] Client disconnected. Advertising resumed.");
+        } else {
+            Serial.printf("[BLE] Client disconnect event, but %d client(s) still connected.\n",
+                          pServer->getConnectedCount());
+        }
+    }
+
+    void onDisconnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override {
+        Serial.printf("[BLE] Client disconnect event (conn_id=%d)\n", param->disconnect.conn_id);
+        if (pServer->getConnectedCount() == 0) {
+            isClientConnected = false;
+            hasDisconnectedFlag = true;
+            pServer->startAdvertising();
+            Serial.println("[BLE] All clients disconnected. Advertising resumed.");
+        } else {
+            Serial.printf("[BLE] Stale disconnect for conn_id=%d ignored; %d client(s) still connected.\n",
+                          param->disconnect.conn_id, pServer->getConnectedCount());
+        }
     }
 
     // Executed in FreeRTOS background task context when Flutter writes a command
@@ -51,11 +78,12 @@ private:
 public:
     BleManager() 
         : pServer(nullptr), pNotifyChar(nullptr), pCommandChar(nullptr),
-          isClientConnected(false), commandQueue(nullptr), hasDisconnectedFlag(false) {
-        commandQueue = xQueueCreate(8, 64);
-    }
+          isClientConnected(false), commandQueue(nullptr), hasDisconnectedFlag(false) {}
 
     void begin(const char* deviceName = CPReadyConfig::BLE_DEVICE_NAME) {
+        if (commandQueue == nullptr) {
+            commandQueue = xQueueCreate(8, 64);
+        }
         BLEDevice::init(deviceName);
         pServer = BLEDevice::createServer();
         pServer->setCallbacks(this);
@@ -86,7 +114,8 @@ public:
 
     // Transmits an 11-byte binary packet (realtime, calibration, or final summary)
     bool sendPacket(const CPRMetricsPacket& packet) {
-        if (!isClientConnected || pNotifyChar == nullptr) return false;
+        if (!isClientConnected || pNotifyChar == nullptr || pServer == nullptr) return false;
+        if (pServer->getConnectedCount() == 0) return false;
         pNotifyChar->setValue((uint8_t*)&packet, sizeof(CPRMetricsPacket));
         pNotifyChar->notify();
         return true;
