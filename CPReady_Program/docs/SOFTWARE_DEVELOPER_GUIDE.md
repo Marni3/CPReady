@@ -94,17 +94,32 @@ METRICS CHAR UUID:   6e400002-b5a3-f393-e0a9-e50e24dcca9e  (Notify)
 COMMAND CHAR UUID:   6e400003-b5a3-f393-e0a9-e50e24dcca9e  (Write)
 ```
 
-| Byte Offset | Field Name | Type | Real-Time Meaning (`type=1`) | Final Summary Meaning (`type=4`) |
-| :---: | :--- | :---: | :--- | :--- |
-| **0** | `packet_type` | `uint8` | `1` (Live Stream) | `4` (Finalized Session Results) |
-| **1** | `recoil_status` | `uint8` | `1` = Full Recoil, `0` = Leaning | Overall Recoil Compliance % (`0..100`) |
-| **2..3** | `rate_cpm` | `uint16` | Instantaneous cadence (cpm) | Session Average Cadence (cpm) |
-| **4..5** | `depth_tenths_mm` | `uint16` | Stroke depth in 0.1 mm (e.g. 550 = 55mm) | Session Average Depth in 0.1 mm |
-| **6** | `ccf_percent` | `uint8` | Current cumulative CCF % (`0..100`) | Final Session CCF % (`0..100`) |
-| **7** | `audio_prompt_code` | `uint8` | Audio Guidance Cue Code (`0..6`) | `0` (Unused in summary) |
-| **8** | `total_compressions`| `uint8` | Current stroke sequence count | Total compressions delivered in session |
-| **9..10** | `session_elapsed_sec`| `uint16`| Elapsed session duration (seconds) | Total final session duration (seconds) |
-| **11** | `quality_flags` | `uint8` | Stroke quality bitfield (steady cadence, pause fallback, profile) | Final Session Quality Flags (steady rhythm, bench profile) |
+| Byte Offset | Field Name | Type | Real-Time Meaning (`type=1`) | Final Summary Meaning (`type=4`) | Error Packet (`type=0xFF` / `5`) | Config Packet (`type=6`) |
+| :---: | :--- | :---: | :--- | :--- | :--- | :--- |
+| **0** | `packet_type` | `uint8` | `1` (Live Stream) | `4` (Finalized Results) | `0xFF` / `5` (Error) | `6` (Config Report) |
+| **1** | `recoil_status` | `uint8` | `1` = Full Recoil, `0` = Leaning | Recoil Compliance % (`0..100`) | `0` | Active Profile (`0`=Manikin, `1`=Bench) |
+| **2..3** | `rate_cpm` | `uint16` | Cadence (cpm) | Session Average Cadence (cpm) | `0` | `k_manikin_x1000` (uint16 LE) |
+| **4..5** | `depth_tenths_mm` | `uint16` | Depth in 0.1 mm | Session Trimmed Mean Depth | `0` | `k_bench_x1000` (uint16 LE) |
+| **6** | `ccf_percent` | `uint8` | Cumulative CCF % (`0..100`) | Final Session CCF % (`0..100`) | `0` | Auto-Profile (`1`=on, `0`=off) |
+| **7** | `audio_prompt_code` | `uint8` | Voice Cue (`0..6`) | `0` (Unused) | **Error Reason Code (`0..7`)** | `0` (Reserved) |
+| **8** | `total_compressions`| `uint8` | Stroke sequence count | Total valid compressions | `0` | `0` (Reserved) |
+| **9..10** | `session_elapsed_sec`| `uint16`| Elapsed duration (sec) | Total session duration (sec) | `0` | `0` (Reserved) |
+| **11** | `quality_flags` | `uint8` | Bitfield (steady, first, profile)| Final Quality Flags | `0` | `0` (Reserved) |
+
+### Error Reason Codes (`audio_prompt_code` when `packet_type == 0xFF` or `5`)
+
+When an operation fails or a command cannot be executed, the firmware returns an error packet with the failure reason encoded in Byte 7:
+
+| Error Code | Constant | Meaning / Cause | Recommended UI Action |
+| :---: | :--- | :--- | :--- |
+| **0** | `ERR_NONE` | No error reported. | Dismiss dialogs. |
+| **1** | `ERR_NOT_READY` | System or sensor baseline is not initialized. | Prompt user to wait for sensor boot. |
+| **2** | `ERR_MOTION_UNSTABLE` | Calibration failed: motion jitter > 0.08g or lean detected. | Prompt: *"Keep hands completely still and release pressure."* |
+| **3** | `ERR_CALIBRATION_TIMEOUT`| Calibration watchdog timed out before stability. | Prompt user to verify hand placement and retry. |
+| **4** | `ERR_BUFFER_OVERFLOW` | Sensor FIFO or communication buffer full. | Automatically retry baseline read. |
+| **5** | `ERR_WRONG_STATE` | Command rejected: invalid state (e.g. `CALIBRATE` while running). | Stop active session first. |
+| **6** | `ERR_NO_TRIAL_DATA` | Manikin calibration rejected: no valid trial compressions. | Prompt: *"Deliver at least 5 steady compressions before saving."* |
+| **7** | `ERR_I2C_FAULT` | Hardware I2C bus error communicating with IMU. | Warn: *"Hardware sensor communication error."* |
 
 ### Quality & Cadence Bitfield Flags (`quality_flags`)
 
@@ -320,8 +335,10 @@ The mobile application sends ASCII text commands to control session flow, calibr
 | `SET_PROFILE:BENCH` | None | Activates bench test thresholds (0.25g start, -0.18g recoil, K=9.5) and persists to NVS. | `SET_PROFILE:BENCH` |
 | `SET_PROFILE:MANIKIN` | None | Activates standard adult manikin thresholds (0.45g start, -0.35g recoil, K=11.2) and persists to NVS. | `SET_PROFILE:MANIKIN` |
 | `CALIBRATE_TARGET:<target>` | `<target>` (float cm) | Performs proportional calibration: $K_{\text{new}} = K \times (\text{target} / \bar{D})$, saves to NVS, and **emits Packet Type 3 (`PKT_TYPE_CALIB_SUCCESS`) ACK**. | `CALIBRATE_TARGET:5.5` |
+| `SET_K_MANIKIN:<val>` | `<val>` (1.0..30.0) | Sets manikin-specific depth scalar $K_{\text{manikin}}$ and persists to NVS. | `SET_K_MANIKIN:11.2` |
+| `SET_K_BENCH:<val>` | `<val>` (1.0..30.0) | Sets bench-specific depth scalar $K_{\text{bench}}$ and persists to NVS. | `SET_K_BENCH:9.5` |
 | `RESET_CONFIG` | None | Clears flash NVS partition and restores factory defaults. | `RESET_CONFIG` |
-| `GET_CONFIG` | None | Emits current configuration parameters over Serial for debugging. | `GET_CONFIG` |
+| `GET_CONFIG` | None | Returns Type 6 (`CPRConfigPacket`) over BLE with active profile and dual $K$ constants, and emits config over Serial. | `GET_CONFIG` |
 
 ## 5. Interaction Sequence Diagrams
 

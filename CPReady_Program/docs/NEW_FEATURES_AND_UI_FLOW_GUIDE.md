@@ -417,3 +417,36 @@ class CPRMetrics {
   - Check `isSteadyCadence`. Show yellow warning pill when `false`.
 - [ ] **Update Packet Parser**:
   - Adopt 12-byte `CPRMetrics.fromBytes()` with `quality_flags`.
+  - Expose `int get errorCode => audioPromptCode;` for Error Packets (`0xFF` / `5`).
+- [ ] **Reason-Aware Error Dialogs & Watchdog Cancellation**:
+  - Catch `0xFF` / `5` packets in `CalibrationScreen` and `ManikinCalibrationScreen`.
+  - Cancel any active 6.0s timeout timer immediately upon receiving error packet.
+  - Map `errorCode` (0..7) to clear user messages (e.g. motion detected, wrong state, I2C fault).
+- [ ] **Pre-Stroke Neutral UI Capsules**:
+  - In `metric_feedback.dart`, return `null` / `--` when values $\le 0$ to prevent false red failure indicators before stroke 1.
+- [ ] **BLE Queue Timeout**:
+  - Set a 2500ms timeout on GATT write operations in `_CommandQueue` to prevent queue deadlock if the peripheral drops a write ACK.
+
+---
+
+## 8. Hardened Calibration & Error Handling Subsystem
+
+### 8.1 Elimination of the Instant Failure & Retry Loop
+Previous releases suffered from an issue where tapping "Begin Calibration" immediately showed "Failed to calibrate", and tapping "Retry" instantly reproduced the error:
+1. **Root Cause**: `CalibrationScreen` was attempting `sendCommand('CALIBRATE')` without first verifying `controller.isConnected`. If the connection dropped or had not completed service discovery, the command queue threw `StateError`, instantly transitioning the screen state to `CalibrationState.error`. Tapping "Retry" repeated the exact call against the disconnected controller, immediately re-triggering the failure.
+2. **Hardening**: `CalibrationScreen` and `ManikinCalibrationScreen` now verify `controller.isConnected` proactively before initiating calibration, surface an explicit *"Device disconnected. Please reconnect before calibrating."* message, and listen to `controller.connectionStream` to gracefully update UI state on link drops.
+
+### 8.2 Reason-Aware Error Protocol (Byte 7)
+When calibration or session commands fail, firmware returns Byte 7 with a discrete reason code rather than failing silently:
+* `1` (`ERR_NOT_READY`): IMU baseline not initialized.
+* `2` (`ERR_MOTION_UNSTABLE`): Excessive sensor motion (>0.08g) or leaning during 2-second zeroing.
+* `3` (`ERR_CALIBRATION_TIMEOUT`): Baseline collection exceeded internal timeout.
+* `4` (`ERR_BUFFER_OVERFLOW`): Internal sensor buffer overrun.
+* `5` (`ERR_WRONG_STATE`): Command rejected because firmware is in conflicting state (e.g., `CALIBRATE` received while actively compressing).
+* `6` (`ERR_NO_TRIAL_DATA`): Manikin calibration target rejected because fewer than 5 valid compressions were recorded.
+* `7` (`ERR_I2C_FAULT`): Physical I2C bus error communicating with MPU6050.
+
+### 8.3 3-Stroke Running Median Depth Smoothing & Trimmed Mean
+To solve the issue of erratic depth readings during rhythm onset without introducing double-integration drift:
+* **Real-Time Depth**: Stroke depth is calculated using $D = K \cdot a_{\text{pp}} \cdot T^2$, where $T$ is filtered through a **3-stroke running median window**. This stabilizes single-stroke period jitter without lag.
+* **Trimmed Session Mean**: The session average depth excludes the initial onset stroke (`CADENCE_FLAG_FIRST_STROKE`) and artifactual 10.0 cm clamp saturations, ensuring the session mean reflects true clinical performance.
