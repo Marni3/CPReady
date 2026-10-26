@@ -41,7 +41,7 @@ class _CommandQueue {
     while (_queue.isNotEmpty) {
       final item = _queue.removeAt(0);
       try {
-        await item.action();
+        await item.action().timeout(const Duration(milliseconds: 2500));
         if (!item.completer.isCompleted) {
           item.completer.complete();
         }

@@ -13,7 +13,7 @@ import 'package:cpready/src/theme/app_theme.dart';
 import 'support/fake_ble_controller.dart';
 import 'support/fake_session_repository.dart';
 
-CprMetrics _packet(int type) => CprMetrics(
+CprMetrics _packet(int type, {int audioPromptCode = 0}) => CprMetrics(
   packetType: type,
   recoilComplete: true,
   recoilPercentage: 100,
@@ -21,7 +21,7 @@ CprMetrics _packet(int type) => CprMetrics(
   depthCm: 0,
   depthMm: 0,
   ccfPercent: 0,
-  audioPromptCode: 0,
+  audioPromptCode: audioPromptCode,
   totalCompressions: 0,
   elapsedSeconds: 0,
 );
@@ -175,6 +175,30 @@ void main() {
 
     expect(find.text(AppStrings.manikinNoDeviceConnected), findsOneWidget);
     expect(find.text(AppStrings.manikinMeanDepth), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('shows no-trial-data error when target rejected with code 6', (
+    WidgetTester tester,
+  ) async {
+    final FakeBleController controller = await _controllerInTree(tester);
+    await _reachTargetEntry(tester, controller);
+
+    await tester.tap(find.text(AppStrings.manikinSave));
+    await tester.pump();
+
+    await _deliver(
+      tester,
+      controller,
+      _packet(AppBleConfig.packetError, audioPromptCode: AppBleConfig.errNoTrialData),
+    );
+
+    expect(find.text(AppStrings.manikinSentTitle), findsNothing);
+    expect(find.text(AppStrings.calibrationErrorNoTrialData), findsOneWidget);
+    expect(find.text(AppStrings.manikinMeanDepth), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());

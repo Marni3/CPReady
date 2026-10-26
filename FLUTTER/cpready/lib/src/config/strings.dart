@@ -309,6 +309,26 @@ class AppStrings {
   /// Countdown shown while the firmware's 2 s zeroing window runs.
   static String calibrationCountdown(int seconds) => 'Calibrating… ${seconds}s';
 
+  // Specific diagnostic error strings matching firmware reason codes
+  static const String calibrationErrorUnstable =
+      'Excessive movement detected during baseline zeroing. Keep the vest completely still on the manikin and retry.';
+  static const String calibrationErrorLowSamples =
+      'Insufficient sensor samples received during calibration. Ensure the device is powered and retry.';
+  static const String calibrationErrorGravity =
+      'Sensor readings out of expected range. Verify the vest is flat on the chest.';
+  static const String calibrationErrorAlignment =
+      'Sensors misaligned. Ensure the vest is positioned correctly on the manikin.';
+  static const String calibrationErrorBusy =
+      'Device is busy with another session or calibration. Please wait or restart the session.';
+  static const String calibrationErrorNoTrialData =
+      'At least 5 compressions are required during the 15 s trial before target depth calibration can be saved.';
+  static const String calibrationErrorI2cFault =
+      'Hardware sensor communication error. Please power cycle the CPReady vest.';
+  static const String calibrationErrorDisconnected =
+      'Device disconnected. Please reconnect your CPReady device and retry.';
+  static const String commandWriteTimeout =
+      'Device communication timed out. Please check device proximity and retry.';
+
   // -----------------------------------------------------------------------
   // Manikin depth calibration (separate from the baseline Calibration step)
   // -----------------------------------------------------------------------

@@ -199,7 +199,16 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
             _stage = _Stage.ready;
           });
         } else if (metrics.packetType == AppBleConfig.packetError) {
-          _fail();
+          final String msg = switch (metrics.errorCode) {
+            AppBleConfig.errMotionUnstable => AppStrings.calibrationErrorUnstable,
+            AppBleConfig.errLowSampleCount => AppStrings.calibrationErrorLowSamples,
+            AppBleConfig.errGravityImplausible => AppStrings.calibrationErrorGravity,
+            AppBleConfig.errSensorAlignment => AppStrings.calibrationErrorAlignment,
+            AppBleConfig.errWrongState => AppStrings.calibrationErrorBusy,
+            AppBleConfig.errI2cFault => AppStrings.calibrationErrorI2cFault,
+            _ => AppStrings.manikinError,
+          };
+          _fail(msg);
         }
       case _Stage.running:
         if (metrics.packetType == AppBleConfig.packetRealtime) {
@@ -237,7 +246,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   }
 
   /// Ends a failed or timed-out trial and records the reason.
-  void _fail() {
+  void _fail([String? specificError]) {
     _stopTimers();
     if (_trialActive) {
       _trialActive = false;
@@ -250,6 +259,8 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       _stage = _Stage.error;
       if (_controller == null || !_controller!.isConnected) {
         _error = AppStrings.manikinNoDeviceConnected;
+      } else if (specificError != null) {
+        _error = specificError;
       } else {
         _error = AppStrings.manikinError;
       }
@@ -325,12 +336,19 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       return;
     }
 
+    final String targetError;
+    if (ack?.packetType == AppBleConfig.packetError) {
+      targetError = (ack?.errorCode == AppBleConfig.errNoTrialData)
+          ? AppStrings.calibrationErrorNoTrialData
+          : AppStrings.manikinTargetRejected;
+    } else {
+      targetError = AppStrings.manikinTargetTimeout;
+    }
+
     setState(() {
       _stage = _Stage.enterTarget;
       _sending = false;
-      _error = ack?.packetType == AppBleConfig.packetError
-          ? AppStrings.manikinTargetRejected
-          : AppStrings.manikinTargetTimeout;
+      _error = targetError;
     });
   }
 

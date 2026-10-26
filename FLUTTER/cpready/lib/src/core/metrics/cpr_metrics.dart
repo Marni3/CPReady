@@ -59,6 +59,9 @@ class CprMetrics {
   /// The device is running the relaxed bench-test profile.
   bool get isBenchMode => qualityFlags & AppBleConfig.qualityBenchMode != 0;
 
+  /// When [packetType] is [AppBleConfig.packetError], byte 7 carries the error reason code.
+  int get errorCode => audioPromptCode;
+
   static CprMetrics fromBytes(List<int> bytes) {
     if (bytes.length != AppBleConfig.packetLength &&
         bytes.length != AppBleConfig.legacyPacketLength) {

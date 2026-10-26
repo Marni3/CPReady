@@ -161,4 +161,17 @@ class AppBleConfig {
   static const int cueSpeedUp = 4;
   static const int cueSlowDown = 5;
   static const int cueGoodJob = 6;
+
+  // -----------------------------------------------------------------------
+  // Calibration & telemetry error codes (byte 7 when packetType == packetError)
+  // -----------------------------------------------------------------------
+
+  static const int errNone = 0;
+  static const int errMotionUnstable = 1;
+  static const int errLowSampleCount = 2;
+  static const int errGravityImplausible = 3;
+  static const int errSensorAlignment = 4;
+  static const int errWrongState = 5;
+  static const int errNoTrialData = 6;
+  static const int errI2cFault = 7;
 }

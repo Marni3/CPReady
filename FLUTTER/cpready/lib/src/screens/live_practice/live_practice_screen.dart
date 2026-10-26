@@ -163,6 +163,15 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
     // The first stroke and the packet after a pause also report unsteady
     // cadence; only a sustained run should raise the banner.
+    if (metrics.packetType == AppBleConfig.packetError) {
+      _startWatchdog?.cancel();
+      _startWatchdog = null;
+      if (!_finished && !_ending) {
+        _onStartTimeout();
+      }
+      return;
+    }
+
     final bool realtime = metrics.packetType == AppBleConfig.packetRealtime;
     if (realtime) {
       _startWatchdog?.cancel();

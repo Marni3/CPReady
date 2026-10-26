@@ -14,7 +14,7 @@ import 'package:cpready/src/widgets/widgets.dart';
 import 'support/fake_ble_controller.dart';
 import 'support/fake_session_repository.dart';
 
-CprMetrics _packet(int type, {int elapsedSeconds = 0}) => CprMetrics(
+CprMetrics _packet(int type, {int elapsedSeconds = 0, int audioPromptCode = 0}) => CprMetrics(
   packetType: type,
   recoilComplete: true,
   recoilPercentage: 100,
@@ -22,7 +22,7 @@ CprMetrics _packet(int type, {int elapsedSeconds = 0}) => CprMetrics(
   depthCm: 0,
   depthMm: 0,
   ccfPercent: 0,
-  audioPromptCode: 0,
+  audioPromptCode: audioPromptCode,
   totalCompressions: 0,
   elapsedSeconds: elapsedSeconds,
 );
@@ -126,6 +126,61 @@ void main() {
     await _deliver(tester, controller, _packet(AppBleConfig.packetError));
 
     expect(find.text(AppStrings.calibrationRejected), findsOneWidget);
+    expect(find.text(AppStrings.calibrationRetry), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('shows disconnected error message when entering while disconnected', (
+    WidgetTester tester,
+  ) async {
+    final FakeBleController controller = FakeBleController(connected: false);
+    await tester.pumpWidget(
+      AppScope(
+        controller: controller,
+        repository: FakeSessionRepository(),
+        voiceCoach: const SilentVoiceCoach(),
+        child: MaterialApp(
+          theme: appThemeData().theme,
+          home: const CalibrationScreen(traineeName: 'Alexandra'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text(AppStrings.calibrationErrorDisconnected), findsOneWidget);
+    expect(find.text(AppStrings.calibrationRetry), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('shows motion error message on Type 5 with errMotionUnstable', (
+    WidgetTester tester,
+  ) async {
+    final FakeBleController controller = await _pumpScreen(tester);
+
+    await _deliver(tester, controller, _packet(AppBleConfig.packetError, audioPromptCode: AppBleConfig.errMotionUnstable));
+
+    expect(find.text(AppStrings.calibrationErrorUnstable), findsOneWidget);
+    expect(find.text(AppStrings.calibrationRetry), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('shows busy error message on Type 5 with errWrongState', (
+    WidgetTester tester,
+  ) async {
+    final FakeBleController controller = await _pumpScreen(tester);
+
+    await _deliver(tester, controller, _packet(AppBleConfig.packetError, audioPromptCode: AppBleConfig.errWrongState));
+
+    expect(find.text(AppStrings.calibrationErrorBusy), findsOneWidget);
     expect(find.text(AppStrings.calibrationRetry), findsOneWidget);
     expect(tester.takeException(), isNull);
 

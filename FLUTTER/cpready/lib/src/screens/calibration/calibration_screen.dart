@@ -18,6 +18,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../config/config.dart';
 import '../../core/app_scope.dart';
+import '../../core/ble/ble_controller.dart';
 import '../../core/metrics/cpr_metrics.dart';
 import '../../widgets/widgets.dart';
 
@@ -35,6 +36,7 @@ class CalibrationScreen extends StatefulWidget {
 enum _CalibrationState { waiting, calibrating, ready, error }
 
 class _CalibrationScreenState extends State<CalibrationScreen> {
+  BleController? _controller;
   StreamSubscription<CprMetrics>? _sub;
   Timer? _timeout;
   _CalibrationState _state = _CalibrationState.waiting;
@@ -45,17 +47,44 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final controller = AppScope.of(context);
+    if (_controller != controller) {
+      _controller?.removeListener(_onConnectionChanged);
+      _controller = controller;
+      _controller?.addListener(_onConnectionChanged);
+    }
     if (_entered) return;
     _entered = true;
     unawaited(_startCalibration());
   }
 
+  void _onConnectionChanged() {
+    if (!mounted) return;
+    final controller = _controller;
+    if (controller == null || !controller.isConnected) {
+      if (_state == _CalibrationState.error) return;
+      _timeout?.cancel();
+      setState(() {
+        _state = _CalibrationState.error;
+        _errorText = AppStrings.calibrationErrorDisconnected;
+      });
+    }
+  }
+
   Future<void> _startCalibration() async {
-    final controller = AppScope.of(context);
+    final controller = _controller ?? AppScope.of(context);
 
     await _sub?.cancel();
     _timeout?.cancel();
     if (!mounted) return;
+
+    if (!controller.isConnected) {
+      setState(() {
+        _state = _CalibrationState.error;
+        _errorText = AppStrings.calibrationErrorDisconnected;
+      });
+      return;
+    }
 
     setState(() {
       _state = _CalibrationState.waiting;
@@ -84,7 +113,9 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
       if (mounted) {
         setState(() {
           _state = _CalibrationState.error;
-          _errorText = AppStrings.calibrationStartFailed;
+          _errorText = (error is TimeoutException)
+              ? AppStrings.commandWriteTimeout
+              : AppStrings.calibrationStartFailed;
         });
       }
     }
@@ -106,9 +137,33 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         });
       case AppBleConfig.packetError:
         _timeout?.cancel();
+        String msg;
+        switch (metrics.errorCode) {
+          case AppBleConfig.errMotionUnstable:
+            msg = AppStrings.calibrationErrorUnstable;
+            break;
+          case AppBleConfig.errLowSampleCount:
+            msg = AppStrings.calibrationErrorLowSamples;
+            break;
+          case AppBleConfig.errGravityImplausible:
+            msg = AppStrings.calibrationErrorGravity;
+            break;
+          case AppBleConfig.errSensorAlignment:
+            msg = AppStrings.calibrationErrorAlignment;
+            break;
+          case AppBleConfig.errWrongState:
+            msg = AppStrings.calibrationErrorBusy;
+            break;
+          case AppBleConfig.errI2cFault:
+            msg = AppStrings.calibrationErrorI2cFault;
+            break;
+          default:
+            msg = AppStrings.calibrationRejected;
+            break;
+        }
         setState(() {
           _state = _CalibrationState.error;
-          _errorText = AppStrings.calibrationRejected;
+          _errorText = msg;
         });
       default:
         break; // realtime packets are not calibration events
@@ -133,6 +188,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
   @override
   void dispose() {
+    _controller?.removeListener(_onConnectionChanged);
     _sub?.cancel();
     _timeout?.cancel();
     super.dispose();

@@ -17,7 +17,7 @@ enum MetricRating {
 
 /// Grade for the compression rate, or null when there is no value yet.
 MetricRating? rateRating(int? cpm) {
-  if (cpm == null) return null;
+  if (cpm == null || cpm <= 0) return null;
   final bool inRange =
       cpm >= AppTargets.rateMinCpm && cpm <= AppTargets.rateMaxCpm;
   return inRange ? MetricRating.good : MetricRating.poor;
@@ -28,7 +28,7 @@ MetricRating? rateRating(int? cpm) {
 /// The target is a band, not a floor: a stroke that is too deep is graded poor
 /// just like one that is too shallow.
 MetricRating? depthRating(double? cm) {
-  if (cm == null) return null;
+  if (cm == null || cm <= 0.0) return null;
   final bool inRange =
       cm >= AppTargets.depthMinCm && cm <= AppTargets.depthMaxCm;
   return inRange ? MetricRating.good : MetricRating.poor;
@@ -36,7 +36,7 @@ MetricRating? depthRating(double? cm) {
 
 /// Grade for recoil, or null when there is no value yet.
 MetricRating? recoilRating(int? percent) {
-  if (percent == null) return null;
+  if (percent == null || percent <= 0) return null;
   return percent >= AppTargets.recoilFullPercent
       ? MetricRating.good
       : MetricRating.poor;
@@ -44,11 +44,11 @@ MetricRating? recoilRating(int? percent) {
 
 /// "110cpm", or the placeholder when there is nothing to show yet.
 String rateText(int? cpm) =>
-    cpm == null ? AppStrings.liveNoValue : '$cpm${AppStrings.liveRateUnit}';
+    (cpm == null || cpm <= 0) ? AppStrings.liveNoValue : '$cpm${AppStrings.liveRateUnit}';
 
 /// "5.4cm", or the placeholder. One decimal matches the tenths-of-a-millimetre
 /// resolution the firmware sends.
-String depthText(double? cm) => cm == null
+String depthText(double? cm) => (cm == null || cm <= 0.0)
     ? AppStrings.liveNoValue
     : '${cm.toStringAsFixed(1)}${AppStrings.liveDepthUnit}';
 
