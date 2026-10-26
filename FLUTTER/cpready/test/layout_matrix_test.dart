@@ -22,6 +22,7 @@ import 'package:cpready/src/core/history/session_repository.dart';
 import 'package:cpready/src/core/metrics/cpr_metrics.dart';
 import 'package:cpready/src/screens/begin_compression/begin_compression_screen.dart';
 import 'package:cpready/src/screens/calibration/calibration_screen.dart';
+import 'package:cpready/src/screens/device_settings/device_settings_screen.dart';
 import 'package:cpready/src/screens/guide/guide_screen.dart';
 import 'package:cpready/src/screens/hand_placement/hand_placement_screen.dart';
 import 'package:cpready/src/screens/home/home_screen.dart';
@@ -113,11 +114,12 @@ final List<_Case> _cases = <_Case>[
     () => const LivePracticeScreen(traineeName: 'Alexandra Konstantinopoulos'),
   ),
   _Case('ManikinCalibration', ManikinCalibrationScreen.new),
+  _Case('DeviceSettings', DeviceSettingsScreen.new),
   _Case(
     'SummarySaved',
     () => const SessionCompleteScreen(
       traineeName: 'Alexandra Konstantinopoulos',
-      saved: true,
+      reason: SessionEndReason.completed,
       summary: _summary,
       durationSeconds: 83,
     ),
@@ -126,9 +128,18 @@ final List<_Case> _cases = <_Case>[
     'SummaryInterrupted',
     () => const SessionCompleteScreen(
       traineeName: 'Alexandra Konstantinopoulos',
-      saved: false,
+      reason: SessionEndReason.interrupted,
       summary: null,
       durationSeconds: 4125,
+    ),
+  ),
+  _Case(
+    'SummaryUnavailable',
+    () => const SessionCompleteScreen(
+      traineeName: 'Alexandra Konstantinopoulos',
+      reason: SessionEndReason.resultsUnavailable,
+      summary: null,
+      durationSeconds: 12,
     ),
   ),
 ];

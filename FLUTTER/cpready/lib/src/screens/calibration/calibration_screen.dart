@@ -36,7 +36,10 @@ enum _CalibrationState { waiting, calibrating, ready, error }
 
 class _CalibrationScreenState extends State<CalibrationScreen> {
   StreamSubscription<CprMetrics>? _sub;
+  Timer? _timeout;
   _CalibrationState _state = _CalibrationState.waiting;
+  int? _elapsedSeconds;
+  String? _errorText;
   bool _entered = false;
 
   @override
@@ -51,14 +54,38 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     final controller = AppScope.of(context);
 
     await _sub?.cancel();
+    _timeout?.cancel();
+    if (!mounted) return;
+
+    setState(() {
+      _state = _CalibrationState.waiting;
+      _elapsedSeconds = null;
+      _errorText = null;
+    });
+
     _sub = controller.packets.listen(_onPacket);
+    _timeout = Timer(AppDurations.calibrationTimeout, () {
+      if (!mounted ||
+          _state == _CalibrationState.ready ||
+          _state == _CalibrationState.error) {
+        return;
+      }
+      setState(() {
+        _state = _CalibrationState.error;
+        _errorText = AppStrings.calibrationTimeout;
+      });
+    });
 
     try {
       await controller.sendCommand(AppBleConfig.commandCalibrate);
     } catch (error) {
       debugPrint('Calibration start failed: $error');
+      _timeout?.cancel();
       if (mounted) {
-        setState(() => _state = _CalibrationState.error);
+        setState(() {
+          _state = _CalibrationState.error;
+          _errorText = AppStrings.calibrationStartFailed;
+        });
       }
     }
   }
@@ -67,11 +94,22 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     if (!mounted) return;
     switch (metrics.packetType) {
       case AppBleConfig.packetCalibrating:
-        setState(() => _state = _CalibrationState.calibrating);
+        setState(() {
+          _state = _CalibrationState.calibrating;
+          _elapsedSeconds = metrics.elapsedSeconds;
+        });
       case AppBleConfig.packetCalibrationDone:
-        setState(() => _state = _CalibrationState.ready);
+        _timeout?.cancel();
+        setState(() {
+          _state = _CalibrationState.ready;
+          _elapsedSeconds = null;
+        });
       case AppBleConfig.packetError:
-        setState(() => _state = _CalibrationState.error);
+        _timeout?.cancel();
+        setState(() {
+          _state = _CalibrationState.error;
+          _errorText = AppStrings.calibrationRejected;
+        });
       default:
         break; // realtime packets are not calibration events
     }
@@ -80,7 +118,11 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   /// Runs the calibration handshake again, from the top.
   Future<void> _retryCalibration() async {
     if (!mounted) return;
-    setState(() => _state = _CalibrationState.waiting);
+    setState(() {
+      _state = _CalibrationState.waiting;
+      _elapsedSeconds = null;
+      _errorText = null;
+    });
     await _startCalibration();
   }
 
@@ -92,6 +134,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   @override
   void dispose() {
     _sub?.cancel();
+    _timeout?.cancel();
     super.dispose();
   }
 
@@ -104,7 +147,15 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
     final String statusText = switch (_state) {
       _CalibrationState.waiting => AppStrings.calibrationWaiting,
-      _CalibrationState.calibrating => AppStrings.calibrationCalibrating,
+      _CalibrationState.calibrating =>
+        _elapsedSeconds == null
+            ? AppStrings.calibrationCalibrating
+            : AppStrings.calibrationCountdown(
+                math.max(
+                  0,
+                  AppDurations.calibrationWindowSeconds - _elapsedSeconds!,
+                ),
+              ),
       _CalibrationState.ready => AppStrings.calibrationReady,
       _CalibrationState.error => AppStrings.calibrationError,
     };
@@ -118,7 +169,11 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
       weight: FontWeight.normal,
       color: AppColors.summaryFailedText,
     );
-    final String? helper = ready ? null : AppStrings.calibrationNotReady;
+    final String? helper = ready
+        ? null
+        : _state == _CalibrationState.error
+        ? (_errorText ?? AppStrings.calibrationError)
+        : AppStrings.calibrationNotReady;
 
     return Scaffold(
       backgroundColor: AppColors.surfaceScaffold,
@@ -136,84 +191,79 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
               children: <Widget>[
                 Expanded(
                   child: LayoutBuilder(
-                    builder:
-                        (BuildContext context, BoxConstraints constraints) {
-                          // The card takes the space the title and the helper
-                          // line leave over. Both are measured with the styles
-                          // they are painted with; the whole block scrolls if it
-                          // still does not fit.
-                          final double titleHeight = measureTextHeight(
-                            context,
-                            AppStrings.calibrationTitle,
-                            titleStyle,
-                            maxWidth:
-                                constraints.maxWidth -
-                                AppSizes.flowBackIconSize -
-                                AppSpacing.flowBackTapRight -
-                                AppSpacing.flowBackTitleGap,
-                          );
-                          final double helperHeight = helper == null
-                              ? 0
-                              : AppSpacing.small +
-                                    measureTextHeight(
-                                      context,
-                                      helper,
-                                      helperStyle,
-                                      maxWidth: constraints.maxWidth,
-                                    );
-                          final double cardSpace = math.max(
-                            0.0,
-                            constraints.maxHeight -
-                                math.max(
-                                  titleHeight,
-                                  AppSizes.flowBackIconSize +
-                                      2 * AppSpacing.flowBackTapV,
-                                ) -
-                                AppSpacing.flowTitleGap -
-                                helperHeight,
-                          );
+                    builder: (BuildContext context, BoxConstraints constraints) {
+                      // The card takes the space the title and the helper
+                      // line leave over. Both are measured with the styles
+                      // they are painted with; the whole block scrolls if it
+                      // still does not fit.
+                      final double titleHeight = measureTextHeight(
+                        context,
+                        AppStrings.calibrationTitle,
+                        titleStyle,
+                        maxWidth:
+                            constraints.maxWidth -
+                            AppSizes.flowBackIconSize -
+                            AppSpacing.flowBackTapRight -
+                            AppSpacing.flowBackTitleGap,
+                      );
+                      final double helperHeight = helper == null
+                          ? 0
+                          : AppSpacing.small +
+                                measureTextHeight(
+                                  context,
+                                  helper,
+                                  helperStyle,
+                                  maxWidth: constraints.maxWidth,
+                                );
+                      final double cardSpace = math.max(
+                        0.0,
+                        constraints.maxHeight -
+                            math.max(
+                              titleHeight,
+                              AppSizes.flowBackIconSize +
+                                  2 * AppSpacing.flowBackTapV,
+                            ) -
+                            AppSpacing.flowTitleGap -
+                            helperHeight,
+                      );
 
-                          return SingleChildScrollView(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                      return SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: <Widget>[
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: <Widget>[
-                                    const FlowBackButton(),
-                                    SizedBox(
-                                      width: AppSpacing.flowBackTitleGap,
-                                    ),
-                                    Expanded(
-                                      child: Text(
-                                        AppStrings.calibrationTitle,
-                                        style: titleStyle,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                SizedBox(height: AppSpacing.flowTitleGap),
-                                ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    minHeight: cardSpace,
-                                  ),
-                                  child: FlowIllustrationCard(
-                                    caption: statusText,
-                                    availableHeight: cardSpace,
+                                const FlowBackButton(),
+                                SizedBox(width: AppSpacing.flowBackTitleGap),
+                                Expanded(
+                                  child: Text(
+                                    AppStrings.calibrationTitle,
+                                    style: titleStyle,
                                   ),
                                 ),
-                                if (helper != null) ...<Widget>[
-                                  SizedBox(height: AppSpacing.small),
-                                  Text(
-                                    helper,
-                                    textAlign: TextAlign.center,
-                                    style: helperStyle,
-                                  ),
-                                ],
                               ],
                             ),
-                          );
-                        },
+                            SizedBox(height: AppSpacing.flowTitleGap),
+                            ConstrainedBox(
+                              constraints: BoxConstraints(minHeight: cardSpace),
+                              child: FlowIllustrationCard(
+                                caption: statusText,
+                                availableHeight: cardSpace,
+                              ),
+                            ),
+                            if (helper != null) ...<Widget>[
+                              SizedBox(height: AppSpacing.small),
+                              Text(
+                                helper,
+                                textAlign: TextAlign.center,
+                                style: helperStyle,
+                              ),
+                            ],
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
                 SizedBox(height: AppSpacing.section),

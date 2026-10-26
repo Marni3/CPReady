@@ -78,4 +78,55 @@ void main() {
       throwsArgumentError,
     );
   });
+
+  test('rejects a frame longer than 12 bytes', () {
+    expect(
+      () => CprMetrics.fromBytes(<int>[...frame(), 0]),
+      throwsArgumentError,
+    );
+  });
+
+  test('accepts the documented metric boundaries', () {
+    final List<int> boundary = frame()
+      ..[2] = 250
+      ..[3] = 0
+      ..[4] = 0xE8
+      ..[5] = 0x03
+      ..[6] = 100;
+
+    final CprMetrics metrics = CprMetrics.fromBytes(boundary);
+
+    expect(metrics.rateCpm, 250);
+    expect(metrics.depthCm, closeTo(10.0, 0.001));
+    expect(metrics.ccfPercent, 100);
+  });
+
+  test('rejects an implausible rate', () {
+    final List<int> bad = frame()..[2] = 251;
+    expect(() => CprMetrics.fromBytes(bad), throwsArgumentError);
+  });
+
+  test('rejects an implausible depth', () {
+    final List<int> bad = frame()
+      ..[4] = 0xE9
+      ..[5] = 0x03;
+    expect(() => CprMetrics.fromBytes(bad), throwsArgumentError);
+  });
+
+  test('rejects an implausible CCF', () {
+    final List<int> bad = frame()..[6] = 101;
+    expect(() => CprMetrics.fromBytes(bad), throwsArgumentError);
+  });
+
+  test('rejects a live recoil flag above 1', () {
+    final List<int> bad = frame()..[1] = 2;
+    expect(() => CprMetrics.fromBytes(bad), throwsArgumentError);
+  });
+
+  test('rejects summary recoil above 100', () {
+    final List<int> bad = frame()
+      ..[0] = AppBleConfig.packetFinalSummary
+      ..[1] = 101;
+    expect(() => CprMetrics.fromBytes(bad), throwsArgumentError);
+  });
 }

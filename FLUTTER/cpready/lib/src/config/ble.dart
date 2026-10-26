@@ -33,6 +33,16 @@ class AppBleConfig {
   /// Finalises the session; the firmware answers with its FINAL_SUMMARY.
   static const String commandStop = 'STOP';
 
+  /// Re-sends the last FINAL_SUMMARY held in firmware RAM.
+  static const String commandGetResults = 'GET_RESULTS';
+
+  /// Temporarily pauses the session. Not exposed in the UI until the firmware
+  /// compensates paused time in its elapsed/CCF accounting.
+  static const String commandPause = 'PAUSE';
+
+  /// Resumes a paused session. Kept next to [commandPause] for the same reason.
+  static const String commandResume = 'RESUME';
+
   /// Selects the adult-manikin kinematic profile. The firmware also resets its
   /// depth scalar to that profile's default value.
   static const String commandProfileManikin = 'SET_PROFILE:MANIKIN';
@@ -41,13 +51,24 @@ class AppBleConfig {
   static const String commandProfileBench = 'SET_PROFILE:BENCH';
 
   /// Sets the firmware's auto-stop duration. The value is volatile: it lasts
-  /// until the device restarts and applies to the next session.
+  /// until the session ends, aborts, the link drops or the device restarts.
   static String commandSetTime(int seconds) => 'SET_TIME:$seconds';
 
   /// Scales the depth reading so a trial mean of the measured depth matches the
   /// manikin's reported depth.
   static String commandCalibrateTarget(double depthCm) =>
       'CALIBRATE_TARGET:${depthCm.toStringAsFixed(1)}';
+
+  /// Sets the harmonic depth scalar directly and persists it to flash.
+  static String commandSetK(double depthK) =>
+      'SET_K:${depthK.toStringAsFixed(2)}';
+
+  /// Clears the firmware's flash configuration and restores factory defaults.
+  static const String commandResetConfig = 'RESET_CONFIG';
+
+  /// Requests the current device configuration. Current firmware only prints
+  /// this to its Serial console; the proposed config-report packet is Type 6.
+  static const String commandGetConfig = 'GET_CONFIG';
 
   // -----------------------------------------------------------------------
   // Telemetry packet types (see BLEReadings.h)
@@ -67,6 +88,54 @@ class AppBleConfig {
 
   /// Firmware error condition.
   static const int packetError = 5;
+
+  /// Proposed device-configuration report, sent in response to GET_CONFIG.
+  /// Not emitted by the current firmware; screens must tolerate its absence.
+  static const int packetConfigReport = 6;
+
+  // -----------------------------------------------------------------------
+  // Proposed Type 6 configuration report (F-01)
+  // -----------------------------------------------------------------------
+  //
+  // The layout is documented in PLAN.md §8, F-01. It is parsed defensively so
+  // older firmware that never sends Type 6 simply lands in the unsupported
+  // state.
+
+  /// Length of the proposed Type 6 config report.
+  static const int configReportLength = 12;
+
+  /// Type 6 profile values (byte 1).
+  static const int configProfileManikin = 0;
+  static const int configProfileBench = 1;
+
+  /// Type 6 config_flags bits (byte 4).
+  static const int configFlagBenchActive = 0x01;
+  static const int configFlagCustomK = 0x02;
+
+  /// Protocol version the app expects in byte 9.
+  static const int configProtocolVersion = 1;
+
+  /// `depth_k_x100` scale used by the config report and SET_K contract.
+  static const double depthKScale = 100.0;
+
+  /// Accepted SET_K / config-report range.
+  static const double depthKMin = 1.0;
+  static const double depthKMax = 30.0;
+
+  // -----------------------------------------------------------------------
+  // Packet validation (see SOFTWARE_DEVELOPER_GUIDE.md §2.4)
+  // -----------------------------------------------------------------------
+
+  /// Current packet size. 11-byte frames from older firmware are still
+  /// accepted; any other length is rejected by the decoder.
+  static const int packetLength = 12;
+  static const int legacyPacketLength = 11;
+
+  /// Plausibility limits applied to live and summary frames.
+  static const int maxPlausibleRateCpm = 250;
+  static const int maxPlausibleDepthTenthsMm = 1000;
+  static const int maxPlausibleCcfPercent = 100;
+  static const int fullRecoilPercent = 100;
 
   // -----------------------------------------------------------------------
   // Quality flags (byte 11; see BLEReadings.h)

@@ -25,6 +25,12 @@ class AppStrings {
   static const String navPractice = 'Practice';
   static const String navHistory = 'History';
 
+  /// Shared confirmation action.
+  static const String actionCancel = 'Cancel';
+
+  /// Tooltip for the header gear that opens Device Settings.
+  static const String settingsTooltip = 'Settings';
+
   // -----------------------------------------------------------------------
   // Home screen
   // -----------------------------------------------------------------------
@@ -72,6 +78,19 @@ class AppStrings {
 
   /// Device card — connected: opens the manikin depth calibration flow.
   static const String homeManikinCalibration = 'Manikin Calibration';
+
+  /// Device card — connected: opens the firmware configuration screen.
+  static const String homeDeviceSettings = 'Device Settings';
+
+  /// Manikin calibration needs the manikin profile; the last saved settings
+  /// say the device is still in bench mode.
+  static const String homeCalibrationRequiresManikinTitle =
+      'Switch to Manikin mode';
+  static const String homeCalibrationRequiresManikinBody =
+      'Manikin calibration needs the Adult Manikin profile, but the last known '
+      'device mode is Bench Test. Open Device Settings to switch modes first.';
+  static const String homeCalibrationRequiresManikinAction =
+      'Open Device Settings';
 
   /// Dotted info card paragraph.
   static const String homeInfoBody =
@@ -173,6 +192,89 @@ class AppStrings {
   static const String setupProfileSendFailed =
       'Could not send the mode change to the device.';
 
+  /// Confirmation shown before SET_PROFILE, because current firmware resets K.
+  static const String profileSwitchWarningTitle = 'Change training mode?';
+  static const String profileSwitchWarningBody =
+      'Switching modes resets the device’s calibrated depth scalar (K). '
+      'Recalibrate the manikin before relying on depth readings.';
+  static const String profileSwitchConfirm = 'Switch mode';
+
+  /// Persistent reminder after a successful mode change.
+  static const String profileSwitchResetNotice =
+      'Mode changed. Recalibrate the manikin before using depth readings.';
+
+  // -----------------------------------------------------------------------
+  // Device Settings
+  // -----------------------------------------------------------------------
+
+  static const String deviceSettingsTitle = 'Device Settings';
+  static const String deviceSettingsSubtitle =
+      'Read and change the device configuration. The last known values are '
+      'saved on this phone.';
+  static const String deviceSettingsLoading = 'Loading saved settings…';
+
+  static const String deviceSettingsCurrent = 'Current configuration';
+  static const String deviceSettingsProfile = 'Profile';
+  static const String deviceSettingsDepthK = 'Depth calibration (K)';
+  static const String deviceSettingsDuration = 'Practice duration';
+  static const String deviceSettingsSource = 'Source';
+  static const String deviceSettingsSourceDevice = 'Read from device';
+  static const String deviceSettingsSourceLocal = 'Last known (this phone)';
+  static const String deviceSettingsSourceDefault = 'No saved values yet';
+  static const String deviceSettingsUnknown = 'Unknown';
+
+  static const String deviceSettingsRefresh = 'Refresh from Device';
+  static const String deviceSettingsRefreshing =
+      'Reading device configuration…';
+  static const String deviceSettingsReadBack =
+      'Configuration read from the device.';
+  static const String deviceSettingsUnsupported =
+      'This device does not support configuration read-back. Showing the last '
+      'known values saved on this phone.';
+  static const String deviceSettingsReadFailed =
+      'Could not read the device configuration. Showing the last known values '
+      'saved on this phone.';
+  static const String deviceSettingsOffline =
+      'Not connected. Reconnect to read or change device settings.';
+
+  static const String deviceSettingsProfileSection = 'Kinematic profile';
+  static const String deviceSettingsProfileHelper =
+      'Changing modes resets the device’s calibrated K. Recalibrate the manikin '
+      'afterwards.';
+  static const String deviceSettingsProfileChanged =
+      'Mode changed. Recalibrate the manikin before using depth readings.';
+  static const String deviceSettingsProfileFailed =
+      'Could not change the device mode.';
+
+  static const String deviceSettingsKSection = 'Set depth K';
+  static const String deviceSettingsKHelper =
+      'Enter a value from 1.00 to 30.00. SET_K writes and persists it on the '
+      'device.';
+  static const String deviceSettingsKHint = 'e.g. 11.20';
+  static const String deviceSettingsKSet = 'Set K on Device';
+  static const String deviceSettingsKSending = 'Sending K…';
+  static const String deviceSettingsKInvalid =
+      'Enter a K value from 1.00 to 30.00.';
+  static const String deviceSettingsKSent =
+      'K sent to the device. Refresh to verify it when read-back is supported.';
+  static const String deviceSettingsKFailed = 'Could not send K to the device.';
+  static const String deviceSettingsLocalSaveFailed =
+      'The device command succeeded, but the value could not be saved on this '
+      'phone.';
+
+  static const String deviceSettingsResetSection = 'Factory reset';
+  static const String deviceSettingsResetWarning =
+      'Restores the device profile, K, and duration to factory defaults. This '
+      'cannot be undone.';
+  static const String deviceSettingsResetHold =
+      'Hold to reset device configuration';
+  static const String deviceSettingsResetDone =
+      'Device configuration reset. Recalibrate the manikin before a session.';
+  static const String deviceSettingsResetFailed =
+      'Could not reset the device configuration.';
+
+  static String deviceSettingsSeconds(int seconds) => '$seconds seconds';
+
   // -----------------------------------------------------------------------
   // Hand placement
   // -----------------------------------------------------------------------
@@ -195,8 +297,17 @@ class AppStrings {
   static const String calibrationError = 'Calibration problem.';
   static const String calibrationNotReady =
       'Not ready. Keep hands still and release downward pressure.';
+  static const String calibrationTimeout =
+      'Calibration timed out. Keep hands still and try again.';
+  static const String calibrationRejected =
+      'The device could not calibrate. Keep hands still and release downward pressure.';
+  static const String calibrationStartFailed =
+      'Could not start calibration. Check the device and try again.';
   static const String calibrationRetry = 'Retry Calibration';
   static const String calibrationBeginSession = 'Begin Session';
+
+  /// Countdown shown while the firmware's 2 s zeroing window runs.
+  static String calibrationCountdown(int seconds) => 'Calibrating… ${seconds}s';
 
   // -----------------------------------------------------------------------
   // Manikin depth calibration (separate from the baseline Calibration step)
@@ -224,6 +335,9 @@ class AppStrings {
   static const String manikinInvalidTarget =
       'Enter a depth between 1.0 and 10.0 cm.';
   static const String manikinSave = 'Save Calibration';
+  static const String manikinSaving = 'Saving…';
+  static const String manikinSavingBody =
+      'Waiting for the device to confirm the new depth scale…';
   static const String manikinRetry = 'Retry Trial';
   static const String manikinError =
       'The trial did not finish. Check the device and try again.';
@@ -231,14 +345,18 @@ class AppStrings {
       'No device connected. Please pair your CPReady device first.';
   static const String manikinSendFailed =
       'Could not send the calibration to the device.';
+  static const String manikinTargetRejected =
+      'The device could not save the calibration. Check the target depth and try again.';
+  static const String manikinTargetTimeout =
+      'No confirmation from the device. The calibration was not saved.';
   static const String manikinNoCompressions =
       'No compressions were detected. Press firmly and try again.';
 
-  /// Result after the target command was sent.
-  static const String manikinSentTitle = 'Calibration sent';
+  /// Result after the target command was acknowledged by the device.
+  static const String manikinSentTitle = 'Calibration Saved';
   static const String manikinSentBody =
-      'The device will use the new depth scale from the next session. '
-      'Confirm the depth reading on the next practice run.';
+      'The device stored the new depth scale in flash memory. '
+      'It will be used from the next session.';
   static const String manikinDone = 'Done';
 
   // -----------------------------------------------------------------------
@@ -291,6 +409,13 @@ class AppStrings {
   /// Capsule marking a session running the relaxed bench profile.
   static const String liveBenchBadge = 'BENCH MODE';
 
+  /// Shown when START is rejected or the first telemetry packet never arrives.
+  static const String liveStartFailedTitle = 'Session did not start';
+  static const String liveStartFailedBody =
+      'The device did not start sending live readings. Reconnect, recalibrate, '
+      'and try again.';
+  static const String liveStartFailedAction = 'Recalibrate';
+
   // -----------------------------------------------------------------------
   // Session summary
   // -----------------------------------------------------------------------
@@ -299,10 +424,20 @@ class AppStrings {
   static const String sessionSaved = 'Session Saved';
 
   /// Status shown when the session ended before a FINAL_SUMMARY arrived.
-  /// The session is still persisted to History (§2-33).
   static const String sessionInterrupted = 'Session Interrupted (disconnected)';
   static const String sessionInterruptedDetail =
       'BLE link was lost before a final summary arrived — this session was not saved.';
+
+  /// Status shown when STOP completed but the device never returned a summary,
+  /// or when the summary is not usable (for example, zero compressions).
+  static const String sessionResultsUnavailable = 'Results Unavailable';
+  static const String sessionResultsUnavailableDetail =
+      'The device did not return a final summary, so this session was not saved.';
+
+  /// Button that re-sends GET_RESULTS from the unavailable-results screen.
+  static const String sessionRetryRetrieval = 'Retry Retrieval';
+  static const String sessionRetrievalFailed =
+      'The device still did not return a summary.';
 
   /// Shown when the session could not be written to the History database.
   static const String sessionHistoryFailed =

@@ -49,6 +49,9 @@ class SessionRecord {
   final int? ccfPercent;
   final int? totalCompressions;
 
+  /// Firmware quality_flags byte. Null for rows saved before schema v2.
+  final int? qualityFlags;
+
   // Provenance. Best-effort: any of these may be null.
   final String? deviceName;
   final String? firmwareVersion;
@@ -67,6 +70,7 @@ class SessionRecord {
     this.recoilPercent,
     this.ccfPercent,
     this.totalCompressions,
+    this.qualityFlags,
     this.deviceName,
     this.firmwareVersion,
     this.appVersion,
@@ -74,6 +78,11 @@ class SessionRecord {
 
   /// True when the session ended with a FINAL_SUMMARY packet.
   bool get isCompleted => status == SessionStatus.completed;
+
+  /// True when the firmware reported the relaxed bench profile.
+  bool get isBenchMode =>
+      qualityFlags != null &&
+      qualityFlags! & AppBleConfig.qualityBenchMode != 0;
 
   /// Compression depth in centimetres, derived from the stored tenths of a
   /// millimetre. Null for an interrupted session.
@@ -92,10 +101,11 @@ class SessionRecord {
   CprMetrics? get summary {
     if (!isCompleted || rateCpm == null) return null;
     final depth = depthCm ?? 0.0;
+    final int recoil = recoilPercent ?? 0;
     return CprMetrics(
-      packetType: 4,
-      recoilComplete: false,
-      recoilPercentage: recoilPercent ?? 0,
+      packetType: AppBleConfig.packetFinalSummary,
+      recoilComplete: recoil >= AppBleConfig.fullRecoilPercent,
+      recoilPercentage: recoil,
       rateCpm: rateCpm!,
       depthCm: depth,
       depthMm: depth * 10.0,
@@ -103,6 +113,7 @@ class SessionRecord {
       audioPromptCode: 0,
       totalCompressions: totalCompressions ?? 0,
       elapsedSeconds: durationSeconds,
+      qualityFlags: qualityFlags ?? AppBleConfig.qualitySteadyCadence,
     );
   }
 
@@ -113,21 +124,22 @@ class SessionRecord {
 
   /// This record as a database row (without [id], which SQLite assigns).
   Map<String, Object?> toMap() => <String, Object?>{
-        AppHistory.columnTraineeName: traineeName,
-        AppHistory.columnStatus: statusValue,
-        AppHistory.columnStartedAt: startedAt.toIso8601String(),
-        AppHistory.columnEndedAt: endedAt.toIso8601String(),
-        AppHistory.columnDurationSeconds: durationSeconds,
-        AppHistory.columnPacketCount: packetCount,
-        AppHistory.columnRateCpm: rateCpm,
-        AppHistory.columnDepthTenthsMm: depthTenthsMm,
-        AppHistory.columnRecoilPercent: recoilPercent,
-        AppHistory.columnCcfPercent: ccfPercent,
-        AppHistory.columnTotalCompressions: totalCompressions,
-        AppHistory.columnDeviceName: deviceName,
-        AppHistory.columnFirmwareVersion: firmwareVersion,
-        AppHistory.columnAppVersion: appVersion,
-      };
+    AppHistory.columnTraineeName: traineeName,
+    AppHistory.columnStatus: statusValue,
+    AppHistory.columnStartedAt: startedAt.toIso8601String(),
+    AppHistory.columnEndedAt: endedAt.toIso8601String(),
+    AppHistory.columnDurationSeconds: durationSeconds,
+    AppHistory.columnPacketCount: packetCount,
+    AppHistory.columnRateCpm: rateCpm,
+    AppHistory.columnDepthTenthsMm: depthTenthsMm,
+    AppHistory.columnRecoilPercent: recoilPercent,
+    AppHistory.columnCcfPercent: ccfPercent,
+    AppHistory.columnTotalCompressions: totalCompressions,
+    AppHistory.columnQualityFlags: qualityFlags,
+    AppHistory.columnDeviceName: deviceName,
+    AppHistory.columnFirmwareVersion: firmwareVersion,
+    AppHistory.columnAppVersion: appVersion,
+  };
 
   /// Rebuilds a record from a database row.
   factory SessionRecord.fromMap(Map<String, Object?> map) {
@@ -137,9 +149,10 @@ class SessionRecord {
       status: map[AppHistory.columnStatus] == AppHistory.statusInterrupted
           ? SessionStatus.interrupted
           : SessionStatus.completed,
-      startedAt:
-          DateTime.parse(map[AppHistory.columnStartedAt] as String).toLocal(),
-      endedAt: DateTime.parse(map[AppHistory.columnEndedAt] as String).toLocal(),
+      startedAt: DateTime.parse(map[AppHistory.columnStartedAt] as String)
+          .toLocal(),
+      endedAt: DateTime.parse(map[AppHistory.columnEndedAt] as String)
+          .toLocal(),
       durationSeconds: map[AppHistory.columnDurationSeconds] as int? ?? 0,
       packetCount: map[AppHistory.columnPacketCount] as int? ?? 0,
       rateCpm: map[AppHistory.columnRateCpm] as int?,
@@ -147,6 +160,7 @@ class SessionRecord {
       recoilPercent: map[AppHistory.columnRecoilPercent] as int?,
       ccfPercent: map[AppHistory.columnCcfPercent] as int?,
       totalCompressions: map[AppHistory.columnTotalCompressions] as int?,
+      qualityFlags: map[AppHistory.columnQualityFlags] as int?,
       deviceName: map[AppHistory.columnDeviceName] as String?,
       firmwareVersion: map[AppHistory.columnFirmwareVersion] as String?,
       appVersion: map[AppHistory.columnAppVersion] as String?,

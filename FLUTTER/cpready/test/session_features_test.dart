@@ -8,11 +8,17 @@ import 'package:cpready/src/config/config.dart';
 import 'package:cpready/src/core/app_scope.dart';
 import 'package:cpready/src/core/audio/voice_coach.dart';
 import 'package:cpready/src/core/ble/ble_controller.dart';
+import 'package:cpready/src/core/ble/kinematic_profile.dart';
 import 'package:cpready/src/core/history/session_repository.dart';
 import 'package:cpready/src/core/metrics/cpr_metrics.dart';
+import 'package:cpready/src/core/settings/device_settings.dart';
 import 'package:cpready/src/screens/live_practice/live_practice_screen.dart';
 import 'package:cpready/src/screens/setup/practice_setup_screen.dart';
 import 'package:cpready/src/theme/app_theme.dart';
+import 'package:cpready/src/widgets/profile_selector.dart';
+
+import 'support/fake_ble_controller.dart';
+import 'support/fake_session_repository.dart';
 
 /// History is not what these tests exercise, so the database is never opened.
 class _FailingDatabaseFactory implements DatabaseFactory {
@@ -24,13 +30,19 @@ class _FailingDatabaseFactory implements DatabaseFactory {
   }
 }
 
-Widget _harness(Widget screen, BleController controller) {
+Widget _harness(
+  Widget screen,
+  BleController controller, {
+  SessionRepository? repository,
+}) {
   return AppScope(
     controller: controller,
-    repository: SessionRepository(
-      factory: const _FailingDatabaseFactory(),
-      databasePath: 'session-features-test.db',
-    ),
+    repository:
+        repository ??
+        SessionRepository(
+          factory: const _FailingDatabaseFactory(),
+          databasePath: 'session-features-test.db',
+        ),
     voiceCoach: const SilentVoiceCoach(),
     child: MaterialApp(theme: appThemeData().theme, home: screen),
   );
@@ -63,9 +75,14 @@ void main() {
     expect(find.text(AppStrings.setupProfileBench), findsOneWidget);
     expect(find.text(AppStrings.setupProfileSendFailed), findsNothing);
 
+    // Current firmware resets K on a profile change, so the app asks first.
+    await tester.tap(find.text(AppStrings.setupProfileBench));
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.profileSwitchWarningTitle), findsOneWidget);
+
     // No device is connected in this test, so the write fails and the failed
     // mode is rolled back instead of being shown as applied.
-    await tester.tap(find.text(AppStrings.setupProfileBench));
+    await tester.tap(find.text(AppStrings.profileSwitchConfirm));
     await tester.pump();
     await tester.pump();
 
@@ -74,6 +91,40 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
+  });
+
+  testWidgets('setup restores the last known profile from local settings', (
+    WidgetTester tester,
+  ) async {
+    final FakeBleController controller = FakeBleController();
+    final FakeSessionRepository repository = FakeSessionRepository()
+      ..deviceSettings = DeviceSettings(
+        profile: KinematicProfile.bench,
+        depthK: 14.0,
+        practiceDurationSec: 120,
+        updatedAt: DateTime(2026, 10, 26, 10),
+      );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _harness(const PracticeSetupScreen(), controller, repository: repository),
+    );
+    await tester.pumpAndSettle();
+
+    final ProfileSelector selector = tester.widget<ProfileSelector>(
+      find.byType(ProfileSelector),
+    );
+    expect(selector.profile, KinematicProfile.bench);
+
+    await tester.tap(find.text(AppStrings.setupProfileManikin));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(AppStrings.profileSwitchConfirm));
+    await tester.pumpAndSettle();
+
+    expect(controller.commands, contains('SET_PROFILE:MANIKIN'));
+    expect(repository.deviceSettings?.profile, KinematicProfile.manikin);
+    expect(repository.deviceSettings?.depthK, isNull);
+    expect(find.text(AppStrings.profileSwitchResetNotice), findsOneWidget);
   });
 
   testWidgets('live header toggles the voice cues', (

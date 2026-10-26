@@ -6,9 +6,12 @@
 /// its helper line, the training-mode options, and the Continue button near
 /// the bottom.
 ///
-/// The name is the only value carried forward; the profile was already sent to
-/// the device when it was selected. The flow is:
+/// The name is the only value carried forward. The selected profile is the last
+/// value known to the app: it is loaded from the local settings row and sent to
+/// the device only when the user confirms a change. The flow is:
 /// Setup → Hand Placement → Calibration → countdown → Live Practice.
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -16,6 +19,8 @@ import 'package:go_router/go_router.dart';
 import '../../config/config.dart';
 import '../../core/app_scope.dart';
 import '../../core/ble/kinematic_profile.dart';
+import '../../core/history/session_repository.dart';
+import '../../core/settings/device_settings.dart';
 import '../../widgets/widgets.dart';
 
 /// Practice setup screen.
@@ -30,7 +35,21 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   final TextEditingController _name = TextEditingController();
 
   KinematicProfile _profile = KinematicProfile.manikin;
+  int _practiceDurationSec = AppDeviceSettings.defaultPracticeDurationSec;
   bool _profileFailed = false;
+  bool _profileResetNotice = false;
+  bool _profileSaving = false;
+  bool _settingsLoaded = false;
+  SessionRepository? _repository;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_settingsLoaded) return;
+    _settingsLoaded = true;
+    _repository = AppScope.history(context);
+    unawaited(_loadSettings());
+  }
 
   @override
   void dispose() {
@@ -40,22 +59,43 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
 
   bool get _valid => _name.text.trim().isNotEmpty;
 
+  /// Restores the last known mode so the selector does not claim MANIKIN when
+  /// the device was last switched to BENCH.
+  Future<void> _loadSettings() async {
+    try {
+      final DeviceSettings? settings = await _repository?.loadDeviceSettings();
+      if (!mounted || settings == null) return;
+      setState(() {
+        _profile = settings.profile;
+        _practiceDurationSec = settings.practiceDurationSec;
+      });
+    } catch (error) {
+      debugPrint('Device settings load failed: $error');
+    }
+  }
+
   void _continue() {
     if (!_valid) return;
     context.pushNamed(AppRoutes.handPlacement, extra: _name.text.trim());
   }
 
-  /// Sends the profile only when the user picks a different option.
+  /// Sends the profile only after the user confirms the K-reset warning.
   ///
   /// A failed write restores the previous option, because the device kept its
   /// old profile; the error line then says the change did not go through.
   Future<void> _selectProfile(KinematicProfile profile) async {
-    if (profile == _profile) return;
+    if (profile == _profile || _profileSaving) return;
+
+    final bool confirmed = await confirmProfileChange(context);
+    if (!confirmed || !mounted) return;
 
     final KinematicProfile previous = _profile;
+    final SessionRepository? repository = _repository;
     setState(() {
       _profile = profile;
       _profileFailed = false;
+      _profileResetNotice = false;
+      _profileSaving = true;
     });
 
     try {
@@ -65,8 +105,29 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
       setState(() {
         _profile = previous;
         _profileFailed = true;
+        _profileSaving = false;
       });
+      return;
     }
+
+    final DeviceSettings updated = DeviceSettings(
+      profile: profile,
+      depthK: null,
+      practiceDurationSec: _practiceDurationSec,
+      updatedAt: DateTime.now(),
+    );
+
+    try {
+      await repository?.saveDeviceSettings(updated);
+    } catch (error) {
+      debugPrint('Device settings save failed: $error');
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _profileSaving = false;
+      _profileResetNotice = true;
+    });
   }
 
   OutlineInputBorder _fieldBorder() {
@@ -176,7 +237,24 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                 ),
               ),
               SizedBox(height: AppSpacing.setupProfileTitleGap),
-              ProfileSelector(profile: _profile, onChanged: _selectProfile),
+              IgnorePointer(
+                ignoring: _profileSaving,
+                child: ProfileSelector(
+                  profile: _profile,
+                  onChanged: _selectProfile,
+                ),
+              ),
+              if (_profileResetNotice) ...<Widget>[
+                SizedBox(height: AppSpacing.flowHelperGap),
+                Text(
+                  AppStrings.profileSwitchResetNotice,
+                  style: AppTypography.style(
+                    size: AppTypography.flowHelperSize,
+                    weight: FontWeight.normal,
+                    color: AppColors.connected,
+                  ),
+                ),
+              ],
               if (_profileFailed) ...<Widget>[
                 SizedBox(height: AppSpacing.flowHelperGap),
                 Text(

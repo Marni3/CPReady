@@ -27,6 +27,7 @@ import 'src/screens/calibration/calibration_screen.dart';
 import 'src/screens/begin_compression/begin_compression_screen.dart';
 import 'src/screens/live_practice/live_practice_screen.dart';
 import 'src/screens/manikin_calibration/manikin_calibration_screen.dart';
+import 'src/screens/device_settings/device_settings_screen.dart';
 import 'src/screens/session_complete/session_complete_screen.dart';
 
 /// Trainee name carried through the practice flow in GoRouter's `extra`.
@@ -84,13 +85,21 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
         ),
         AppRoutes.livePractice: (context) =>
             LivePracticeScreen(traineeName: _traineeName(context)),
-        AppRoutes.manikinCalibration: (_) =>
-            const ManikinCalibrationScreen(),
+        AppRoutes.manikinCalibration: (_) => const ManikinCalibrationScreen(),
+        if (AppFeatures.enableDeviceSettings)
+          AppRoutes.deviceSettings: (_) => const DeviceSettingsScreen(),
         AppRoutes.sessionComplete: (context) {
           final extra = GoRouterState.of(context).extra as Map? ?? {};
+          final String reasonName = extra['reason'] as String? ?? '';
+          final SessionEndReason reason = SessionEndReason.values.firstWhere(
+            (SessionEndReason value) => value.name == reasonName,
+            orElse: () => extra['saved'] as bool? ?? false
+                ? SessionEndReason.completed
+                : SessionEndReason.interrupted,
+          );
           return SessionCompleteScreen(
             traineeName: extra['traineeName'] as String? ?? '',
-            saved: extra['saved'] as bool? ?? false,
+            reason: reason,
             summary: extra['summary'] as CprMetrics?,
             durationSeconds: extra['durationSeconds'] as int? ?? 0,
             historySaved: extra['historySaved'] as bool? ?? true,

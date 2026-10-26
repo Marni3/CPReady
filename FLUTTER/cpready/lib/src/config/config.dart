@@ -4,6 +4,7 @@ export 'app_config.dart';
 export 'assets.dart';
 export 'ble.dart';
 export 'colors.dart';
+export 'device_settings.dart';
 export 'durations.dart';
 export 'gradients.dart';
 export 'guide_steps.dart';

@@ -13,6 +13,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../config/config.dart';
 import '../../core/app_scope.dart';
@@ -46,6 +47,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
   StreamSubscription<CprMetrics>? _packetSub;
   Timer? _tick;
+  Timer? _startWatchdog;
 
   CprMetrics? _latest;
   int? _lastCount;
@@ -85,12 +87,64 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     controller.addListener(_onControllerChanged);
     _packetSub = controller.packets.listen(_onPacket);
 
+    // START is accepted only after calibration. If the device rejects it or the
+    // first notification never arrives, surface the failure instead of showing
+    // an apparently live session full of zeros forever.
+    _startWatchdog = Timer(AppDurations.startWatchdog, _onStartTimeout);
+
     // Keeps the elapsed timer and the compression-activity window current.
     _tick = Timer.periodic(AppDurations.liveTick, (_) {
       if (mounted && !_finished) {
         setState(() {});
       }
     });
+  }
+
+  void _onStartTimeout() {
+    if (!mounted || _finished || _latest != null) return;
+    _stopSessionInternals();
+    _controller?.stopRecording();
+    _controller?.resetSessionData();
+    _finished = true;
+    unawaited(_showStartFailure());
+  }
+
+  Future<void> _showStartFailure() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text(AppStrings.liveStartFailedTitle),
+        content: const Text(AppStrings.liveStartFailedBody),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text(AppStrings.liveStartFailedAction),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    final BleController? controller = _controller;
+    if (controller != null && controller.isConnected) {
+      // START was rejected or lost while the link is still up. A fresh
+      // CALIBRATE is required before the firmware will accept START again.
+      context.go(AppRoutes.calibration, extra: widget.traineeName);
+    } else {
+      context.go(AppRoutes.home);
+    }
+  }
+
+  void _stopSessionInternals() {
+    _packetSub?.cancel();
+    _packetSub = null;
+    _tick?.cancel();
+    _tick = null;
+    _startWatchdog?.cancel();
+    _startWatchdog = null;
+    _controller?.removeListener(_onControllerChanged);
+    unawaited(_coach?.stop());
   }
 
   /// True while compressions are still being counted, so the counter circle
@@ -111,6 +165,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     // cadence; only a sustained run should raise the banner.
     final bool realtime = metrics.packetType == AppBleConfig.packetRealtime;
     if (realtime) {
+      _startWatchdog?.cancel();
+      _startWatchdog = null;
       final bool unsteady = !metrics.isSteadyCadence && !metrics.isFirstStroke;
       _unsteadyPackets = unsteady ? _unsteadyPackets + 1 : 0;
     }
@@ -131,7 +187,15 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     if (metrics.packetType == AppBleConfig.packetFinalSummary &&
         !_ending &&
         !_finished) {
-      unawaited(_finish(saved: true, summary: metrics));
+      final bool usable = metrics.totalCompressions > 0;
+      unawaited(
+        _finish(
+          reason: usable
+              ? SessionEndReason.completed
+              : SessionEndReason.resultsUnavailable,
+          summary: usable ? metrics : null,
+        ),
+      );
       return;
     }
 
@@ -153,16 +217,12 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
   void _onControllerChanged() {
     if (!mounted || _finished) return;
-    if (_controller?.status != BleStatus.error) return;
+    final BleStatus? status = _controller?.status;
+    if (status != BleStatus.error && status != BleStatus.disconnected) return;
 
-    // Unexpected BLE disconnect mid-session: the session is abandoned rather
-    // than continued — nothing is saved, no summary is shown — and the
-    // link-lost notice returns to Home.
-    _finished = true;
-    _tick?.cancel();
-    _controller?.stopRecording();
-    unawaited(_coach?.stop());
-    unawaited(abortFlowToHome(context));
+    // A dropped link abandons the session. Show the interrupted result rather
+    // than returning silently to Home, and never write an interrupted row.
+    unawaited(_finish(reason: SessionEndReason.interrupted, summary: null));
   }
 
   Future<void> _endSession() async {
@@ -173,11 +233,10 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     setState(() => _ending = true);
 
     // Listen for FINAL_SUMMARY before/while sending STOP.
-    final summaryFuture = controller.packets
-        .where((m) => m.packetType == AppBleConfig.packetFinalSummary)
-        .first
-        .then<CprMetrics?>((m) => m)
-        .timeout(AppDurations.finalSummaryTimeout, onTimeout: () => null);
+    final summaryFuture = controller.awaitPacketWhere(
+      (m) => m.packetType == AppBleConfig.packetFinalSummary,
+      timeout: AppDurations.finalSummaryTimeout,
+    );
 
     try {
       await controller.sendCommand(AppBleConfig.commandStop);
@@ -185,46 +244,83 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       // Connection may already be gone; the timeout below decides.
     }
 
-    final summary = await summaryFuture;
+    CprMetrics? summary = await summaryFuture;
+
+    // The guide requires one GET_RESULTS recovery before declaring the results
+    // unavailable. The firmware caches the last summary in RAM precisely for
+    // this case.
+    if (summary == null && controller.isConnected) {
+      summary = await _requestResults(controller);
+    }
 
     if (!mounted || _finished) return;
-    await _finish(saved: summary != null, summary: summary);
+    final bool usable = summary != null && summary.totalCompressions > 0;
+    await _finish(
+      reason: usable
+          ? SessionEndReason.completed
+          : SessionEndReason.resultsUnavailable,
+      summary: usable ? summary : null,
+    );
+  }
+
+  /// Sends GET_RESULTS and waits for a Type 4 summary.
+  Future<CprMetrics?> _requestResults(BleController controller) async {
+    final summaryFuture = controller.awaitPacketWhere(
+      (m) => m.packetType == AppBleConfig.packetFinalSummary,
+      timeout: AppDurations.getResultsTimeout,
+    );
+    try {
+      await controller.sendCommand(AppBleConfig.commandGetResults);
+    } catch (error) {
+      debugPrint('GET_RESULTS failed: $error');
+      return null;
+    }
+    return summaryFuture;
   }
 
   Future<void> _finish({
-    required bool saved,
+    required SessionEndReason reason,
     required CprMetrics? summary,
   }) async {
     if (_finished) return;
     _finished = true;
 
     final controller = _controller;
-    _packetSub?.cancel();
-    _tick?.cancel();
-    controller?.removeListener(_onControllerChanged);
-    unawaited(_coach?.stop());
+    _stopSessionInternals();
 
     if (!mounted || controller == null) return;
 
-    final int recorded = controller.stopRecording().length;
     final DateTime startedAt = controller.sessionStartedAt ?? DateTime.now();
+    final int recorded = controller.stopRecording().length;
     final DateTime endedAt = controller.sessionEndedAt ?? DateTime.now();
 
+    // A completed result must carry a usable summary. A zero-compression STOP
+    // is an accidental early end, not a session worth saving.
+    SessionEndReason finalReason = reason;
+    if (finalReason == SessionEndReason.completed &&
+        (summary == null || summary.totalCompressions <= 0)) {
+      finalReason = SessionEndReason.resultsUnavailable;
+    }
+    final CprMetrics? finalSummary = finalReason == SessionEndReason.completed
+        ? summary
+        : null;
+
     // Firmware duration when a summary exists, else the app-measured span.
-    final int durationSeconds = summary != null
-        ? summary.elapsedSeconds
+    final int durationSeconds = finalSummary != null
+        ? finalSummary.elapsedSeconds
         : endedAt.difference(startedAt).inSeconds;
 
-    // Persist before the result screen, so a saved row always exists when the
-    // result is shown.
-    final bool historySaved = await _persistSession(
-      controller,
-      summary,
-      recorded,
-      startedAt,
-      endedAt,
-      durationSeconds,
-    );
+    bool historySaved = true;
+    if (finalReason == SessionEndReason.completed) {
+      historySaved = await _persistSession(
+        controller,
+        finalSummary!,
+        recorded,
+        startedAt,
+        endedAt,
+        durationSeconds,
+      );
+    }
 
     if (!mounted) return;
 
@@ -232,22 +328,51 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       MaterialPageRoute(
         builder: (_) => SessionCompleteScreen(
           traineeName: widget.traineeName,
-          saved: saved,
-          summary: summary,
+          reason: finalReason,
+          summary: finalSummary,
           durationSeconds: durationSeconds,
           historySaved: historySaved,
+          onRetryRetrieval: finalReason == SessionEndReason.resultsUnavailable
+              ? _retryRetrieval
+              : null,
         ),
       ),
     );
   }
 
-  /// Writes the finished session to History.
+  /// Handles the manual Retry Retrieval action on the result screen.
+  Future<SessionResultData?> _retryRetrieval() async {
+    final controller = _controller;
+    if (controller == null || !controller.isConnected) return null;
+
+    final summary = await _requestResults(controller);
+    if (summary == null || summary.totalCompressions <= 0) return null;
+
+    final DateTime startedAt = controller.sessionStartedAt ?? DateTime.now();
+    final DateTime endedAt = controller.sessionEndedAt ?? DateTime.now();
+    final bool historySaved = await _persistSession(
+      controller,
+      summary,
+      controller.sessionPackets.length,
+      startedAt,
+      endedAt,
+      summary.elapsedSeconds,
+    );
+
+    return SessionResultData(
+      reason: SessionEndReason.completed,
+      summary: summary,
+      historySaved: historySaved,
+    );
+  }
+
+  /// Writes a completed session to History.
   ///
   /// Returns false when the write failed, so the result screen can say the
   /// session was not stored. Never throws.
   Future<bool> _persistSession(
     BleController controller,
-    CprMetrics? summary,
+    CprMetrics summary,
     int packets,
     DateTime startedAt,
     DateTime endedAt,
@@ -256,20 +381,19 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     final repository = _repository;
     if (repository == null) return false;
 
-    final bool completed = summary != null;
-
     final record = SessionRecord(
       traineeName: widget.traineeName,
-      status: completed ? SessionStatus.completed : SessionStatus.interrupted,
+      status: SessionStatus.completed,
       startedAt: startedAt,
       endedAt: endedAt,
       durationSeconds: durationSeconds,
       packetCount: packets,
-      rateCpm: summary?.rateCpm,
-      depthTenthsMm: summary == null ? null : (summary.depthCm * 100).round(),
-      recoilPercent: summary?.recoilPercentage,
-      ccfPercent: summary?.ccfPercent,
-      totalCompressions: summary?.totalCompressions,
+      rateCpm: summary.rateCpm,
+      depthTenthsMm: (summary.depthCm * 100).round(),
+      recoilPercent: summary.recoilPercentage,
+      ccfPercent: summary.ccfPercent,
+      totalCompressions: summary.totalCompressions,
+      qualityFlags: summary.qualityFlags,
       deviceName: controller.deviceName,
       appVersion: AppIdentity.version,
     );
@@ -286,10 +410,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
   @override
   void dispose() {
-    _packetSub?.cancel();
-    _tick?.cancel();
-    _controller?.removeListener(_onControllerChanged);
-    unawaited(_coach?.stop());
+    _stopSessionInternals();
     super.dispose();
   }
 
@@ -345,7 +466,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                           _TimerBlock(startedAt: controller?.sessionStartedAt),
                           if (latest?.isBenchMode ?? false) ...<Widget>[
                             SizedBox(height: AppSpacing.liveBenchBadgeTopGap),
-                            const Center(child: _BenchBadge()),
+                            const Center(child: BenchBadge()),
                           ],
                           if (_cadenceWarning) ...<Widget>[
                             SizedBox(height: AppSpacing.liveNoticeTopGap),
@@ -592,33 +713,6 @@ class _CadenceWarning extends StatelessWidget {
           size: AppTypography.liveNoticeSize,
           weight: FontWeight.bold,
           color: AppColors.liveWarningText,
-        ),
-      ),
-    );
-  }
-}
-
-/// Capsule marking a session that runs the relaxed bench profile.
-class _BenchBadge extends StatelessWidget {
-  const _BenchBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: AppSpacing.liveBenchBadgePaddingH,
-        vertical: AppSpacing.liveBenchBadgePaddingV,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.liveBenchBadgeBackground,
-        borderRadius: BorderRadius.circular(AppSizes.liveBenchBadgeRadius),
-      ),
-      child: Text(
-        AppStrings.liveBenchBadge,
-        style: AppTypography.style(
-          size: AppTypography.liveBenchBadgeSize,
-          weight: FontWeight.bold,
-          color: AppColors.liveBenchBadgeText,
         ),
       ),
     );
