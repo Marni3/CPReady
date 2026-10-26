@@ -38,6 +38,7 @@ private:
     float calChestMax;        // Maximum raw chest reading during calibration
     float calBaseMin;         // Minimum raw base reading during calibration
     float calBaseMax;         // Maximum raw base reading during calibration
+    mutable uint8_t lastCalibrationFailureReason;
 
 public:
     SensorManager() 
@@ -55,7 +56,8 @@ public:
           calChestSum(0.0f), calBaseSum(0.0f), calSampleCount(0), isCalibrated(false),
           calNetMin(999.0f), calNetMax(-999.0f),
           calChestMin(999.0f), calChestMax(-999.0f),
-          calBaseMin(999.0f), calBaseMax(-999.0f) {}
+          calBaseMin(999.0f), calBaseMax(-999.0f),
+          lastCalibrationFailureReason(ERR_NONE) {}
 
     // Multiplexer Channel Switching Helpers (with capacitive settling delay)
     void selectMuxChannel(uint8_t channel) {
@@ -391,6 +393,7 @@ public:
         calChestMax = -999.0f;
         calBaseMin = 999.0f;
         calBaseMax = -999.0f;
+        lastCalibrationFailureReason = ERR_NONE;
     }
 
     // Called periodically during the idle baseline window (with optional 100 Hz rate limiting)
@@ -452,40 +455,50 @@ public:
     // Multi-tier calibration verification: sample count, motion spread, gravity sanity, and sensor alignment
     bool isCalibrationStable() const {
         if (calSampleCount < CPReadyConfig::CALIBRATION_MIN_SAMPLE_COUNT) {
+            lastCalibrationFailureReason = ERR_LOW_SAMPLE_COUNT;
             Serial.printf("[CALIB FAIL] Sample count low: %d / %d\n", calSampleCount, CPReadyConfig::CALIBRATION_SAMPLE_COUNT);
             return false;
         }
         if ((calNetMax - calNetMin) > CPReadyConfig::CALIBRATION_MAX_NET_SPREAD_G) {
+            lastCalibrationFailureReason = ERR_MOTION_UNSTABLE;
             Serial.printf("[CALIB FAIL] Net motion spread: %.2fg > %.2fg\n", (calNetMax - calNetMin), CPReadyConfig::CALIBRATION_MAX_NET_SPREAD_G);
             return false;
         }
         if ((calChestMax - calChestMin) > CPReadyConfig::CALIBRATION_MAX_CHEST_SPREAD_G) {
+            lastCalibrationFailureReason = ERR_MOTION_UNSTABLE;
             Serial.printf("[CALIB FAIL] Chest motion spread: %.2fg > %.2fg\n", (calChestMax - calChestMin), CPReadyConfig::CALIBRATION_MAX_CHEST_SPREAD_G);
             return false;
         }
         if (chestGravityOffset < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || chestGravityOffset > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
+            lastCalibrationFailureReason = ERR_GRAVITY_IMPLAUSIBLE;
             Serial.printf("[CALIB FAIL] Chest gravity implausible: %.2fg\n", chestGravityOffset);
             return false;
         }
 
         #if USE_DUAL_MPU
         if ((calBaseMax - calBaseMin) > CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G) {
+            lastCalibrationFailureReason = ERR_MOTION_UNSTABLE;
             Serial.printf("[CALIB FAIL] Base motion spread: %.2fg > %.2fg\n", (calBaseMax - calBaseMin), CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G);
             return false;
         }
         if (baseGravityOffset < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || baseGravityOffset > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
+            lastCalibrationFailureReason = ERR_GRAVITY_IMPLAUSIBLE;
             Serial.printf("[CALIB FAIL] Base gravity implausible: %.2fg\n", baseGravityOffset);
             return false;
         }
         if (fabsf(chestGravityOffset - baseGravityOffset) > CPReadyConfig::CALIBRATION_MAX_ALIGNMENT_DIFF_G) {
+            lastCalibrationFailureReason = ERR_SENSOR_ALIGNMENT;
             Serial.printf("[CALIB FAIL] Tilt/pre-pressure divergence: %.2fg > %.2fg\n", 
                 fabsf(chestGravityOffset - baseGravityOffset), CPReadyConfig::CALIBRATION_MAX_ALIGNMENT_DIFF_G);
             return false;
         }
         #endif
 
+        lastCalibrationFailureReason = ERR_NONE;
         return true;
     }
+
+    uint8_t getCalibrationFailureReason() const { return lastCalibrationFailureReason; }
 
     // Primary sampling function intended to run at configured rate (default 100 Hz)
     bool sample100Hz(float& outNetAccel, uint32_t currentMicros) {

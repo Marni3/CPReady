@@ -112,10 +112,11 @@ static CPRMetricsPacket makeCalibrationPacket(uint8_t packetType, uint16_t elaps
     return pkt;
 }
 
-/** Error packets are all-zero apart from the type, as in main.cpp. */
-static CPRMetricsPacket makeErrorPacket() {
+/** Error packets carry an optional reason code in audio_prompt_code (Byte 7), matching main.cpp. */
+static CPRMetricsPacket makeErrorPacket(uint8_t reason = ERR_NONE) {
     CPRMetricsPacket pkt{};
-    pkt.packet_type = PKT_TYPE_ERROR;
+    pkt.packet_type       = PKT_TYPE_ERROR;
+    pkt.audio_prompt_code = reason;
     return pkt;
 }
 
@@ -209,6 +210,11 @@ static void handleBleCommand(String message) {
     Serial.println("[BLE CMD] Received: " + message);
 
     if (message == "CALIBRATE") {
+        if (simState == DeviceState::ACTIVE_SESSION) {
+            Serial.println("[FLOW] Calibrate rejected: active session running.");
+            simBle.sendPacket(makeErrorPacket(ERR_WRONG_STATE));
+            return;
+        }
         beginSimCalibration(millis());
     }
     else if (message == "START") {
@@ -217,7 +223,7 @@ static void handleBleCommand(String message) {
         }
         else if (simState == DeviceState::CALIBRATING) {
             Serial.println("[FLOW] Start rejected: calibration still running.");
-            simBle.sendPacket(makeErrorPacket());
+            simBle.sendPacket(makeErrorPacket(ERR_WRONG_STATE));
         }
         else {
             Serial.println("[FLOW] Start from an uncalibrated state; running calibration first.");
@@ -289,7 +295,7 @@ static void handleBleCommand(String message) {
         else {
             Serial.printf("[CALIB] Target %.2f cm rejected: no completed session depth available.\n",
                           targetCm);
-            simBle.sendPacket(makeErrorPacket());
+            simBle.sendPacket(makeErrorPacket(ERR_NO_TRIAL_DATA));
         }
     }
     else if (message == "RESET_CONFIG") {
@@ -448,7 +454,10 @@ static void updateCalibration(uint32_t now, uint32_t nowMicros) {
     }
     else {
         simState = DeviceState::STANDBY;
-        simBle.sendPacket(makeErrorPacket());
+        uint8_t reason = (simCalibrationSamples < CPReadyConfig::CALIBRATION_MIN_SAMPLE_COUNT)
+            ? ERR_LOW_SAMPLE_COUNT
+            : ERR_MOTION_UNSTABLE;
+        simBle.sendPacket(makeErrorPacket(reason));
         Serial.printf("[CALIB FAIL] Samples %u (min %u), net spread %.2f g (max %.2f g).\n",
                       (unsigned)simCalibrationSamples,
                       (unsigned)CPReadyConfig::CALIBRATION_MIN_SAMPLE_COUNT,

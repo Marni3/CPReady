@@ -65,6 +65,12 @@ void onReceiveMessage_BLE(String message) {
     Serial.println("[BLE CMD] Received: " + message);
 
     if (message == "CALIBRATE") {
+        if (state == DeviceState::ACTIVE_SESSION) {
+            Serial.println("[FLOW WARN] Calibrate requested while session is active! Rejecting.");
+            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, ERR_WRONG_STATE, 0, 0, 0};
+            ble.sendPacket(errPkt);
+            return;
+        }
         Serial.println("[FLOW] Calibrate received. Initiating stationary baseline calibration...");
         sensors.resetCalibration();
         calibrationStartMillis = millis();
@@ -84,7 +90,7 @@ void onReceiveMessage_BLE(String message) {
         }
         else if (state == DeviceState::CALIBRATING) {
             Serial.println("[FLOW WARN] Start requested while calibration is still ongoing! Rejecting.");
-            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0, 0};
+            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, ERR_WRONG_STATE, 0, 0, 0};
             ble.sendPacket(errPkt);
         }
         else {
@@ -157,7 +163,7 @@ void onReceiveMessage_BLE(String message) {
             ble.sendPacket(calibDonePkt);
         } else {
             Serial.printf("[CALIB ERR] Failed to calibrate target %.2f cm: no valid completed session depth found!\n", targetCm);
-            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0, 0};
+            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, ERR_NO_TRIAL_DATA, 0, 0, 0};
             ble.sendPacket(errPkt);
         }
     }
@@ -273,8 +279,9 @@ void loop() {
             #if !ENABLE_DEMO_MODE
             sensors.finalizeCalibration();
             if (!sensors.isCalibrationStable()) {
-                Serial.println("[ERROR] Calibration aborted: stability/plausibility checks failed.");
-                CPRMetricsPacket errorPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, PROMPT_NONE, 0, 0, 0};
+                uint8_t reason = sensors.getCalibrationFailureReason();
+                Serial.printf("[ERROR] Calibration aborted: stability/plausibility checks failed (reason=%d).\n", reason);
+                CPRMetricsPacket errorPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, reason, 0, 0, 0};
                 ble.sendPacket(errorPkt);
                 sensors.resetCalibration();
                 state = DeviceState::STANDBY;
