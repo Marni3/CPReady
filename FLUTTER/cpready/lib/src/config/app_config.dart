@@ -27,6 +27,7 @@ class AppRoutes {
   static const String livePractice = '/live_practice';
   static const String sessionComplete = '/session_complete';
   static const String manikinCalibration = '/manikin_calibration';
+  static const String deviceSettings = '/device_settings';
 
   static const List<String> all = <String>[
     splash,
@@ -42,6 +43,7 @@ class AppRoutes {
     livePractice,
     sessionComplete,
     manikinCalibration,
+    deviceSettings,
   ];
 }
 
@@ -49,6 +51,12 @@ class AppRoutes {
 class AppFeatures {
   static const bool requireHoldToEnd = true;
   static const bool showSplash = true;
+
+  /// Shows the Device Settings entry on the Home connected card.
+  ///
+  /// The screen remains usable against firmware without F-01 by falling back
+  /// to locally saved values; this flag is the rollback switch from PLAN.md.
+  static const bool enableDeviceSettings = true;
 }
 
 /// Aggregates identity, routes, and features.

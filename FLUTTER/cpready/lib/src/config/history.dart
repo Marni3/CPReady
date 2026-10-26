@@ -21,7 +21,9 @@ class AppHistory {
   /// Bump this and add a matching `case` to the repository's migration switch
   /// whenever the table shape changes, so existing installs upgrade instead of
   /// losing their history.
-  static const int schemaVersion = 1;
+  ///
+  /// v3 is additive: it only creates the Device Settings table.
+  static const int schemaVersion = 3;
 
   // -----------------------------------------------------------------------
   // Table and columns
@@ -44,14 +46,18 @@ class AppHistory {
   static const String columnCcfPercent = 'ccf_percent';
   static const String columnTotalCompressions = 'total_compressions';
 
+  /// Firmware quality_flags byte (steady/first-stroke/bench mode).
+  static const String columnQualityFlags = 'quality_flags';
+
   // Provenance.
   static const String columnDeviceName = 'device_name';
   static const String columnFirmwareVersion = 'firmware_version';
   static const String columnAppVersion = 'app_version';
 
-  /// Schema v1 DDL: one row per finished practice session, summary metrics
-  /// only (the firmware's FINAL_SUMMARY packet, stored verbatim).
-  static const String createSessionsV1 = '''
+  /// Schema v1 DDL. Kept for migration tests and for documentation of the
+  /// shape that existed before [columnQualityFlags] was added.
+  static const String createSessionsV1 =
+      '''
 CREATE TABLE $tableSessions (
   $columnId                 INTEGER PRIMARY KEY AUTOINCREMENT,
   $columnTraineeName        TEXT    NOT NULL,
@@ -70,6 +76,34 @@ CREATE TABLE $tableSessions (
   $columnAppVersion         TEXT
 )
 ''';
+
+  /// Schema v2 DDL: v1 plus the firmware's quality flags.
+  static const String createSessionsV2 =
+      '''
+CREATE TABLE $tableSessions (
+  $columnId                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  $columnTraineeName        TEXT    NOT NULL,
+  $columnStatus             TEXT    NOT NULL,
+  $columnStartedAt          TEXT    NOT NULL,
+  $columnEndedAt            TEXT    NOT NULL,
+  $columnDurationSeconds    INTEGER NOT NULL,
+  $columnPacketCount        INTEGER NOT NULL,
+  $columnRateCpm            INTEGER,
+  $columnDepthTenthsMm      INTEGER,
+  $columnRecoilPercent      INTEGER,
+  $columnCcfPercent         INTEGER,
+  $columnTotalCompressions  INTEGER,
+  $columnQualityFlags       INTEGER,
+  $columnDeviceName         TEXT,
+  $columnFirmwareVersion    TEXT,
+  $columnAppVersion         TEXT
+)
+''';
+
+  /// Additive v1 → v2 migration. Existing rows keep all their data and get a
+  /// null quality_flags value.
+  static const String migrateSessionsV1ToV2 =
+      'ALTER TABLE $tableSessions ADD COLUMN $columnQualityFlags INTEGER';
 
   // -----------------------------------------------------------------------
   // Session status values (stored verbatim in [columnStatus])

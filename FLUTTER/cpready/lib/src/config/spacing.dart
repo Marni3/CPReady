@@ -74,6 +74,9 @@ class AppSpacing {
   /// Vertical breathing room around the top + bottom dividers.
   static double get dividerGap => AppScale.h(18.0);
 
+  /// Gap between the header wordmark and its settings button.
+  static double get headerSettingsGap => AppScale.w(8.0);
+
   // -----------------------------------------------------------------------
   // Practice screen
   // -----------------------------------------------------------------------

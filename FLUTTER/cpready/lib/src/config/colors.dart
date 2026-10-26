@@ -60,6 +60,9 @@ class AppColors {
   /// "Home" page label (and its underline) in the home header.
   static const Color homePageText = Color(0xFF3B3A3A);
 
+  /// Header gear that opens Device Settings.
+  static const Color headerSettingsIcon = brandBlue;
+
   /// Thin grey divider (top header + bottom nav).
   static const Color divider = Color(0xFFD9D9D9);
 

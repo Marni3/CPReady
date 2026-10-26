@@ -29,7 +29,8 @@ class AppScope extends InheritedWidget {
 
   static BleController of(BuildContext context) => _scopeOf(context).controller;
 
-  /// The History store — the single writer for saved practice sessions.
+  /// The local SQLite store — the single writer for saved practice sessions and
+  /// the last known device settings.
   static SessionRepository history(BuildContext context) =>
       _scopeOf(context).repository;
 

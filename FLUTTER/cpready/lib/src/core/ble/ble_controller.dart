@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../config/config.dart';
 import 'ble.dart';
+import 'device_config.dart';
 import '../metrics/cpr_metrics.dart';
 
 /// High-level connection status surfaced to the UI.
@@ -166,7 +167,7 @@ class BleController extends ChangeNotifier {
       return true;
     } catch (e) {
       status = BleStatus.error;
-      lastError = 'Connection failed: ';
+      lastError = 'Connection failed: $e';
       notifyListeners();
       return false;
     }
@@ -201,12 +202,85 @@ class BleController extends ChangeNotifier {
   ///
   /// Serialized through a sequential FIFO queue with 150ms pacing between
   /// successive GATT writes to protect the BLE stack and prevent command loss.
+  ///
+  /// Throws [StateError] when the link is down. Callers must not report a
+  /// command as successful if the write never left the phone.
   Future<void> sendCommand(String command) {
     if (!isConnected) {
-      debugPrint('[BLE] Not connected; skipping command: ');
-      return Future.value();
+      throw StateError('BLE is not connected; command not sent: $command');
     }
     return _commandQueue.enqueue(() => ble.sendCommand(command));
+  }
+
+  /// Waits for the next packet that satisfies [test].
+  ///
+  /// Create the future before calling [sendCommand] so an immediate reply is
+  /// not missed. Returns null when [timeout] elapses.
+  Future<CprMetrics?> awaitPacketWhere(
+    bool Function(CprMetrics) test, {
+    required Duration timeout,
+  }) {
+    return packets
+        .firstWhere(test)
+        .then<CprMetrics?>((CprMetrics metrics) => metrics)
+        .timeout(timeout, onTimeout: () => null);
+  }
+
+  /// Sends GET_CONFIG and waits for one Type 6 report.
+  ///
+  /// Returns null when the firmware does not answer within [timeout] (current
+  /// firmware only prints to Serial). The listener is installed before the
+  /// write so a fast reply is not missed, and it is cancelled on timeout or a
+  /// failed write.
+  Future<DeviceConfig?> requestConfig({required Duration timeout}) async {
+    if (!isConnected) {
+      throw StateError('BLE is not connected; GET_CONFIG not sent');
+    }
+
+    final Completer<DeviceConfig?> completer = Completer<DeviceConfig?>();
+    Timer? timer;
+    StreamSubscription<DeviceConfig>? subscription;
+
+    void finish(DeviceConfig? config) {
+      if (completer.isCompleted) return;
+      timer?.cancel();
+      unawaited(subscription?.cancel());
+      completer.complete(config);
+    }
+
+    subscription = ble.configReports.listen(
+      finish,
+      onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Config report stream error: $error');
+        finish(null);
+      },
+      onDone: () => finish(null),
+    );
+
+    timer = Timer(timeout, () => finish(null));
+
+    try {
+      await sendCommand(AppBleConfig.commandGetConfig);
+    } catch (error, stackTrace) {
+      timer.cancel();
+      await subscription.cancel();
+      if (!completer.isCompleted) {
+        completer.completeError(error, stackTrace);
+      }
+    }
+
+    return completer.future;
+  }
+
+  /// Clears per-session state after an aborted or discarded session.
+  ///
+  /// Connection state is intentionally untouched: the link may still be up.
+  void resetSessionData() {
+    sessionPackets.clear();
+    recording = false;
+    lastPacketAt = null;
+    sessionStartedAt = null;
+    sessionEndedAt = null;
   }
 
   /// Runs a packet through the normal fan-out without a device, so widget

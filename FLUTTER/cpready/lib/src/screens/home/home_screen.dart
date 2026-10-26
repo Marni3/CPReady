@@ -14,6 +14,8 @@ import 'package:go_router/go_router.dart';
 import '../../config/config.dart';
 import '../../core/app_scope.dart';
 import '../../core/ble/ble_controller.dart';
+import '../../core/ble/kinematic_profile.dart';
+import '../../core/settings/device_settings.dart';
 import '../../widgets/widgets.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -171,7 +173,8 @@ class _DeviceCard extends StatelessWidget {
               ? _ConnectingContent(
                   connected: connected,
                   onCalibrate: () =>
-                      context.pushNamed(AppRoutes.manikinCalibration),
+                      unawaited(_openManikinCalibration(context)),
+                  onSettings: () => context.pushNamed(AppRoutes.deviceSettings),
                 )
               : _NotConnectedContent(controller: controller),
         );
@@ -234,10 +237,12 @@ class _ConnectingContent extends StatelessWidget {
   const _ConnectingContent({
     required this.connected,
     required this.onCalibrate,
+    required this.onSettings,
   });
 
   final bool connected;
   final VoidCallback onCalibrate;
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -286,6 +291,13 @@ class _ConnectingContent extends StatelessWidget {
             label: AppStrings.homeManikinCalibration,
             onPressed: onCalibrate,
           ),
+          if (AppFeatures.enableDeviceSettings) ...<Widget>[
+            SizedBox(height: AppSpacing.flowActionStackGap),
+            FlatActionButton(
+              label: AppStrings.homeDeviceSettings,
+              onPressed: onSettings,
+            ),
+          ],
         ] else
           const _ScanningLabel(),
       ],
@@ -362,6 +374,54 @@ class _InfoCard extends StatelessWidget {
       ),
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Entry-point guards
+// ---------------------------------------------------------------------------
+
+/// Manikin depth calibration is only meaningful on the MANIKIN profile.
+///
+/// The local settings row is the app's best knowledge when firmware has no
+/// read-back. If it says BENCH, send the user to Device Settings instead of
+/// starting a calibration against the wrong thresholds.
+Future<void> _openManikinCalibration(BuildContext context) async {
+  DeviceSettings? settings;
+  try {
+    settings = await AppScope.history(context).loadDeviceSettings();
+  } catch (error) {
+    // No local fallback: let the existing calibration flow handle the device.
+    debugPrint('Device settings load failed: $error');
+  }
+
+  if (!context.mounted) return;
+
+  if (settings?.profile == KinematicProfile.bench) {
+    final bool? openSettings = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text(AppStrings.homeCalibrationRequiresManikinTitle),
+        content: const Text(AppStrings.homeCalibrationRequiresManikinBody),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text(AppStrings.actionCancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text(AppStrings.homeCalibrationRequiresManikinAction),
+          ),
+        ],
+      ),
+    );
+
+    if (openSettings == true && context.mounted) {
+      context.pushNamed(AppRoutes.deviceSettings);
+    }
+    return;
+  }
+
+  context.pushNamed(AppRoutes.manikinCalibration);
 }
 
 // ---------------------------------------------------------------------------

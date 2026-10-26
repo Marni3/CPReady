@@ -8,6 +8,8 @@
 /// Every visual value comes from `lib/src/config/`; this file only composes
 /// widgets.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -17,15 +19,45 @@ import '../../core/metrics/cpr_metrics.dart';
 import '../../core/tab_state.dart';
 import '../../widgets/widgets.dart';
 
+/// Why the result screen is being shown.
+enum SessionEndReason {
+  /// A usable FINAL_SUMMARY arrived and the session was saved.
+  completed,
+
+  /// The BLE link dropped before a summary arrived.
+  interrupted,
+
+  /// STOP completed but no usable summary arrived.
+  resultsUnavailable,
+}
+
+/// Data returned when a results-retrieval retry succeeds.
+class SessionResultData {
+  /// The reason the results screen should now show.
+  final SessionEndReason reason;
+
+  /// The retrieved firmware summary.
+  final CprMetrics summary;
+
+  /// False when the retrieved summary could not be written to History.
+  final bool historySaved;
+
+  const SessionResultData({
+    required this.reason,
+    required this.summary,
+    required this.historySaved,
+  });
+}
+
 /// Result screen shown after a session ends.
-class SessionCompleteScreen extends StatelessWidget {
+class SessionCompleteScreen extends StatefulWidget {
   /// Trainee the session is filed under.
   final String traineeName;
 
-  /// True when the firmware's FINAL_SUMMARY arrived.
-  final bool saved;
+  /// Why the session ended.
+  final SessionEndReason reason;
 
-  /// Firmware summary; null when the session was interrupted.
+  /// Firmware summary; null when no usable summary exists.
   final CprMetrics? summary;
 
   /// Firmware-reported duration when a summary exists, otherwise the
@@ -35,14 +67,30 @@ class SessionCompleteScreen extends StatelessWidget {
   /// False when the session could not be written to the History database.
   final bool historySaved;
 
+  /// Optional GET_RESULTS retry used by the results-unavailable state.
+  final Future<SessionResultData?> Function()? onRetryRetrieval;
+
   const SessionCompleteScreen({
     super.key,
     required this.traineeName,
-    required this.saved,
+    required this.reason,
     required this.summary,
     required this.durationSeconds,
     this.historySaved = true,
+    this.onRetryRetrieval,
   });
+
+  @override
+  State<SessionCompleteScreen> createState() => _SessionCompleteScreenState();
+}
+
+class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
+  late SessionEndReason _reason = widget.reason;
+  late CprMetrics? _summary = widget.summary;
+  late int _durationSeconds = widget.durationSeconds;
+  late bool _historySaved = widget.historySaved;
+  bool _retrying = false;
+  bool _retryFailed = false;
 
   void _returnToHome(BuildContext context) {
     // Home is tab 0 of the shell; reset to the root and let MainShell open it.
@@ -50,8 +98,42 @@ class SessionCompleteScreen extends StatelessWidget {
     context.go(AppRoutes.home);
   }
 
+  Future<void> _retryRetrieval() async {
+    final callback = widget.onRetryRetrieval;
+    if (callback == null || _retrying) return;
+
+    setState(() {
+      _retrying = true;
+      _retryFailed = false;
+    });
+
+    SessionResultData? result;
+    try {
+      result = await callback();
+    } catch (error) {
+      debugPrint('Results retrieval retry failed: $error');
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _retrying = false;
+      if (result == null) {
+        _retryFailed = true;
+        return;
+      }
+      _reason = result.reason;
+      _summary = result.summary;
+      _durationSeconds = result.summary.elapsedSeconds;
+      _historySaved = result.historySaved;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final bool showRetry =
+        _reason == SessionEndReason.resultsUnavailable &&
+        widget.onRetryRetrieval != null;
+
     return PopScope(
       canPop: false, // explicit exit only, never back into the session
       child: AdaptiveScreen(
@@ -85,15 +167,30 @@ class SessionCompleteScreen extends StatelessWidget {
                   padding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.summaryTitleInsetH,
                   ),
-                  child: _SavedBanner(saved: saved, historySaved: historySaved),
+                  child: _SavedBanner(
+                    reason: _reason,
+                    historySaved: _historySaved,
+                  ),
                 ),
+                if (_retryFailed) ...<Widget>[
+                  SizedBox(height: AppSpacing.small),
+                  Text(
+                    AppStrings.sessionRetrievalFailed,
+                    textAlign: TextAlign.center,
+                    style: AppTypography.style(
+                      size: AppTypography.bodySmallSize,
+                      weight: FontWeight.normal,
+                      color: AppColors.summaryFailedText,
+                    ),
+                  ),
+                ],
                 SizedBox(height: AppSpacing.summaryTraineeGap),
                 Padding(
                   padding: EdgeInsets.symmetric(
                     horizontal: AppSpacing.summaryTitleInsetH,
                   ),
                   child: Text(
-                    '${AppStrings.sessionTrainee}: $traineeName',
+                    '${AppStrings.sessionTrainee}: ${widget.traineeName}',
                     style: AppTypography.style(
                       size: AppTypography.summaryTraineeSize,
                       weight: AppTypography.headingWeight,
@@ -101,17 +198,22 @@ class SessionCompleteScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                SizedBox(height: AppSpacing.summaryPanelGap),
-                if (summary != null)
+                if (_summary != null) ...<Widget>[
+                  if (_summary!.isBenchMode) ...<Widget>[
+                    SizedBox(height: AppSpacing.small),
+                    const Center(child: BenchBadge()),
+                  ],
+                  SizedBox(height: AppSpacing.summaryPanelGap),
                   Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.summaryPanelInsetH,
                     ),
                     child: _MetricsPanel(
-                      metrics: summary!,
-                      durationSeconds: durationSeconds,
+                      metrics: _summary!,
+                      durationSeconds: _durationSeconds,
                     ),
                   ),
+                ],
               ],
             ),
             Padding(
@@ -120,9 +222,23 @@ class SessionCompleteScreen extends StatelessWidget {
                 left: AppSpacing.summaryActionInsetH,
                 right: AppSpacing.summaryActionInsetH,
               ),
-              child: FlatActionButton(
-                label: AppStrings.sessionReturnToHome,
-                onPressed: () => _returnToHome(context),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (showRetry) ...<Widget>[
+                    FlatActionButton(
+                      label: AppStrings.sessionRetryRetrieval,
+                      onPressed: _retrying
+                          ? null
+                          : () => unawaited(_retryRetrieval()),
+                    ),
+                    SizedBox(height: AppSpacing.flowActionStackGap),
+                  ],
+                  FlatActionButton(
+                    label: AppStrings.sessionReturnToHome,
+                    onPressed: () => _returnToHome(context),
+                  ),
+                ],
               ),
             ),
           ],
@@ -132,16 +248,16 @@ class SessionCompleteScreen extends StatelessWidget {
   }
 }
 
-/// Green "Session Saved" bar, or the red interrupted bar plus the
-/// history-write warning.
+/// Green "Session Saved" bar, or the red interrupted/unavailable bar.
 class _SavedBanner extends StatelessWidget {
-  final bool saved;
+  final SessionEndReason reason;
   final bool historySaved;
 
-  const _SavedBanner({required this.saved, required this.historySaved});
+  const _SavedBanner({required this.reason, required this.historySaved});
 
   @override
   Widget build(BuildContext context) {
+    final bool saved = reason == SessionEndReason.completed;
     final Color background = saved
         ? AppColors.summarySavedBackground
         : AppColors.summaryFailedBackground;
@@ -149,6 +265,19 @@ class _SavedBanner extends StatelessWidget {
         ? AppColors.summarySavedText
         : AppColors.summaryFailedText;
     final bool compact = AppLayout.isCompact(MediaQuery.sizeOf(context).width);
+
+    final String title = switch (reason) {
+      SessionEndReason.completed => AppStrings.sessionSaved,
+      SessionEndReason.interrupted => AppStrings.sessionInterrupted,
+      SessionEndReason.resultsUnavailable =>
+        AppStrings.sessionResultsUnavailable,
+    };
+    final String detail = switch (reason) {
+      SessionEndReason.completed => '',
+      SessionEndReason.interrupted => AppStrings.sessionInterruptedDetail,
+      SessionEndReason.resultsUnavailable =>
+        AppStrings.sessionResultsUnavailableDetail,
+    };
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -170,7 +299,7 @@ class _SavedBanner extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
               Text(
-                saved ? AppStrings.sessionSaved : AppStrings.sessionInterrupted,
+                title,
                 textAlign: TextAlign.center,
                 style: AppTypography.style(
                   size: compact
@@ -183,7 +312,7 @@ class _SavedBanner extends StatelessWidget {
               if (!saved) ...<Widget>[
                 SizedBox(height: AppSpacing.small),
                 Text(
-                  AppStrings.sessionInterruptedDetail,
+                  detail,
                   textAlign: TextAlign.center,
                   style: AppTypography.style(
                     size: AppTypography.bodySmallSize,
@@ -195,7 +324,7 @@ class _SavedBanner extends StatelessWidget {
             ],
           ),
         ),
-        if (!historySaved) ...<Widget>[
+        if (saved && !historySaved) ...<Widget>[
           SizedBox(height: AppSpacing.small),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -353,9 +482,7 @@ class _MetricRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: BoxConstraints(
-        minHeight: AppSizes.summaryRowMinHeight,
-      ),
+      constraints: BoxConstraints(minHeight: AppSizes.summaryRowMinHeight),
       padding: EdgeInsets.symmetric(
         horizontal: AppSpacing.summaryRowPaddingH,
         vertical: AppSpacing.tiny,

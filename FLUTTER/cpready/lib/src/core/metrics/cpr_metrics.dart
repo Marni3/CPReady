@@ -60,8 +60,12 @@ class CprMetrics {
   bool get isBenchMode => qualityFlags & AppBleConfig.qualityBenchMode != 0;
 
   static CprMetrics fromBytes(List<int> bytes) {
-    if (bytes.length < 11) {
-      throw ArgumentError('Expected at least 11 bytes, got ${bytes.length}');
+    if (bytes.length != AppBleConfig.packetLength &&
+        bytes.length != AppBleConfig.legacyPacketLength) {
+      throw ArgumentError(
+        'Expected ${AppBleConfig.legacyPacketLength} or '
+        '${AppBleConfig.packetLength} bytes, got ${bytes.length}',
+      );
     }
 
     final byteData = ByteData.sublistView(Uint8List.fromList(bytes));
@@ -87,6 +91,27 @@ class CprMetrics {
     final flags = bytes.length >= 12
         ? byteData.getUint8(11)
         : AppBleConfig.qualitySteadyCadence;
+
+    // Calibration/error packets carry placeholder zeros in the metric fields,
+    // so plausibility limits only apply to frames that claim real metrics.
+    final bool isLive = type == AppBleConfig.packetRealtime;
+    if (isLive || isSummary) {
+      if (rate > AppBleConfig.maxPlausibleRateCpm) {
+        throw ArgumentError('Implausible rate: $rate cpm');
+      }
+      if (depthTenths > AppBleConfig.maxPlausibleDepthTenthsMm) {
+        throw ArgumentError('Implausible depth: $depthTenths tenths-mm');
+      }
+      if (ccf > AppBleConfig.maxPlausibleCcfPercent) {
+        throw ArgumentError('Implausible CCF: $ccf%');
+      }
+      if (isLive && recoilRaw > 1) {
+        throw ArgumentError('Implausible live recoil flag: $recoilRaw');
+      }
+      if (isSummary && recoilRaw > AppBleConfig.fullRecoilPercent) {
+        throw ArgumentError('Implausible recoil compliance: $recoilRaw%');
+      }
+    }
 
     return CprMetrics(
       packetType: type,

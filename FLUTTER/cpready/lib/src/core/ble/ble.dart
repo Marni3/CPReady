@@ -11,6 +11,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../../config/config.dart';
 import '../metrics/cpr_metrics.dart';
+import 'device_config.dart';
 
 class EspBle {
   static final Guid serviceUuid = Guid(AppBleConfig.serviceUuid);
@@ -30,6 +31,7 @@ class EspBle {
   StreamSubscription<List<int>>? _notifySub;
 
   StreamController<CprMetrics>? _telemetryController;
+  StreamController<DeviceConfig>? _configController;
 
   /// Invoked when the ESP32 disconnects unexpectedly (not via [disconnect]).
   VoidCallback? onDisconnected;
@@ -39,8 +41,17 @@ class EspBle {
   /// Broadcast stream of decoded telemetry packets. Recreated after
   /// [disconnect], so callers should subscribe after each successful connect.
   Stream<CprMetrics> get telemetry {
-    final controller =
-        _telemetryController ??= StreamController<CprMetrics>.broadcast();
+    final controller = _telemetryController ??=
+        StreamController<CprMetrics>.broadcast();
+    return controller.stream;
+  }
+
+  /// Broadcast stream of Type 6 configuration reports. Like [telemetry], it is
+  /// recreated after [disconnect]; callers should subscribe before sending
+  /// GET_CONFIG.
+  Stream<DeviceConfig> get configReports {
+    final controller = _configController ??=
+        StreamController<DeviceConfig>.broadcast();
     return controller.stream;
   }
 
@@ -91,9 +102,7 @@ class EspBle {
     this.device = device;
     _intentionalDisconnect = false;
 
-    await device.connect(
-      license: License.nonprofit,
-    );
+    await device.connect(license: License.nonprofit);
 
     debugPrint('Connected to ESP32');
 
@@ -151,11 +160,27 @@ class EspBle {
     await characteristic.setNotifyValue(true);
 
     await _notifySub?.cancel();
-    _notifySub = characteristic.lastValueStream.listen(_onTelemetryChunk);
+    // onValueReceived emits only real notifications. lastValueStream also
+    // replays the cached value when first listened to, which can surface a
+    // stale packet from a previous connection.
+    _notifySub = characteristic.onValueReceived.listen(_onTelemetryChunk);
   }
 
   void _onTelemetryChunk(List<int> value) {
     if (value.isEmpty) return;
+
+    // Type 6 shares the notification characteristic but not the metrics
+    // layout, so route it before the live/summary decoder.
+    if (value[0] == AppBleConfig.packetConfigReport) {
+      try {
+        final config = DeviceConfig.fromBytes(value);
+        _configController?.add(config);
+      } catch (error) {
+        debugPrint('Config report decode failed: $error');
+        debugPrint('Raw bytes: $value');
+      }
+      return;
+    }
 
     try {
       final metrics = CprMetrics.fromBytes(value);
@@ -174,9 +199,7 @@ class EspBle {
       throw Exception('Not connected to ESP32');
     }
 
-    await characteristic.write(
-      utf8.encode(command),
-    );
+    await characteristic.write(utf8.encode(command));
   }
 
   Future<void> disconnect() async {
@@ -192,6 +215,9 @@ class EspBle {
 
     await _telemetryController?.close();
     _telemetryController = null;
+
+    await _configController?.close();
+    _configController = null;
 
     device = null;
     telemetryCharacteristic = null;

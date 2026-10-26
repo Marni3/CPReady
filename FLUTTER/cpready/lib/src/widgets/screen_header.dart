@@ -1,11 +1,12 @@
 /// Top bar shared by the tab screens: the brand logo on the left, the
-/// "CPREADY" wordmark with the current page label on the right, and a thin
-/// grey divider underneath.
+/// "CPREADY" wordmark with the current page label on the right, the Device
+/// Settings gear, and a thin grey divider underneath.
 ///
 /// Only the [pageLabel] changes between tabs; every visual value comes from
 /// `lib/src/config/`.
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../config/config.dart';
 
@@ -33,13 +34,13 @@ class ScreenHeader extends StatelessWidget {
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
               Image(
                 image: AssetImage(AppAssets.logoBlue),
                 width: AppSizes.homeLogoSize,
                 height: AppSizes.homeLogoSize,
               ),
+              const Spacer(),
               Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -67,6 +68,25 @@ class ScreenHeader extends StatelessWidget {
                   ),
                 ],
               ),
+              if (AppFeatures.enableDeviceSettings) ...<Widget>[
+                SizedBox(width: AppSpacing.headerSettingsGap),
+                IconButton(
+                  onPressed: () =>
+                      context.pushNamed(AppRoutes.deviceSettings),
+                  tooltip: AppStrings.settingsTooltip,
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  constraints: BoxConstraints.tightFor(
+                    width: AppSizes.headerSettingsTapSize,
+                    height: AppSizes.headerSettingsTapSize,
+                  ),
+                  icon: Icon(
+                    Icons.settings_rounded,
+                    size: AppSizes.iconMedium,
+                    color: AppColors.headerSettingsIcon,
+                  ),
+                ),
+              ],
             ],
           ),
         ),

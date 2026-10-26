@@ -64,6 +64,9 @@ class AppSizes {
   /// Thickness of the thin black divider (home header + bottom nav).
   static double get dividerThickness => AppScale.w(1.5);
 
+  /// Tap target around the header settings gear.
+  static double get headerSettingsTapSize => AppScale.w(40.0);
+
   /// Corner radius of the home cards.
   static double get homeCardRadius => AppScale.w(20.0);
 

@@ -74,7 +74,9 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
 
     return SessionCompleteScreen(
       traineeName: record.traineeName,
-      saved: record.isCompleted,
+      reason: record.isCompleted
+          ? SessionEndReason.completed
+          : SessionEndReason.interrupted,
       summary: record.summary,
       durationSeconds: record.durationSeconds,
       historySaved: true,

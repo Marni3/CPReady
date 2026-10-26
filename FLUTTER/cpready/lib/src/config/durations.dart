@@ -35,6 +35,31 @@ class AppDurations {
   /// STOP. Mirrors BLE_FINAL_RESULT_TIMEOUT_MS in the firmware.
   static const int finalSummaryTimeoutMs = 2000;
 
+  /// Second wait window after sending GET_RESULTS when the first summary wait
+  /// expired. Mirrors the same 2.0 s firmware contract.
+  static const int getResultsTimeoutMs = 2000;
+
+  /// How long the baseline calibration screen waits for Type 2/Type 3 before
+  /// reporting a timeout. The firmware window is 2.0 s; the rest is margin for
+  /// the queued write and the first notification.
+  static const int calibrationTimeoutMs = 6000;
+
+  /// How long the manikin screen waits for the Type 3 ACK after sending
+  /// CALIBRATE_TARGET.
+  static const int targetAckTimeoutMs = 2000;
+
+  /// How long the live screen waits for the first real-time packet after START
+  /// before treating the start as rejected.
+  static const int startWatchdogMs = 3000;
+
+  /// How long Device Settings waits for a Type 6 config report after GET_CONFIG.
+  /// The plan budgets 2 s; older firmware never answers and falls back to the
+  /// last locally saved values.
+  static const int configReportTimeoutMs = 2000;
+
+  /// Press-and-hold duration for the destructive factory-reset action.
+  static const int resetConfigHoldMs = 2000;
+
   /// Practice session length the device runs after the manikin trial restores
   /// it. Mirrors DEFAULT_PRACTICE_DURATION_SEC in the firmware.
   static const int practiceSessionSeconds = 120;
@@ -46,6 +71,9 @@ class AppDurations {
   /// FINAL_SUMMARY.
   static const int manikinSummaryTimeoutMs = 20000;
   static const int manikinCalibrationTimeoutMs = 10000;
+
+  /// Baseline zeroing window used for the on-screen countdown.
+  static const int calibrationWindowSeconds = 2;
 
   // -----------------------------------------------------------------------
   // BLE / telemetry supervision
@@ -105,6 +133,22 @@ class AppDurations {
   static const Duration liveTick = Duration(milliseconds: liveTickMs);
   static const Duration finalSummaryTimeout = Duration(
     milliseconds: finalSummaryTimeoutMs,
+  );
+  static const Duration getResultsTimeout = Duration(
+    milliseconds: getResultsTimeoutMs,
+  );
+  static const Duration calibrationTimeout = Duration(
+    milliseconds: calibrationTimeoutMs,
+  );
+  static const Duration targetAckTimeout = Duration(
+    milliseconds: targetAckTimeoutMs,
+  );
+  static const Duration startWatchdog = Duration(milliseconds: startWatchdogMs);
+  static const Duration configReportTimeout = Duration(
+    milliseconds: configReportTimeoutMs,
+  );
+  static const Duration resetConfigHold = Duration(
+    milliseconds: resetConfigHoldMs,
   );
   static const Duration manikinSummaryTimeout = Duration(
     milliseconds: manikinSummaryTimeoutMs,

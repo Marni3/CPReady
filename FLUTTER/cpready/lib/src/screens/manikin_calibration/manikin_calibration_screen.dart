@@ -27,15 +27,7 @@ import '../../core/feedback/metric_feedback.dart';
 import '../../core/metrics/cpr_metrics.dart';
 import '../../widgets/widgets.dart';
 
-enum _Stage {
-  intro,
-  zeroing,
-  ready,
-  running,
-  enterTarget,
-  sent,
-  error,
-}
+enum _Stage { intro, zeroing, ready, running, enterTarget, saving, sent, error }
 
 /// Manikin depth calibration screen.
 class ManikinCalibrationScreen extends StatefulWidget {
@@ -84,14 +76,14 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     if (!mounted) return;
     final BleController? controller = _controller;
     if (controller == null || !controller.isConnected) {
-      if (_stage == _Stage.zeroing || _stage == _Stage.running) {
-        _stopTimers();
-        _trialActive = false;
-        setState(() {
-          _stage = _Stage.error;
-          _error = AppStrings.manikinNoDeviceConnected;
-        });
-      }
+      if (_stage == _Stage.intro || _stage == _Stage.error) return;
+      _stopTimers();
+      _trialActive = false;
+      setState(() {
+        _stage = _Stage.error;
+        _error = AppStrings.manikinNoDeviceConnected;
+        _sending = false;
+      });
     }
   }
 
@@ -274,7 +266,9 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     }
   }
 
-  /// Sends the target depth; firmware persists new K to flash and acknowledges.
+  /// Sends the target depth and waits for the firmware's Type 3 ACK.
+  ///
+  /// The GATT write completing is not proof that K was persisted; the ACK is.
   Future<void> _save() async {
     final BleController? controller = _controller;
     final double? depth = double.tryParse(_target.text.trim());
@@ -289,22 +283,55 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       return;
     }
 
-    setState(() => _sending = true);
+    setState(() {
+      _sending = true;
+      _stage = _Stage.saving;
+      _error = null;
+    });
+
+    final ackFuture = controller.awaitPacketWhere(
+      (m) =>
+          m.packetType == AppBleConfig.packetCalibrationDone ||
+          m.packetType == AppBleConfig.packetError,
+      timeout: AppDurations.targetAckTimeout,
+    );
+
     try {
       await controller.sendCommand(AppBleConfig.commandCalibrateTarget(depth));
-      if (!mounted) return;
-      setState(() {
-        _stage = _Stage.sent;
-        _sending = false;
-      });
     } catch (error) {
-      debugPrint('Manikin target send failed: ');
+      debugPrint('Manikin target send failed: $error');
       if (!mounted) return;
       setState(() {
+        _stage = _Stage.enterTarget;
         _sending = false;
         _error = AppStrings.manikinSendFailed;
       });
+      return;
     }
+
+    final CprMetrics? ack = await ackFuture;
+    if (!mounted) return;
+
+    // A disconnect may have moved the screen to the error stage while the ACK
+    // wait was outstanding; do not overwrite that more specific message.
+    if (_stage != _Stage.saving || !controller.isConnected) return;
+
+    if (ack?.packetType == AppBleConfig.packetCalibrationDone) {
+      setState(() {
+        _stage = _Stage.sent;
+        _sending = false;
+        _error = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _stage = _Stage.enterTarget;
+      _sending = false;
+      _error = ack?.packetType == AppBleConfig.packetError
+          ? AppStrings.manikinTargetRejected
+          : AppStrings.manikinTargetTimeout;
+    });
   }
 
   void _targetChanged(String text) {
@@ -381,6 +408,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       _Stage.ready => AppStrings.manikinStart,
       _Stage.running => AppStrings.manikinTrialRunning,
       _Stage.enterTarget => AppStrings.manikinSave,
+      _Stage.saving => AppStrings.manikinSaving,
       _Stage.sent => AppStrings.manikinDone,
       _Stage.error => AppStrings.manikinRetry,
     };
@@ -392,7 +420,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       _Stage.ready => () => unawaited(_startTrialRun()),
       _Stage.enterTarget => _targetValid && !_sending ? _save : null,
       _Stage.sent => () => Navigator.of(context).maybePop(),
-      _Stage.zeroing || _Stage.running => null,
+      _Stage.zeroing || _Stage.running || _Stage.saving => null,
     };
   }
 
@@ -452,6 +480,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       _Stage.ready => _buildReady(),
       _Stage.running => _buildRunning(),
       _Stage.enterTarget => _buildTargetEntry(),
+      _Stage.saving => _buildSaving(),
       _Stage.sent => _buildSent(),
       _Stage.error => _buildError(),
     };
@@ -507,9 +536,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
           ),
         ),
         SizedBox(height: AppSpacing.section),
-        const Center(
-          child: CircularProgressIndicator(),
-        ),
+        const Center(child: CircularProgressIndicator()),
         SizedBox(height: AppSpacing.section),
         Text(
           'Calibrating motionless baseline… Keep your hands steady.',
@@ -730,6 +757,35 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
             ),
           ),
         ],
+      ],
+    );
+  }
+
+  Widget _buildSaving() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text(
+          AppStrings.manikinSaving,
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.manikinLabelSize,
+            weight: FontWeight.bold,
+            color: AppColors.flowHeadingText,
+          ),
+        ),
+        SizedBox(height: AppSpacing.section),
+        const Center(child: CircularProgressIndicator()),
+        SizedBox(height: AppSpacing.section),
+        Text(
+          AppStrings.manikinSavingBody,
+          textAlign: TextAlign.center,
+          style: AppTypography.style(
+            size: AppTypography.manikinBodySize,
+            weight: FontWeight.normal,
+            color: AppColors.flowHelperText,
+          ),
+        ),
       ],
     );
   }
