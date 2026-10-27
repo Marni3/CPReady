@@ -2,9 +2,10 @@
 /// BLE packet.
 ///
 /// Packet layout is defined in CPReady firmware:
-/// `CPReady_Program/include/BLEReadings.h`. The current firmware sends 12
-/// bytes; 11-byte packets from older firmware are still accepted and are
-/// treated as steady cadence.
+/// `CPReady_Program/include/BLEReadings.h`. The current firmware sends 16
+/// bytes (protocol v2: the 12-byte layout plus a 16-bit stroke count and a
+/// sequence number). 12-byte and 11-byte packets from older firmware are still
+/// accepted; 11-byte packets are treated as steady cadence.
 ///
 /// The class carries only decoded protocol values. Bit masks and cue codes
 /// live in [AppBleConfig].
@@ -28,12 +29,19 @@ class CprMetrics {
   final double depthMm;
   final int ccfPercent;
   final int audioPromptCode;
+
+  /// Stroke count. Protocol v2 carries it as 16 bits; older firmware sent one
+  /// byte that stopped at 255.
   final int totalCompressions;
   final int elapsedSeconds;
 
   /// Quality bitfield from byte 11 (see [AppBleConfig.qualitySteadyCadence]
   /// and the other `quality*` masks).
   final int qualityFlags;
+
+  /// Notification sequence number (protocol v2), or null for older firmware.
+  /// Gaps between consecutive packets are lost notifications.
+  final int? sequence;
 
   const CprMetrics({
     required this.packetType,
@@ -47,6 +55,7 @@ class CprMetrics {
     required this.totalCompressions,
     required this.elapsedSeconds,
     this.qualityFlags = AppBleConfig.qualitySteadyCadence,
+    this.sequence,
   });
 
   /// Cadence is steady enough for a stable reading.
@@ -59,15 +68,22 @@ class CprMetrics {
   /// The device is running the relaxed bench-test profile.
   bool get isBenchMode => qualityFlags & AppBleConfig.qualityBenchMode != 0;
 
+  /// Recoil is an acceleration estimate (no force sensor), so it is shown but
+  /// not graded.
+  bool get isRecoilEstimated =>
+      qualityFlags & AppBleConfig.qualityRecoilEstimated != 0;
+
   /// When [packetType] is [AppBleConfig.packetError], byte 7 carries the error reason code.
   int get errorCode => audioPromptCode;
 
   static CprMetrics fromBytes(List<int> bytes) {
-    if (bytes.length != AppBleConfig.packetLength &&
+    if (bytes.length != AppBleConfig.packetLengthV2 &&
+        bytes.length != AppBleConfig.packetLength &&
         bytes.length != AppBleConfig.legacyPacketLength) {
       throw ArgumentError(
-        'Expected ${AppBleConfig.legacyPacketLength} or '
-        '${AppBleConfig.packetLength} bytes, got ${bytes.length}',
+        'Expected ${AppBleConfig.legacyPacketLength}, '
+        '${AppBleConfig.packetLength} or ${AppBleConfig.packetLengthV2} '
+        'bytes, got ${bytes.length}',
       );
     }
 
@@ -89,7 +105,12 @@ class CprMetrics {
     final depthTenths = byteData.getUint16(4, Endian.little);
     final ccf = byteData.getUint8(6);
     final audioCue = byteData.getUint8(7);
-    final totalCount = byteData.getUint8(8);
+    final bool isV2 = bytes.length == AppBleConfig.packetLengthV2;
+    // Byte 8 saturates at 255; v2 repeats the full count in bytes 12..13.
+    final totalCount = isV2
+        ? byteData.getUint16(12, Endian.little)
+        : byteData.getUint8(8);
+    final int? sequence = isV2 ? byteData.getUint16(14, Endian.little) : null;
     final elapsed = byteData.getUint16(9, Endian.little);
     final flags = bytes.length >= 12
         ? byteData.getUint8(11)
@@ -128,6 +149,7 @@ class CprMetrics {
       totalCompressions: totalCount,
       elapsedSeconds: elapsed,
       qualityFlags: flags,
+      sequence: sequence,
     );
   }
 }

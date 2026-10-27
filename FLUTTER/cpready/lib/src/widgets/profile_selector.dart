@@ -1,8 +1,8 @@
 /// Training-mode choice: two tappable rows with a radio indicator.
 ///
-/// The firmware has no way to report which profile it currently stores, so the
-/// selector is driven by the app's own state and sends the matching command
-/// only when the user changes it.
+/// The selector shows the profile the caller passes in (the device's Type 6
+/// report when available, otherwise the last value saved on the phone) and
+/// sends the matching command only when the user changes it.
 
 import 'package:flutter/material.dart';
 

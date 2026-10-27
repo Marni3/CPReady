@@ -13,14 +13,15 @@ class AppColors {
   // Brand — feeds the Material ColorScheme
   // -----------------------------------------------------------------------
 
-  /// Primary brand color; seeds the Material color scheme.
-  static const Color brandPrimary = Color(0xFF6200EE);
+  /// Primary brand color; seeds the Material color scheme (dialog buttons,
+  /// progress indicators). Matches [brandBlue] instead of the template purple.
+  static const Color brandPrimary = Color(0xFF0A3D79);
 
   /// Secondary brand color; seeds the Material color scheme.
-  static const Color brandSecondary = Color(0xFF6200EE);
+  static const Color brandSecondary = Color(0xFF0A3D79);
 
   /// Surface brand color; seeds the Material color scheme's container role.
-  static const Color brandSurface = Color(0xFFEADDFF);
+  static const Color brandSurface = Color(0xFFE0E8F4);
 
   // -----------------------------------------------------------------------
   // Core brand palette

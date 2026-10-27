@@ -36,15 +36,15 @@ class AppBleConfig {
   /// Re-sends the last FINAL_SUMMARY held in firmware RAM.
   static const String commandGetResults = 'GET_RESULTS';
 
-  /// Temporarily pauses the session. Not exposed in the UI until the firmware
-  /// compensates paused time in its elapsed/CCF accounting.
+  /// Pauses the session clock (paused time counts toward neither elapsed time
+  /// nor CCF). Not exposed in the UI yet.
   static const String commandPause = 'PAUSE';
 
-  /// Resumes a paused session. Kept next to [commandPause] for the same reason.
+  /// Resumes a paused session.
   static const String commandResume = 'RESUME';
 
-  /// Selects the adult-manikin kinematic profile. The firmware also resets its
-  /// depth scalar to that profile's default value.
+  /// Selects the adult-manikin kinematic profile. Each profile keeps its own
+  /// depth scalar (K) on the device.
   static const String commandProfileManikin = 'SET_PROFILE:MANIKIN';
 
   /// Selects the relaxed bench-test kinematic profile.
@@ -66,8 +66,8 @@ class AppBleConfig {
   /// Clears the firmware's flash configuration and restores factory defaults.
   static const String commandResetConfig = 'RESET_CONFIG';
 
-  /// Requests the current device configuration. Current firmware only prints
-  /// this to its Serial console; the proposed config-report packet is Type 6.
+  /// Requests the current device configuration; the firmware answers with a
+  /// Type 6 config report.
   static const String commandGetConfig = 'GET_CONFIG';
 
   // -----------------------------------------------------------------------
@@ -89,19 +89,18 @@ class AppBleConfig {
   /// Firmware error condition.
   static const int packetError = 5;
 
-  /// Proposed device-configuration report, sent in response to GET_CONFIG.
-  /// Not emitted by the current firmware; screens must tolerate its absence.
+  /// Device-configuration report, sent in response to GET_CONFIG. Firmware
+  /// older than F-01 never sends it; screens must tolerate its absence.
   static const int packetConfigReport = 6;
 
   // -----------------------------------------------------------------------
-  // Proposed Type 6 configuration report (F-01)
+  // Type 6 configuration report (F-01)
   // -----------------------------------------------------------------------
   //
-  // The layout is documented in PLAN.md §8, F-01. It is parsed defensively so
-  // older firmware that never sends Type 6 simply lands in the unsupported
-  // state.
+  // Parsed defensively so older firmware that never sends Type 6 simply lands
+  // in the unsupported state.
 
-  /// Length of the proposed Type 6 config report.
+  /// Length of the Type 6 config report.
   static const int configReportLength = 12;
 
   /// Type 6 profile values (byte 1).
@@ -126,10 +125,18 @@ class AppBleConfig {
   // Packet validation (see SOFTWARE_DEVELOPER_GUIDE.md §2.4)
   // -----------------------------------------------------------------------
 
-  /// Current packet size. 11-byte frames from older firmware are still
-  /// accepted; any other length is rejected by the decoder.
+  /// Protocol v2 packet size: the 12-byte layout plus a 16-bit stroke count
+  /// (bytes 12..13) and a 16-bit notification sequence number (bytes 14..15).
+  static const int packetLengthV2 = 16;
+
+  /// 12-byte (v1) and 11-byte frames from older firmware are still accepted;
+  /// any other length is rejected by the decoder.
   static const int packetLength = 12;
   static const int legacyPacketLength = 11;
+
+  /// Sequence gaps larger than this are treated as a firmware restart rather
+  /// than lost packets.
+  static const int maxPlausibleSequenceGap = 1000;
 
   /// Plausibility limits applied to live and summary frames.
   static const int maxPlausibleRateCpm = 250;
@@ -150,6 +157,10 @@ class AppBleConfig {
 
   /// The device is running the relaxed bench-test profile.
   static const int qualityBenchMode = 0x04;
+
+  /// Recoil is an acceleration estimate (no force sensor): it cannot detect
+  /// leaning, so the app shows it without grading it.
+  static const int qualityRecoilEstimated = 0x08;
 
   // -----------------------------------------------------------------------
   // Audio coaching cue codes (byte 7)

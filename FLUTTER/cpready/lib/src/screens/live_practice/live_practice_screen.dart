@@ -33,7 +33,16 @@ class LivePracticeScreen extends StatefulWidget {
   /// Trainee name captured on the setup screen; filed with the session.
   final String traineeName;
 
-  const LivePracticeScreen({super.key, required this.traineeName});
+  /// Clock for the voice-cue gate. Widget tests pass one that follows the
+  /// pumped time; the app leaves it null and uses the wall clock.
+  @visibleForTesting
+  final DateTime Function()? cueClock;
+
+  const LivePracticeScreen({
+    super.key,
+    required this.traineeName,
+    this.cueClock,
+  });
 
   @override
   State<LivePracticeScreen> createState() => _LivePracticeScreenState();
@@ -65,7 +74,12 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   bool _muted = false;
 
   /// Duplicate and overlap guard for the firmware's cue codes.
-  final VoiceCueGate _cueGate = VoiceCueGate();
+  late final VoiceCueGate _cueGate = VoiceCueGate(clock: widget.cueClock);
+
+  /// Cue code carried by the previous real-time packet. Older firmware repeats
+  /// a cue in every packet until the next stroke, so only a change of code is a
+  /// new cue; otherwise a pause after a cue replays it about once a second.
+  int _previousCueCode = 0;
 
   @override
   void didChangeDependencies() {
@@ -157,22 +171,43 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         AppDurations.compressionActiveWindow;
   }
 
+  /// Error packets: a sensor fault ends the session; before the first live
+  /// packet any error means START was rejected; later ones answer some other
+  /// command and leave the running session alone.
+  void _onDeviceError(int errorCode) {
+    if (_finished || _ending) return;
+    if (errorCode == AppBleConfig.errI2cFault) {
+      _startWatchdog?.cancel();
+      _startWatchdog = null;
+      unawaited(_finish(reason: SessionEndReason.sensorFault, summary: null));
+      return;
+    }
+    if (_latest == null) {
+      _startWatchdog?.cancel();
+      _startWatchdog = null;
+      _onStartTimeout();
+    }
+  }
+
   void _onPacket(CprMetrics metrics) {
     if (!mounted) return;
     final int count = metrics.totalCompressions;
 
-    // The first stroke and the packet after a pause also report unsteady
-    // cadence; only a sustained run should raise the banner.
     if (metrics.packetType == AppBleConfig.packetError) {
-      _startWatchdog?.cancel();
-      _startWatchdog = null;
-      if (!_finished && !_ending) {
-        _onStartTimeout();
-      }
+      _onDeviceError(metrics.errorCode);
       return;
     }
 
     final bool realtime = metrics.packetType == AppBleConfig.packetRealtime;
+    // Calibration progress/ready packets are not session data. They must not
+    // count as the session going live: a device re-running its baseline has
+    // not started, and the start watchdog has to fire.
+    if (!realtime && metrics.packetType != AppBleConfig.packetFinalSummary) {
+      return;
+    }
+
+    // The first stroke and the packet after a pause also report unsteady
+    // cadence; only a sustained run should raise the banner.
     if (realtime) {
       _startWatchdog?.cancel();
       _startWatchdog = null;
@@ -210,12 +245,17 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
     // The firmware already throttles and prioritizes its prompts; play the cue
     // it asked for unless the session is ending or the user muted the voice.
-    if (metrics.packetType == AppBleConfig.packetRealtime &&
-        !_muted &&
-        !_ending &&
-        !_finished &&
-        _cueGate.allows(metrics.audioPromptCode)) {
-      unawaited(_coach?.play(metrics.audioPromptCode));
+    if (realtime) {
+      final int cue = metrics.audioPromptCode;
+      final bool newCue = cue != _previousCueCode;
+      _previousCueCode = cue;
+      if (newCue &&
+          !_muted &&
+          !_ending &&
+          !_finished &&
+          _cueGate.allows(cue)) {
+        unawaited(_coach?.play(cue));
+      }
     }
   }
 
@@ -390,6 +430,11 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     final repository = _repository;
     if (repository == null) return false;
 
+    // Loss can only be counted when the firmware numbers its packets.
+    final bool sequenced = controller.sessionPackets.any(
+      (CprMetrics packet) => packet.sequence != null,
+    );
+
     final record = SessionRecord(
       traineeName: widget.traineeName,
       status: SessionStatus.completed,
@@ -397,6 +442,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       endedAt: endedAt,
       durationSeconds: durationSeconds,
       packetCount: packets,
+      packetsLost: sequenced ? controller.sessionPacketsLost : null,
       rateCpm: summary.rateCpm,
       depthTenthsMm: (summary.depthCm * 100).round(),
       recoilPercent: summary.recoilPercentage,
@@ -496,7 +542,11 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                                     label: AppStrings.liveRecoilLabel,
                                     capsule: _capsule(
                                       recoilText(latest?.recoilPercentage),
-                                      recoilRating(latest?.recoilPercentage),
+                                      recoilRating(
+                                        latest?.recoilPercentage,
+                                        estimated:
+                                            latest?.isRecoilEstimated ?? false,
+                                      ),
                                     ),
                                   );
                                   final double each =

@@ -79,11 +79,35 @@ void main() {
     );
   });
 
-  test('rejects a frame longer than 12 bytes', () {
+  test('rejects frames of any other length', () {
     expect(
       () => CprMetrics.fromBytes(<int>[...frame(), 0]),
       throwsArgumentError,
     );
+    expect(
+      () => CprMetrics.fromBytes(<int>[...frame(), 0, 0, 0, 0, 0]),
+      throwsArgumentError,
+    );
+  });
+
+  test('decodes the 16-byte v2 frame: full stroke count and sequence', () {
+    final List<int> v2 = <int>[
+      ...frame(flags: 0x09),
+      0x2C, 0x01, // stroke count 300 (byte 8 saturates at 255)
+      0x34, 0x12, // sequence 0x1234
+    ]..[8] = 255;
+
+    final CprMetrics metrics = CprMetrics.fromBytes(v2);
+
+    expect(metrics.totalCompressions, 300);
+    expect(metrics.sequence, 0x1234);
+    expect(metrics.isRecoilEstimated, isTrue);
+    expect(metrics.isSteadyCadence, isTrue);
+  });
+
+  test('older frames carry no sequence number', () {
+    expect(CprMetrics.fromBytes(frame()).sequence, isNull);
+    expect(CprMetrics.fromBytes(frame()).isRecoilEstimated, isFalse);
   });
 
   test('accepts the documented metric boundaries', () {

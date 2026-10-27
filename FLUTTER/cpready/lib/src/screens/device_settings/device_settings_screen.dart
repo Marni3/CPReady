@@ -1,13 +1,12 @@
 /// Device Settings: profile, depth K, read-back and factory reset.
 ///
-/// The screen is designed to work with the current firmware even though F-01
-/// (Type 6 read-back) is not available yet. It shows the last values saved on
-/// the phone, tries GET_CONFIG on open, and clearly marks the device as
-/// unsupported when no Type 6 report arrives.
+/// It shows the last values saved on the phone, tries GET_CONFIG on open and
+/// after every change, and clearly marks the device as unsupported when no
+/// Type 6 report arrives (firmware older than F-01).
 ///
-/// Profile changes are guarded because current firmware resets the calibrated
-/// K on SET_PROFILE (F-02). SET_K and RESET_CONFIG are only sent after explicit
-/// user action; nothing is synced silently.
+/// Profile changes are confirmed because each profile has its own calibrated
+/// K, so depth readings change with the mode. SET_K and RESET_CONFIG are only
+/// sent after explicit user action; nothing is synced silently.
 
 import 'dart:async';
 
@@ -260,7 +259,8 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
     });
   }
 
-  /// Sends SET_PROFILE only after the explicit K-reset confirmation.
+  /// Sends SET_PROFILE only after confirmation, then reads the device back so
+  /// the K shown is the new profile's own K.
   Future<void> _selectProfile(KinematicProfile profile) async {
     if (_profileSaving || _refreshing || !_controller.isConnected) return;
     if (profile == _settings?.profile) return;
@@ -310,6 +310,8 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
       _status = saved ? null : AppStrings.deviceSettingsLocalSaveFailed;
       _statusIsError = !saved;
     });
+
+    if (saved) await _refresh();
   }
 
   /// RESET_CONFIG is destructive, so the button is press-and-hold only.

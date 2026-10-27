@@ -24,4 +24,11 @@ class AppTargets {
 
   /// Recoil percentage that counts as a full release.
   static const int recoilFullPercent = 100;
+
+  /// Share of strokes with full recoil that grades a session's recoil as good.
+  /// A live stroke is 0 or 100, so it is graded by the same rule.
+  static const int recoilGoodPercent = 90;
+
+  /// AHA minimum chest compression fraction, in percent.
+  static const int ccfMinPercent = 60;
 }

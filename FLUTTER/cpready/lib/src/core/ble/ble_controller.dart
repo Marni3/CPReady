@@ -82,6 +82,11 @@ class BleController extends ChangeNotifier {
   final List<CprMetrics> sessionPackets = [];
   bool recording = false;
 
+  /// Notifications lost during the current session, counted from gaps in the
+  /// protocol v2 sequence numbers (always 0 with older firmware).
+  int sessionPacketsLost = 0;
+  int? _lastSequence;
+
   /// Timestamp of the most recent telemetry packet (null before first one).
   DateTime? lastPacketAt;
 
@@ -157,10 +162,12 @@ class BleController extends ChangeNotifier {
       notifyListeners();
 
       await ble.connect(device);
-      await ble.startTelemetry();
 
+      // Listen before notifications are enabled so the first packets are not
+      // dropped by a broadcast stream that has no listener yet.
       await _packetSub?.cancel();
       _packetSub = ble.telemetry.listen(_onPacket);
+      await ble.startTelemetry();
 
       status = BleStatus.connected;
       notifyListeners();
@@ -192,9 +199,23 @@ class BleController extends ChangeNotifier {
     lastPacketAt = DateTime.now();
     if (recording) {
       sessionPackets.add(metrics);
+      _countLostPackets(metrics.sequence);
     }
     if (!_packets.isClosed) {
       _packets.add(metrics);
+    }
+  }
+
+  /// Adds the gap since the previous sequence number to [sessionPacketsLost].
+  /// A very large jump is a firmware restart, not loss, and only re-anchors.
+  void _countLostPackets(int? sequence) {
+    if (sequence == null) return;
+    final int? last = _lastSequence;
+    _lastSequence = sequence;
+    if (last == null) return;
+    final int gap = (sequence - last - 1) & 0xFFFF;
+    if (gap > 0 && gap <= AppBleConfig.maxPlausibleSequenceGap) {
+      sessionPacketsLost += gap;
     }
   }
 
@@ -203,9 +224,9 @@ class BleController extends ChangeNotifier {
   /// Serialized through a sequential FIFO queue with 150ms pacing between
   /// successive GATT writes to protect the BLE stack and prevent command loss.
   ///
-  /// Throws [StateError] when the link is down. Callers must not report a
-  /// command as successful if the write never left the phone.
-  Future<void> sendCommand(String command) {
+  /// Completes with a [StateError] when the link is down. Callers must not
+  /// report a command as successful if the write never left the phone.
+  Future<void> sendCommand(String command) async {
     if (!isConnected) {
       throw StateError('BLE is not connected; command not sent: $command');
     }
@@ -215,23 +236,39 @@ class BleController extends ChangeNotifier {
   /// Waits for the next packet that satisfies [test].
   ///
   /// Create the future before calling [sendCommand] so an immediate reply is
-  /// not missed. Returns null when [timeout] elapses.
+  /// not missed. Returns null when [timeout] elapses; the listener is removed
+  /// either way.
   Future<CprMetrics?> awaitPacketWhere(
     bool Function(CprMetrics) test, {
     required Duration timeout,
   }) {
-    return packets
-        .firstWhere(test)
-        .then<CprMetrics?>((CprMetrics metrics) => metrics)
-        .timeout(timeout, onTimeout: () => null);
+    final Completer<CprMetrics?> completer = Completer<CprMetrics?>();
+    late final StreamSubscription<CprMetrics> subscription;
+    Timer? timer;
+
+    void finish(CprMetrics? metrics) {
+      if (completer.isCompleted) return;
+      timer?.cancel();
+      unawaited(subscription.cancel());
+      completer.complete(metrics);
+    }
+
+    subscription = packets.listen(
+      (CprMetrics metrics) {
+        if (test(metrics)) finish(metrics);
+      },
+      onDone: () => finish(null),
+    );
+    timer = Timer(timeout, () => finish(null));
+    return completer.future;
   }
 
   /// Sends GET_CONFIG and waits for one Type 6 report.
   ///
-  /// Returns null when the firmware does not answer within [timeout] (current
-  /// firmware only prints to Serial). The listener is installed before the
-  /// write so a fast reply is not missed, and it is cancelled on timeout or a
-  /// failed write.
+  /// Returns null when the firmware does not answer within [timeout] (firmware
+  /// older than F-01 has no Type 6 report). The listener is installed before
+  /// the write so a fast reply is not missed, and it is cancelled on timeout or
+  /// a failed write.
   Future<DeviceConfig?> requestConfig({required Duration timeout}) async {
     if (!isConnected) {
       throw StateError('BLE is not connected; GET_CONFIG not sent');
@@ -281,6 +318,8 @@ class BleController extends ChangeNotifier {
     lastPacketAt = null;
     sessionStartedAt = null;
     sessionEndedAt = null;
+    sessionPacketsLost = 0;
+    _lastSequence = null;
   }
 
   /// Runs a packet through the normal fan-out without a device, so widget
@@ -295,6 +334,8 @@ class BleController extends ChangeNotifier {
     lastPacketAt = null;
     sessionStartedAt = DateTime.now();
     sessionEndedAt = null;
+    sessionPacketsLost = 0;
+    _lastSequence = null;
   }
 
   /// Stop recording; returns the recorded packets.

@@ -1,7 +1,7 @@
 /// Confirmation shown before SET_PROFILE.
 ///
-/// Current firmware resets the calibrated depth scalar (K) whenever the
-/// kinematic profile changes, so the app never switches modes silently.
+/// Each kinematic profile has its own calibrated depth scalar (K), so a switch
+/// changes the depth readings; the app never switches modes silently.
 
 import 'package:flutter/material.dart';
 

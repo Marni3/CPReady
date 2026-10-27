@@ -29,6 +29,10 @@ enum SessionEndReason {
 
   /// STOP completed but no usable summary arrived.
   resultsUnavailable,
+
+  /// The vest reported a sensor failure mid-session, so its readings are not
+  /// trustworthy and nothing was saved.
+  sensorFault,
 }
 
 /// Data returned when a results-retrieval retry succeeds.
@@ -271,12 +275,14 @@ class _SavedBanner extends StatelessWidget {
       SessionEndReason.interrupted => AppStrings.sessionInterrupted,
       SessionEndReason.resultsUnavailable =>
         AppStrings.sessionResultsUnavailable,
+      SessionEndReason.sensorFault => AppStrings.sessionSensorFault,
     };
     final String detail = switch (reason) {
       SessionEndReason.completed => '',
       SessionEndReason.interrupted => AppStrings.sessionInterruptedDetail,
       SessionEndReason.resultsUnavailable =>
         AppStrings.sessionResultsUnavailableDetail,
+      SessionEndReason.sensorFault => AppStrings.sessionSensorFaultDetail,
     };
 
     return Column(
@@ -404,8 +410,11 @@ class _MetricsPanel extends StatelessWidget {
           _MetricRow(
             label: AppStrings.sessionRecoil,
             capsule: _gradedCapsule(
-              recoilText(metrics.recoilPercentage),
-              recoilRating(metrics.recoilPercentage),
+              percentText(metrics.recoilPercentage),
+              recoilRating(
+                metrics.recoilPercentage,
+                estimated: metrics.isRecoilEstimated,
+              ),
             ),
           ),
           SizedBox(height: AppSpacing.summaryRowGap),
@@ -427,7 +436,10 @@ class _MetricsPanel extends StatelessWidget {
           SizedBox(height: AppSpacing.summaryRowGap),
           _MetricRow(
             label: AppStrings.sessionCcf,
-            capsule: _valueCapsule(percentText(metrics.ccfPercent)),
+            capsule: _gradedCapsule(
+              percentText(metrics.ccfPercent),
+              ccfRating(metrics.ccfPercent),
+            ),
           ),
           SizedBox(height: AppSpacing.summaryRowGap),
           _MetricRow(
