@@ -9,13 +9,18 @@ documentation, including the research proposal, the planning documents and Reyn'
 **Revision 2:**
 
 - Every file in the repository has now been read; §3 lists them.
-- The Phase 1 fixes have been **applied to the working tree**. They are uncommitted and on
-  `main`, so `git diff` shows them. They are verified by:
+- The Phase 1 fixes have been **applied and committed** on branch `for-finalization`
+  (`git diff main..for-finalization` shows them). They are verified by:
   - both firmware builds;
   - the native stroke-detector regression test (0 failures);
   - the Flutter test suite (§9).
 - New findings from the second pass are H9–H10, M16–M18 and L13–L19.
 - §9 lists every change, how it was verified, and what still needs hardware testing.
+
+**Revision 3 (28 October):** the measurement algorithm was refined, with integrated depth,
+tilt projection, median rate and bump rejection. See §9.7 and
+`ALGORITHM_REFINEMENT_REPORT.md`. The handoff notes for the next developer or agent are in
+`AGENT_HANDOFF.md`.
 
 ---
 
@@ -886,8 +891,8 @@ later.*
 
 ## 9. Changes applied in this pass (revision 2)
 
-Baseline: commit `3c086a5` on `main`. The changes are committed on the local branch
-`for-finalization` and have not been pushed.
+Baseline: commit `3c086a5` on `main`. The changes are committed on branch
+`for-finalization`, which was pushed to `origin` on 28 October 2026. `main` is unchanged.
 
 ### 9.1 Firmware (`CPReady_Program/`)
 

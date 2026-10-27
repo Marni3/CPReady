@@ -1,7 +1,7 @@
 # CPReady Algorithm Refinement: Change and Verification Report
 
 **Date:** 27 October 2026
-**Branch:** `for-finalization` (local; not pushed)
+**Branch:** `for-finalization` (pushed to `origin`; `main` unchanged)
 **Scope:** firmware measurement algorithm only. The Flutter app, the BLE protocol and the
 command set are unchanged. A vest running this firmware works with the app already on this
 branch.
