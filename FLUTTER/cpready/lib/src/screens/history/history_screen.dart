@@ -238,7 +238,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return ListView.separated(
       padding: EdgeInsets.zero,
       itemCount: _sessions.length,
-      separatorBuilder: (_, _) =>
+      separatorBuilder: (_, __) =>
           SizedBox(height: AppSpacing.historyRowGap),
       itemBuilder: (context, index) {
         final record = _sessions[index];

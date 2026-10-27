@@ -64,7 +64,7 @@ class GuideScreen extends StatelessWidget {
                       horizontal: AppSpacing.guideCardSideInset,
                     ),
                     itemCount: AppGuideSteps.steps.length,
-                    separatorBuilder: (_, _) =>
+                    separatorBuilder: (_, __) =>
                         SizedBox(height: AppSpacing.guideStepGap),
                     itemBuilder: (_, int index) => GuideStepCard(
                       number: index + 1,
