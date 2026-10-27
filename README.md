@@ -38,7 +38,7 @@ a history of every practice session.
 9. [Software verification](#9-software-verification)
 10. [Repository structure](#10-repository-structure)
 11. [Building and running](#11-building-and-running)
-12. [Research team](#12-research-team)
+12. [About this project](#12-about-this-project)
 13. [References](#13-references)
 
 ---
@@ -249,7 +249,7 @@ stateDiagram-v2
 
 - **Adaptive start threshold.** The threshold follows the strength of the trainee's own
   strokes:
-  $\theta = \operatorname{clamp}(0.4\,E,\ 0.12\ \text{g},\ \theta_\text{profile})$, where
+  $\theta = \mathrm{clamp}(0.4\,E,\ 0.12\ \text{g},\ \theta_\text{profile})$, where
   $E$ is a decaying envelope of $|y|$ with a half-life of about 1 s. Gentle and shallow
   compressions are still detected, and noise is not.
 - **Lockouts.** A new stroke may start no sooner than 300 ms after the previous stroke
@@ -297,7 +297,7 @@ additions per stroke.
 The period of each stroke is the time between consecutive stroke completions. The displayed
 rate is
 
-$$r = \frac{60\,000}{\operatorname{median}(T_k, T_{k-1}, T_{k-2})\ [\text{ms}]}$$
+$$r = \frac{60\,000}{\mathrm{median}(T_k, T_{k-1}, T_{k-2})\ [\text{ms}]}$$
 
 so that a single uneven stroke does not swing the display or start a coaching cue. The first
 stroke of a session and the first after a pause have no meaningful period, so they report no
@@ -525,10 +525,10 @@ v2.
 
 ---
 
-## 12. Research team
+## 12. About this project
 
-Bacergo, Balugo, Beltrano, Bucud, Caraballos, Carranza and Dilig. Bataan National High School
-– Senior High School.
+CPReady is a senior high school research project at Bataan National High School – Senior High
+School (2026–2027).
 
 ---
 
