@@ -892,8 +892,8 @@ later.*
 ## 9. Changes applied in this pass (revision 2)
 
 Baseline: commit `3c086a5` on `main`. The changes are committed on branch
-`for-finalization`. It is not yet on GitHub: the push on 28 October 2026 was refused (no
-write access; see `AGENT_HANDOFF.md` §3). `main` is unchanged.
+`for-finalization`, published to GitHub (`origin/for-finalization`) on 28 October 2026.
+`main` is unchanged.
 
 ### 9.1 Firmware (`CPReady_Program/`)
 
