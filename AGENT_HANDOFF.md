@@ -207,6 +207,7 @@ Full detail and numbers are in `ALGORITHM_REFINEMENT_REPORT.md`.
 | `LAB_MODE_ARCHITECTURE.md` | Lab build proposal, **not updated yet** with the user's latest answers (§5 below). |
 | `audit_evidence/tracker_replay/` | Offline replay harness (`replay.cpp`), Fourier depth prototype (`harmonic.cpp`), captured results. |
 | `CPReady_Program/test_native/` | Native tests and their README. |
+| `README.md` (repo root) | Public, research-style project description: aims, hardware, algorithms with equations, protocol, app, verification, build steps, references (DOIs verified). At the user's request it **leaves out** calibration procedures, lab mode, and audit difficulties. Keep it that way, and keep it in sync if the algorithms change. |
 
 ---
 
