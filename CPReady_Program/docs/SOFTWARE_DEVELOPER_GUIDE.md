@@ -344,7 +344,7 @@ Every command is checked against the device state. An invalid command is answere
 | `PAUSE` | None | Only while running. Stops the session clock: paused time counts toward neither elapsed time nor CCF. | `PAUSE` |
 | `RESUME` | None | Only while paused. The next stroke is treated as post-pause. | `RESUME` |
 | `SET_TIME:<sec>` | `<sec>` (0..3600) | Config. Auto-stop duration; `0` = manual stop. **Restored to 120 s after every session, abort or disconnect.** | `SET_TIME:120` |
-| `SET_K:<val>` | `<val>` (1.0..30.0) | Config. Sets the active profile's depth scalar $K$ and persists it to that profile's NVS key. | `SET_K:11.2` |
+| `SET_K:<val>` | `<val>` (1.0..30.0) | Config. Sets the active profile's depth correction $K$ and persists it to that profile's NVS key. Depth is integrated from acceleration; reported depth = integrated depth × $K$ / profile default (11.2 manikin, 9.5 bench), so the default means no correction. | `SET_K:11.2` |
 | `SET_PROFILE:BENCH` | None | Config. Bench thresholds (0.25 g start cap, -0.18 g recoil) with the bench profile's own K. | `SET_PROFILE:BENCH` |
 | `SET_PROFILE:MANIKIN` | None | Config. Manikin thresholds (0.45 g start cap, -0.35 g recoil) with the manikin profile's own K. | `SET_PROFILE:MANIKIN` |
 | `CALIBRATE_TARGET:<target>` | `<target>` (float cm) | Config. $K_{\text{new}} = K \times (\text{target} / \bar{D})$ from the last trial, saved to NVS, then a Type 3 ACK. | `CALIBRATE_TARGET:5.5` |

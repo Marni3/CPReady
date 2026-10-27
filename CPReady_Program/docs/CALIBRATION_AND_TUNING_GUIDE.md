@@ -163,19 +163,43 @@ Any calibration performed through the app or BLE is saved directly into the ESP3
 
 ---
 
-## 7. Bench Testing vs. Manikin Dynamics: Why Slow Presses Cause "10 cm"
+## 7. How Depth Is Measured (October 2026)
 
-### The Physics Behind the 10 cm Reading
-CPReady computes depth using the Harmonic Motion formula:
-$$\text{Depth} = K \cdot a_{pp} \cdot T^2$$
+### Integration, not a formula
+Earlier firmware estimated depth as $K \cdot a_{pp} \cdot T^2$. That is exact only for a
+perfect sine wave. Real pushes have sharp turnarounds that raise the acceleration peaks
+without adding depth, so the same 5.5 cm push read anywhere from 1.9 to 4.6 cm depending on
+technique, and slow presses could hit the 10 cm clamp.
 
-- In **real CPR at 110 CPM**, strokes occur every $0.55\text{ s} \implies T^2 = \mathbf{0.30}$. Depth calculates accurately to ~5.0 cm.
-- In a **slow hand press on a desk (e.g. 1 stroke every 1.5s)**, $T^2 = \mathbf{2.25}$ (**$7.5\times$ multiplier explosion**!). The math calculates 15–30 cm, hitting the safety clamp at **`10.0 cm`**.
+The firmware now integrates the vertical acceleration twice over each stroke
+(`include/DepthEstimator.h`):
 
-### Built-in Hardening Protections:
-1. **Period Clamping**: Period $T$ is bounded strictly between `0.38s` (158 CPM) and `0.85s` (70 CPM).
-2. **Idle Pause Recovery**: If you pause > 1.5 seconds or perform the first stroke of a run, $T$ anchors to `0.55s` (~110 CPM). This prevents isolated bench taps from ever locking to 10.0 cm!
-3. **Cadence Consistency Check**: If your rhythm is unsteady (variance > 25%), the firmware sets `CADENCE_FLAG_STEADY = 0` (Byte 11) and triggers audio cue 7: *"Maintain a steady rhythm"*.
+- **Normal strokes:** the window runs from the previous stroke's end to this stroke's end,
+  which is one full cycle. Over a full cycle the chest returns to where it started, so the
+  firmware removes the mean acceleration (sensor offset) and the mean velocity. Drift cannot
+  build up because every stroke is solved on its own.
+- **First stroke, or the first after a pause:** the chest was still before the push, so
+  the integration starts from rest. If it was not still (for example the previous stroke
+  went undetected), no depth is reported for that stroke rather than a wrong one.
+- **Bumps:** a detection with less than 1 cm of real motion is not counted as a
+  compression.
+
+### What K means now
+$K$ is a **correction factor**: reported depth = integrated depth × ($K$ / profile default).
+At the default ($K = 11.2$ manikin, $9.5$ bench) the integrated depth is reported unchanged.
+Manikin Calibration (`CALIBRATE_TARGET`) still scales it proportionally. Expect the fitted
+value to stay close to the default; a large correction points to a mounting or sensor
+problem. **K values saved by older firmware are discarded once on the first boot**,
+because they were fitted to the old formula. Re-run Manikin Calibration after flashing.
+
+### Tilt
+At calibration the firmware learns each sensor's gravity direction. Every sample is then
+projected onto it, so a pad tilted by 30° no longer reads 13 % short.
+
+### Cadence Consistency Check
+If your rhythm is unsteady (variance > 25 %), the firmware clears `CADENCE_FLAG_STEADY`
+(byte 11). The displayed rate is the median of the last three stroke periods, so one uneven
+stroke does not swing it.
 
 ---
 
@@ -192,7 +216,7 @@ Send plain-text commands to the BLE Command Characteristic (`6e400003-b5a3-f393-
 | BLE Command | What It Does | Stored in Flash? | Example Use Case |
 | :--- | :--- | :---: | :--- |
 | `CALIBRATE_TARGET:<cm>` | Auto-scales $K$ based on 15s trial mean depth, saves to NVS, and emits Type 3 ACK | **Yes** | `CALIBRATE_TARGET:5.2` after a 15s manikin run |
-| `SET_K:<val>` | Sets depth scalar $K$ directly | **Yes** | `SET_K:12.5` |
+| `SET_K:<val>` | Sets the depth correction $K$ directly (reported depth × $K$/default) | **Yes** | `SET_K:12.5` |
 | `SET_PROFILE:BENCH` | Switches to relaxed bench thresholds (`0.25g` start, `-0.18g` recoil, $K=9.5$) | **Yes** | Testing on a table without a manikin |
 | `SET_PROFILE:MANIKIN` | Restores standard AHA manikin thresholds (`0.45g` start, `-0.35g` recoil, $K=11.2$) | **Yes** | Training trials on training manikin |
 | `RESET_CONFIG` | Clears flash NVS and restores factory defaults | **Yes** | Resetting corrupted settings |

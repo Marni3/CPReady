@@ -17,3 +17,7 @@ public:
 // a reference to a by-value parameter).
 template <typename A, typename B>
 inline auto min(A a, B b) { return a < b ? a : b; }
+
+#ifndef PI
+#define PI 3.1415926535897932384626433832795
+#endif

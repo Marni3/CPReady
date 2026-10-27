@@ -17,10 +17,15 @@ Offline tests that back the algorithm findings in
   | `results_patched_tracker.txt` | A scratch copy with only the lockout and recoil-exit fixes |
   | `results_after_fixes.txt` | The tracker after the Phase 1 fixes in this working tree |
   | `results_harmonic_estimator.txt` | The Fourier-series depth prototype |
-  | `results_regression_test.txt` | `CPReady_Program/test_native/tracker_regression.cpp`, all checks passing |
+  | `results_regression_test.txt` | `CPReady_Program/test_native/tracker_regression.cpp` after the Phase 1 fixes (144 checks) |
+  | `results_refined_algorithm.txt` | `replay.cpp` after the algorithm refinement (integrated depth, tilt projection, median rate) |
+  | `results_regression_refined.txt` | The extended regression test (233 checks) on the refined algorithm: all pass |
+  | `results_regression_before_refinement.txt` | The same extended test run against the Phase 1 tracker (K·a·T² depth): 80 failures, almost all depth |
+  | `results_simulation_scenario.txt` | `CPReady_Program/test_native/simulation_scenario.cpp`: the simulator's cue drill |
 
   `replay.cpp` always compiles whatever `CompressionTracker.h` is in the tree. To
-  reproduce the original numbers, check out `3c086a5` first.
+  reproduce the original numbers, check out `3c086a5` first. Since the refinement,
+  `processSample` also takes the unfiltered sample; `replay.cpp` passes it.
 
 ## Build and run (any g++ with C++17)
 

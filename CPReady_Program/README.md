@@ -12,8 +12,10 @@ CPReady_Program/
 │   ├── CPReadyConfig.h        # ★ MASTER CONFIGURATION FILE (Tune all parameters here)
 │   ├── BLEReadings.h          # ★ BLE TELEMETRY & PACKET STRUCT (Includes Dart parser)
 │   ├── CPRTypes.h             # Common state enums and command packet layout
-│   ├── SensorManager.h        # Dual MPU6050 I2C Fast Mode driver & differential subtraction
-│   ├── CompressionTracker.h   # Harmonic pedometer engine (Rate, Depth, Recoil, CCF)
+│   ├── SensorManager.h        # Dual MPU6050 driver, gravity projection & differential subtraction
+│   ├── GravityAxis.h          # Learns each sensor's vertical at calibration (tilt correction)
+│   ├── CompressionTracker.h   # Stroke detection, rate, depth, recoil estimate, CCF, coaching
+│   ├── DepthEstimator.h       # Per-stroke depth by cycle-bounded double integration
 │   └── BleManager.h           # BLE GATT Server, Notify characteristic, string command mailbox
 ├── src/
 │   └── main.cpp               # Standard C++ entry point (PlatformIO / ESP-IDF)
@@ -38,9 +40,13 @@ If you or the students need to adjust calibration factors, detection thresholds,
 📁 **`include/CPReadyConfig.h`**
 
 All parameters are heavily commented with their default values and tuning guidelines:
-- `DEPTH_CALIBRATION_K` (Default: `11.2f`): Increase if readings are too shallow; decrease if too deep.
-  After flashing the October 2026 detector fixes, re-run Manikin Calibration: K values saved
-  with the old detector were fitted to its miscounted strokes.
+- `DEPTH_CALIBRATION_K` (Default: `11.2f`): Depth is integrated from acceleration
+  (`include/DepthEstimator.h`). K is a correction factor: reported depth = integrated depth ×
+  K / 11.2, so the default means no correction. Manikin Calibration adjusts it. K values saved
+  by older firmware (the K·a·T² formula) are discarded once on the first boot; re-run Manikin
+  Calibration after flashing.
+- `MIN_STROKE_DEPTH_CM` (Default: `1.0`): A detection with less real motion than this is a
+  bump, not a compression, and is not counted.
 - `COMPRESSION_START_THRESHOLD_G` (Default: `0.45g`): Upper cap of the adaptive downstroke
   threshold (the threshold follows 40 % of the recent signal envelope, floor `MIN_START_THRESHOLD_G`).
 - `RECOIL_THRESHOLD_G` (Default: `-0.35g`): Acceleration proxy for recoil. Without a force sensor
@@ -60,8 +66,11 @@ and packet reference is `docs/SOFTWARE_DEVELOPER_GUIDE.md` §3 and §4.5.
 
 ## 3a. Tests Without Hardware
 
-- `test_native/tracker_regression.cpp`: native regression test for the stroke detector
-  (see `test_native/README.md`). Run it after any change to `CompressionTracker.h`.
+- `test_native/tracker_regression.cpp`: native regression test for stroke detection, rate
+  and depth (see `test_native/README.md`). Run it after any change to `CompressionTracker.h`,
+  `DepthEstimator.h` or the detector constants.
+- `test_native/simulation_scenario.cpp`: checks that the simulation build's scenario is
+  measured correctly and fires every coaching cue.
 - `pio run -e simulation`: firmware that feeds synthetic strokes through the production
   tracker over BLE, so the app can be exercised without sensors.
 

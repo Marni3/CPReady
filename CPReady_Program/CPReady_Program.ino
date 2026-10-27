@@ -293,6 +293,17 @@ void onReceiveMessage_BLE(String message) {
 // on every change; it is migrated once (only into the profile it belonged to) and removed,
 // so a bench K can no longer leak into the manikin K after a reboot.
 void loadDepthCalibration(uint8_t savedProfile) {
+    // K values saved under the old K * da * T^2 model were fitted to that model's
+    // stroke-shape bias. Applied to the integrated depth they would mis-scale it, so
+    // they are discarded once and every profile starts again from its default.
+    if (prefs.getUChar("depth_model", 0) != CPReadyConfig::DEPTH_MODEL_VERSION) {
+        prefs.remove("depth_k");
+        prefs.remove("k_manikin");
+        prefs.remove("k_bench");
+        prefs.putUChar("depth_model", CPReadyConfig::DEPTH_MODEL_VERSION);
+        Serial.println("[NVS] Depth model changed: saved K values reset. Re-run Manikin Calibration.");
+    }
+
     if (prefs.isKey("depth_k")) {
         float legacyK = prefs.getFloat("depth_k", 0.0f);
         const char* key = (savedProfile == (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST) ? "k_bench" : "k_manikin";
@@ -464,14 +475,15 @@ void loop() {
         }
         #else
         float netAccel = 0.0f;
-        bool sampled = sensors.sample100Hz(netAccel, nowMicros);
+        float rawNetAccel = 0.0f;
+        bool sampled = sensors.sample100Hz(netAccel, rawNetAccel, nowMicros);
         if (sensors.hasFault()) {
             enterSensorFault();
             return;
         }
         if (sampled) {
-            // Process current sample through the harmonic pedometer engine
-            bool strokeCompleted = tracker.processSample(netAccel, now);
+            // Filtered sample detects strokes; the raw sample is integrated for depth
+            bool strokeCompleted = tracker.processSample(netAccel, rawNetAccel, now);
 
             // Transmit immediately upon stroke completion, or throttle at configured interval
             if (strokeCompleted || (now - lastBleNotifyMillis >= CPReadyConfig::BLE_NOTIFY_INTERVAL_MS)) {

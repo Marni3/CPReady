@@ -4,6 +4,7 @@
 #include "CPRTypes.h"
 #include "CPReadyConfig.h"
 #include "BLEReadings.h"
+#include "DepthEstimator.h"
 
 class CompressionTracker {
 private:
@@ -23,6 +24,12 @@ private:
     uint32_t pausedAtMillis;       // Non-zero while the session is paused
     bool     forcePostPause;       // Next stroke follows a resume and must not be read as a cadence
 
+    // Depth reconstruction: raw samples by index, the current stroke's onset and the
+    // previous stroke's completion (the start of the next stroke's cycle window).
+    DepthEstimator depthEstimator;
+    uint32_t onsetSampleIndex;
+    uint32_t lastStrokeEndSampleIndex;
+
     // Runtime Dynamic Configuration
     float depthCalibrationK;
     float manikinDepthK;
@@ -41,10 +48,11 @@ private:
     uint32_t totalStrokeCount;
     uint32_t goodRecoilCount;
     float    cumulativeDepthSum;
+    uint32_t cumulativeDepthCount;  // Strokes whose depth was measured
     float    cumulativeRateSum;
     float    validDepthSum;
     uint32_t validStrokeCount;
-    float    validRateSum;         // Rates of strokes with a real cadence (not first / post-pause)
+    uint32_t validPeriodSumMs;     // Periods of strokes with a real cadence (not first / post-pause)
     uint32_t validRateCount;
     bool     summaryAlreadyCalibrated;
     CPRSessionSummary lastFinalSummary;
@@ -94,16 +102,21 @@ public:
         pausedAtMillis = 0;
         forcePostPause = false;
 
+        depthEstimator.reset();
+        onsetSampleIndex = 0;
+        lastStrokeEndSampleIndex = 0;
+
         periodHistoryCount = 0;
         periodHistoryIndex = 0;
 
         totalStrokeCount = 0;
         goodRecoilCount = 0;
         cumulativeDepthSum = 0.0f;
+        cumulativeDepthCount = 0;
         cumulativeRateSum = 0.0f;
         validDepthSum = 0.0f;
         validStrokeCount = 0;
-        validRateSum = 0.0f;
+        validPeriodSumMs = 0;
         validRateCount = 0;
         summaryAlreadyCalibrated = false;
 
@@ -157,6 +170,10 @@ public:
         strokeStartMillis = 0;
         pausedAtMillis = 0;
         forcePostPause = true;
+        // No sample was recorded while paused, so the buffer would join two unrelated
+        // stretches of signal. The first stroke after resuming starts from rest instead.
+        depthEstimator.reset();
+        lastStrokeEndSampleIndex = 0;
     }
 
     // Marks the session finished so a stray sample or RESUME cannot reopen it.
@@ -191,7 +208,7 @@ public:
 
     float getRunningAverageDepth() const {
         if (validStrokeCount > 0) return validDepthSum / (float)validStrokeCount;
-        return totalStrokeCount > 0 ? (cumulativeDepthSum / (float)totalStrokeCount) : 0.0f;
+        return cumulativeDepthCount > 0 ? (cumulativeDepthSum / (float)cumulativeDepthCount) : 0.0f;
     }
 
     // Proportional comparative calibration: K_new = K_current * (targetDepth / measuredMeanDepth)
@@ -238,8 +255,14 @@ public:
     CPReadyConfig::KinematicProfile getProfile() const { return currentProfile; }
 
     // Called for each 100 Hz sample. Returns true whenever a stroke completes.
-    bool processSample(float netAccel, uint32_t currentMillis) {
+    // netAccel is the low-pass filtered signal, used to detect strokes. rawNetAccel is
+    // the same sample before filtering, used for depth: the filter would shrink and
+    // delay the motion it integrates.
+    bool processSample(float netAccel, float rawNetAccel, uint32_t currentMillis) {
         if (sessionStartMillis == 0 || pausedAtMillis != 0) return false;
+
+        depthEstimator.push(rawNetAccel);
+        const uint32_t sampleIndex = depthEstimator.sampleCount() - 1;
 
         uint32_t totalSessionTime = currentMillis - sessionStartMillis;
         reading.elapsed_seconds = totalSessionTime / 1000;
@@ -275,6 +298,7 @@ public:
                 if (netAccel > startThreshold() && onsetLockoutOver && quietAfterEnd) {
                     state = StrokeState::COMPRESSING;
                     strokeStartMillis = currentMillis;
+                    onsetSampleIndex = sampleIndex;
                     peakAccel = netAccel;
                     troughAccel = netAccel;
                     recoilArmed = false;
@@ -307,11 +331,30 @@ public:
                 // When net acceleration crosses back upward near zero, stroke is finished
                 if (recoilArmed && netAccel >= CPReadyConfig::STROKE_FINISH_THRESHOLD_G) {
                     uint32_t rawPeriodMs = currentMillis - lastStrokePeakMillis;
-                    lastStrokePeakMillis = currentMillis;
-                    lastCompressionDetectedMillis = currentMillis;
-
                     bool isPostPause = (rawPeriodMs > CPReadyConfig::PAUSE_DETECTION_TIMEOUT_MS ||
                                         totalStrokeCount == 0 || forcePostPause);
+
+                    // Depth comes first: a detection without real chest motion is a bump
+                    // (hands repositioned during a pause), not a compression.
+                    const uint32_t strokeEndIndex = sampleIndex + 1;
+                    float physicalDepthCm = 0.0f;
+                    bool depthKnown = false;
+                    if (!isPostPause) {
+                        depthKnown = depthEstimator.closedCycleDepthCm(
+                            lastStrokeEndSampleIndex, strokeEndIndex, physicalDepthCm);
+                    }
+                    if (!depthKnown) {
+                        depthKnown = depthEstimator.fromRestDepthCm(
+                            onsetSampleIndex, strokeEndIndex, physicalDepthCm);
+                    }
+                    if (depthKnown && physicalDepthCm < CPReadyConfig::MIN_STROKE_DEPTH_CM) {
+                        state = StrokeState::WAITING_FOR_DOWNSLICK;
+                        break;
+                    }
+
+                    lastStrokePeakMillis = currentMillis;
+                    lastCompressionDetectedMillis = currentMillis;
+                    lastStrokeEndSampleIndex = strokeEndIndex;
                     forcePostPause = false;
                     bool rateValid = !isPostPause && rawPeriodMs >= CPReadyConfig::MIN_VALID_PERIOD_MS;
 
@@ -353,49 +396,29 @@ public:
                     if (!CPReadyConfig::RECOIL_MEASURED_BY_FORCE_SENSOR) flags |= CADENCE_FLAG_RECOIL_ESTIMATED;
                     reading.quality_flags = flags;
 
-                    // 2. Compute Instantaneous Rate. The first stroke and the stroke after a
-                    // pause have no cadence, so they report no rate (0) instead of a stale
-                    // value or the 30-40 cpm a long gap would produce, and earn no CCF time.
+                    // 2. Rate. The first stroke and the stroke after a pause have no
+                    // cadence, so they report no rate (0) instead of a stale value or the
+                    // 30-40 cpm a long gap would produce, and earn no CCF time. Otherwise
+                    // the rate is the median of the last few periods, so one uneven
+                    // stroke does not swing the display or start a "speed up" streak.
                     if (rateValid) {
-                        reading.rate_cpm = 60000.0f / (float)rawPeriodMs;
+                        reading.rate_cpm = 60000.0f / medianRecentPeriodMs();
                         totalActiveCompressionMillis += rawPeriodMs;
                     } else {
                         reading.rate_cpm = 0.0f;
                     }
 
-                    // 3. Compute Algebraic Harmonic Depth: D = K * a_pp * T_clamped^2
-                    // Clamping and smoothing prevents quadratic explosion during bench testing or cadence jitter
-                    float cyclePeriodSec;
-                    if (isPostPause) {
-                        // Anchor to typical CPR period (~110 CPM = 0.55s) to eliminate false 10 cm ceilings
-                        cyclePeriodSec = CPReadyConfig::FALLBACK_CADENCE_PERIOD_SEC;
-                    } else if (periodHistoryCount >= 3) {
-                        // 3-stroke running median filter on cycle period to reject timing noise
-                        uint16_t p0 = recentCyclePeriods[(periodHistoryIndex + PERIOD_HISTORY_SIZE - 1) % PERIOD_HISTORY_SIZE];
-                        uint16_t p1 = recentCyclePeriods[(periodHistoryIndex + PERIOD_HISTORY_SIZE - 2) % PERIOD_HISTORY_SIZE];
-                        uint16_t p2 = recentCyclePeriods[(periodHistoryIndex + PERIOD_HISTORY_SIZE - 3) % PERIOD_HISTORY_SIZE];
-                        uint16_t med = (p0 <= p1) ? ((p1 <= p2) ? p1 : ((p0 <= p2) ? p2 : p0))
-                                                   : ((p0 <= p2) ? p0 : ((p1 <= p2) ? p2 : p1));
-                        cyclePeriodSec = (float)med / 1000.0f;
-                    } else {
-                        cyclePeriodSec = (float)rawPeriodMs / 1000.0f;
-                    }
-
-                    if (cyclePeriodSec < CPReadyConfig::MIN_CPR_PERIOD_SEC) {
-                        cyclePeriodSec = CPReadyConfig::MIN_CPR_PERIOD_SEC;
-                    } else if (cyclePeriodSec > CPReadyConfig::MAX_CPR_PERIOD_SEC) {
-                        cyclePeriodSec = CPReadyConfig::MAX_CPR_PERIOD_SEC;
-                    }
-
-                    float peakToPeakAccel = peakAccel - troughAccel;
-                    reading.depth_cm = depthCalibrationK * (peakToPeakAccel * cyclePeriodSec * cyclePeriodSec);
-
-                    // Constrain bounds using configured limits
-                    if (reading.depth_cm < CPReadyConfig::DEPTH_MIN_LIMIT_CM) {
-                        reading.depth_cm = CPReadyConfig::DEPTH_MIN_LIMIT_CM;
-                    }
-                    if (reading.depth_cm > CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
-                        reading.depth_cm = CPReadyConfig::DEPTH_MAX_LIMIT_CM;
+                    // 3. Depth: the integrated chest motion, scaled by the calibration K
+                    // (1.0 at the profile default). A first stroke that did not start
+                    // from rest has no measurable depth; the previous value stays.
+                    if (depthKnown) {
+                        reading.depth_cm = physicalDepthCm * depthScale();
+                        if (reading.depth_cm < CPReadyConfig::DEPTH_MIN_LIMIT_CM) {
+                            reading.depth_cm = CPReadyConfig::DEPTH_MIN_LIMIT_CM;
+                        }
+                        if (reading.depth_cm > CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
+                            reading.depth_cm = CPReadyConfig::DEPTH_MAX_LIMIT_CM;
+                        }
                     }
 
                     // 4. Evaluate Recoil
@@ -413,15 +436,20 @@ public:
                     if (reading.recoil_complete) {
                         goodRecoilCount++;
                     }
-                    cumulativeDepthSum += reading.depth_cm;
+                    if (depthKnown) {
+                        cumulativeDepthSum += reading.depth_cm;
+                        cumulativeDepthCount++;
+                    }
                     cumulativeRateSum += reading.rate_cpm;
                     if (rateValid) {
-                        validRateSum += reading.rate_cpm;
+                        validPeriodSumMs += rawPeriodMs;
                         validRateCount++;
                     }
 
-                    // Stroke-Qualified Mean accumulation: exclude first-strokes and clamped limit saturation
-                    if (!(flags & CADENCE_FLAG_FIRST_STROKE) && reading.depth_cm < CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
+                    // Stroke-Qualified Mean accumulation: exclude first-strokes, unmeasured
+                    // strokes and clamped limit saturation
+                    if (depthKnown && !(flags & CADENCE_FLAG_FIRST_STROKE) &&
+                        reading.depth_cm < CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
                         validDepthSum += reading.depth_cm;
                         validStrokeCount++;
                     }
@@ -435,7 +463,7 @@ public:
                         fastRateStreak = 0;  fastRateStartTime = 0;
                     }
                     reading.audio_prompt_code = PROMPT_NONE;
-                    evaluateAudioGuidance(currentMillis, rateValid);
+                    evaluateAudioGuidance(currentMillis, rateValid, depthKnown);
 
                     state = StrokeState::WAITING_FOR_DOWNSLICK;
                     return true; // Stroke complete, fresh metrics and audio cue ready
@@ -447,6 +475,32 @@ public:
     }
 
 private:
+    // Reported depth = integrated depth x (K / profile default K).
+    float depthScale() const {
+        float defaultK = (currentProfile == CPReadyConfig::KinematicProfile::BENCH_TEST)
+            ? CPReadyConfig::BENCH_DEPTH_CALIBRATION_K
+            : CPReadyConfig::DEPTH_CALIBRATION_K;
+        return depthCalibrationK / defaultK;
+    }
+
+    // Median of the last RATE_MEDIAN_STROKES valid periods (mean of two when only two exist).
+    float medianRecentPeriodMs() const {
+        uint8_t n = periodHistoryCount < CPReadyConfig::RATE_MEDIAN_STROKES
+            ? periodHistoryCount : CPReadyConfig::RATE_MEDIAN_STROKES;
+        if (n == 0) return 1.0f;
+        uint16_t p[PERIOD_HISTORY_SIZE];
+        for (uint8_t i = 0; i < n; i++) {
+            p[i] = recentCyclePeriods[(periodHistoryIndex + PERIOD_HISTORY_SIZE - 1 - i) % PERIOD_HISTORY_SIZE];
+        }
+        for (uint8_t i = 1; i < n; i++) {
+            for (uint8_t j = i; j > 0 && p[j - 1] > p[j]; j--) {
+                uint16_t t = p[j]; p[j] = p[j - 1]; p[j - 1] = t;
+            }
+        }
+        if (n % 2 == 0) return 0.5f * ((float)p[n / 2 - 1] + (float)p[n / 2]);
+        return (float)p[n / 2];
+    }
+
     // Downstroke trigger level: a fraction of the recent signal envelope, never below
     // MIN_START_THRESHOLD_G and never above the profile threshold. A fixed 0.45 g missed
     // smooth and shallow strokes entirely, which are exactly the ones needing feedback.
@@ -463,11 +517,11 @@ private:
         return -level;
     }
 
-    void evaluateAudioGuidance(uint32_t currentMillis, bool rateValid) {
+    void evaluateAudioGuidance(uint32_t currentMillis, bool rateValid, bool depthKnown) {
         if (!CPReadyConfig::ENABLE_AUDIO_COACHING_PROMPTS) return;
 
-        bool isShallow = (reading.depth_cm < CPReadyConfig::TARGET_DEPTH_MIN_CM);
-        bool isTooDeep = (reading.depth_cm > CPReadyConfig::TARGET_DEPTH_MAX_CM);
+        bool isShallow = depthKnown && (reading.depth_cm < CPReadyConfig::TARGET_DEPTH_MIN_CM);
+        bool isTooDeep = depthKnown && (reading.depth_cm > CPReadyConfig::TARGET_DEPTH_MAX_CM);
         // The acceleration recoil proxy cannot see leaning, so it only coaches when
         // explicitly enabled or when recoil comes from a force sensor.
         bool recoilTrusted = CPReadyConfig::RECOIL_MEASURED_BY_FORCE_SENSOR ||
@@ -608,9 +662,12 @@ public:
         if (totalStrokeCount > 0) {
             // Stroke-qualified mean ignores hesitant first strokes and physical ceiling clamp artifacts
             s.avg_depth_cm = (validStrokeCount > 0) ? (validDepthSum / (float)validStrokeCount)
-                                                    : (cumulativeDepthSum / (float)totalStrokeCount);
-            // Only strokes with a real cadence; first and post-pause strokes carry no rate
-            s.avg_rate_cpm = (validRateCount > 0) ? (validRateSum / (float)validRateCount) : 0.0f;
+                           : (cumulativeDepthCount > 0) ? (cumulativeDepthSum / (float)cumulativeDepthCount)
+                           : 0.0f;
+            // Strokes per minute of steady compressing: only strokes with a real cadence
+            // (first and post-pause strokes carry no period).
+            s.avg_rate_cpm = (validPeriodSumMs > 0)
+                ? (60000.0f * (float)validRateCount / (float)validPeriodSumMs) : 0.0f;
             s.recoil_compliance_percent = ((float)goodRecoilCount / (float)totalStrokeCount) * 100.0f;
         } else {
             s.avg_depth_cm = 0.0f;

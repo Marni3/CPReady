@@ -3,7 +3,7 @@
  *
  * Build target: PlatformIO environment `simulation` (`CPREADY_SIMULATION`).
  *
- * Exposes the same GATT service, the same 12-byte telemetry packet and the same
+ * Exposes the same GATT service, the same 16-byte telemetry packet and the same
  * text commands as the sensor build, but replaces the MPU-6050 pair with the
  * synthetic signal from SyntheticVest. That signal is processed by the
  * production CompressionTracker, so rate, depth, recoil, CCF, quality flags,
@@ -44,6 +44,7 @@ static uint32_t simLastCalibrationMicros = 0;
 
 static uint32_t simLastNotifyMs     = 0;
 static uint32_t simLastSampleMicros = 0;
+static float    simFilteredNetG     = 0.0f;   // Same low-pass as SensorManager, for detection
 
 static uint32_t simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
 
@@ -173,32 +174,27 @@ static void beginSimCalibration(uint32_t now) {
 /**
  * Starts an active session and restarts the stroke scenario.
  *
- * The reference scalar matches the active profile's default so the simulated
- * stroke keeps its physical size; a retuned tracker scalar then shows up as a
- * proportional change in the reported depth.
+ * The simulated strokes have a fixed physical depth, so a retuned K shows up as a
+ * proportional change in the reported depth, exactly as on the vest.
  */
 static void startSimSession(uint32_t now) {
     const bool steadyTrial =
         simPracticeDurationSec > 0 &&
         simPracticeDurationSec <= SimConfig::STEADY_TRIAL_MAX_SEC;
 
-    const float referenceK =
-        simTracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST
-            ? CPReadyConfig::BENCH_DEPTH_CALIBRATION_K
-            : CPReadyConfig::DEPTH_CALIBRATION_K;
-
     simTracker.startSession(now);
-    simVest.begin(now, referenceK, steadyTrial);
+    simVest.begin(now, steadyTrial);
 
     simLastNotifyMs     = now;
     simLastSampleMicros = micros();
+    simFilteredNetG     = 0.0f;
     simLastPhase        = -1;
     simLastLoggedCue    = PROMPT_NONE;
     simState            = DeviceState::ACTIVE_SESSION;
 
-    Serial.printf("[FLOW] Session started: %s | reference K %.2f | duration %u s\n",
+    Serial.printf("[FLOW] Session started: %s | depth K %.2f | duration %u s\n",
                   steadyTrial ? "steady depth trial" : "cue scenario",
-                  referenceK, (unsigned)simPracticeDurationSec);
+                  simTracker.getDepthK(), (unsigned)simPracticeDurationSec);
 }
 
 /** Finalises the tracker and publishes the session summary. */
@@ -541,17 +537,18 @@ static void updateActiveSession(uint32_t now, uint32_t nowMicros) {
     if ((int8_t)phaseIndex != simLastPhase) {
         simLastPhase = (int8_t)phaseIndex;
         const SimConfig::Phase& phase = SimConfig::PHASES[phaseIndex];
-        Serial.printf("[SIM] Phase %u/%u: %s (%u cpm, %.1f cm, trough %.2f g)\n",
+        Serial.printf("[SIM] Phase %u/%u: %s (%u cpm, %.1f cm)\n",
                       (unsigned)(phaseIndex + 1),
                       (unsigned)SimConfig::PHASE_COUNT,
                       phase.label,
                       (unsigned)phase.rateCpm,
-                      phase.depthCm,
-                      phase.troughG);
+                      phase.depthCm);
     }
 
-    const float netAccelG = simVest.netAccelAt(now);
-    const bool strokeCompleted = simTracker.processSample(netAccelG, now);
+    const float rawNetG = simVest.netAccelAt(now);
+    const float alpha = CPReadyConfig::LOWPASS_FILTER_ALPHA;
+    simFilteredNetG = alpha * rawNetG + (1.0f - alpha) * simFilteredNetG;
+    const bool strokeCompleted = simTracker.processSample(simFilteredNetG, rawNetG, now);
 
     if (!strokeCompleted && (now - simLastNotifyMs < CPReadyConfig::BLE_NOTIFY_INTERVAL_MS)) {
         return;
@@ -605,20 +602,21 @@ void setup() {
 
     const uint8_t savedProfile = simPrefs.getUChar(
         "profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+
+    // As in main.cpp: K values saved under the old depth model are discarded once.
+    if (simPrefs.getUChar("depth_model", 0) != CPReadyConfig::DEPTH_MODEL_VERSION) {
+        simPrefs.remove("depth_k");
+        simPrefs.remove("k_manikin");
+        simPrefs.remove("k_bench");
+        simPrefs.putUChar("depth_model", CPReadyConfig::DEPTH_MODEL_VERSION);
+        Serial.println("[NVS] Depth model changed: saved K values reset.");
+    }
     float savedKManikin = simPrefs.getFloat("k_manikin", 0.0f);
     float savedKBench = simPrefs.getFloat("k_bench", 0.0f);
-
-    if (savedKManikin <= 0.0f && savedKBench <= 0.0f) {
-        float legacyK = simPrefs.getFloat("depth_k", 0.0f);
-        if (legacyK >= 2.0f && legacyK <= 25.0f) {
-            savedKManikin = legacyK;
-            savedKBench = legacyK;
-        }
-    }
-    if (savedKManikin >= 2.0f && savedKManikin <= 25.0f) {
+    if (savedKManikin >= CPReadyConfig::DEPTH_K_MIN && savedKManikin <= CPReadyConfig::DEPTH_K_MAX) {
         simTracker.setManikinDepthK(savedKManikin);
     }
-    if (savedKBench >= 2.0f && savedKBench <= 25.0f) {
+    if (savedKBench >= CPReadyConfig::DEPTH_K_MIN && savedKBench <= CPReadyConfig::DEPTH_K_MAX) {
         simTracker.setBenchDepthK(savedKBench);
     }
     simTracker.setProfile((CPReadyConfig::KinematicProfile)savedProfile);

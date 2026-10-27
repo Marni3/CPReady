@@ -84,7 +84,8 @@ static Result run(Shape shape, double cpm, double D, double lean, double seconds
         float net = (float)(a / G_CM + 0.005 * noise());
         ema = 0.25f * net + 0.75f * ema;
         uint32_t ms = t0 + (uint32_t)llround(t * 1000.0);
-        if (tr.processSample(ema, ms)) {
+        // Revision 3 of the tracker also takes the unfiltered sample (for depth).
+        if (tr.processSample(ema, net, ms)) {
             const CPRReading& rd = tr.getReading();
             r.detected++;
             if (rd.recoil_complete) r.recoilOk++;

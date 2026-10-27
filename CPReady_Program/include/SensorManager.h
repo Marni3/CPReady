@@ -6,6 +6,7 @@
 #include <Adafruit_Sensor.h>
 #include "CPRTypes.h"
 #include "CPReadyConfig.h"
+#include "GravityAxis.h"
 
 class SensorManager {
 private:
@@ -22,14 +23,18 @@ private:
     uint8_t baseI2CAddr;
     #endif
     bool hasMultiplexer;
-    float chestGravityOffset;
+    float chestGravityOffset;     // Resting z reading (g); used by the calibration checks
     float baseGravityOffset;
+    GravityAxis chestAxis;        // Resting gravity direction; samples are projected onto it
+    GravityAxis baseAxis;
     float lastFilteredNetAccel;
     uint32_t lastSampleMicros;
-    
+
     // Non-blocking calibration accumulators
     float calChestSum;
     float calBaseSum;
+    Vec3 calChestVecSum;
+    Vec3 calBaseVecSum;
     uint16_t calSampleCount;
     bool isCalibrated;
     float calNetMin;          // Minimum raw net differential during calibration
@@ -66,7 +71,12 @@ public:
           calBaseMin(999.0f), calBaseMax(-999.0f),
           lastCalibrationFailureReason(ERR_NONE),
           consecutiveReadFailures(0), identicalSampleCount(0),
-          lastChestZ(0.0f), lastBaseZ(0.0f), sensorFault(false) {}
+          lastChestZ(0.0f), lastBaseZ(0.0f), sensorFault(false) {
+        chestAxis.reset();
+        baseAxis.reset();
+        calChestVecSum = {0.0f, 0.0f, 0.0f};
+        calBaseVecSum = {0.0f, 0.0f, 0.0f};
+    }
 
     // Multiplexer Channel Switching Helpers (with capacitive settling delay)
     void selectMuxChannel(uint8_t channel) {
@@ -418,6 +428,8 @@ public:
     void resetCalibration() {
         calChestSum = 0.0f;
         calBaseSum = 0.0f;
+        calChestVecSum = {0.0f, 0.0f, 0.0f};
+        calBaseVecSum = {0.0f, 0.0f, 0.0f};
         calSampleCount = 0;
         isCalibrated = false;
         calNetMin = 999.0f;
@@ -447,13 +459,17 @@ public:
             }
         }
 
-        float a1 = 0.0f;
-        float a2 = 0.0f;
-        if (!readSensors(a1, a2)) {
+        Vec3 chest, base;
+        if (!readSensors(chest, base)) {
             return false; // Failed samples are not counted; too many end in a fault
         }
+        const float a1 = chest.z;
+        const float a2 = base.z;
 
         calChestSum += a1;
+        calChestVecSum.x += chest.x;
+        calChestVecSum.y += chest.y;
+        calChestVecSum.z += chest.z;
         calSampleCount++;
 
         // Track single-sensor extremes
@@ -462,6 +478,9 @@ public:
 
         #if USE_DUAL_MPU
         calBaseSum  += a2;
+        calBaseVecSum.x += base.x;
+        calBaseVecSum.y += base.y;
+        calBaseVecSum.z += base.z;
 
         if (a2 < calBaseMin) calBaseMin = a2;
         if (a2 > calBaseMax) calBaseMax = a2;
@@ -480,11 +499,17 @@ public:
     // Finalize calculated static gravity baseline
     void finalizeCalibration() {
         if (calSampleCount > 0) {
-            chestGravityOffset = calChestSum / (float)calSampleCount;
+            const float n = (float)calSampleCount;
+            chestGravityOffset = calChestSum / n;
+            chestAxis.setFromRest({calChestVecSum.x / n, calChestVecSum.y / n, calChestVecSum.z / n});
             #if USE_DUAL_MPU
-            baseGravityOffset  = calBaseSum  / (float)calSampleCount;
+            baseGravityOffset  = calBaseSum  / n;
+            baseAxis.setFromRest({calBaseVecSum.x / n, calBaseVecSum.y / n, calBaseVecSum.z / n});
+            Serial.printf("[CALIB] Sensor tilt from vertical: chest %.1f deg, base %.1f deg\n",
+                          chestAxis.tiltDegrees(), baseAxis.tiltDegrees());
             #else
             baseGravityOffset  = 0.0f;
+            Serial.printf("[CALIB] Chest sensor tilt from vertical: %.1f deg\n", chestAxis.tiltDegrees());
             #endif
             isCalibrated = true;
         }
@@ -543,20 +568,22 @@ public:
 
     // Primary sampling function intended to run at configured rate (default 100 Hz).
     // Returns false when no sample is due or the sensor read failed.
-    bool sample100Hz(float& outNetAccel, uint32_t currentMicros) {
+    // outNetAccel is low-pass filtered for stroke detection; outRawNetAccel is the same
+    // sample unfiltered, for depth integration. Both are vertical (along the gravity
+    // direction learned at calibration), so a tilted pad does not under-read.
+    bool sample100Hz(float& outNetAccel, float& outRawNetAccel, uint32_t currentMicros) {
         if (!sampleDue(currentMicros)) {
             return false; // Not time yet (non-blocking)
         }
 
-        float chestZ = 0.0f;
-        float baseZ = 0.0f;
-        if (!readSensors(chestZ, baseZ)) {
+        Vec3 chest, base;
+        if (!readSensors(chest, base)) {
             return false;
         }
-        float aChestG = chestZ - chestGravityOffset;
+        float aChestG = chestAxis.dynamicG(chest);
 
         #if USE_DUAL_MPU
-        float aBaseG  = baseZ - baseGravityOffset;
+        float aBaseG  = baseAxis.dynamicG(base);
         float rawNet  = -(aChestG - aBaseG);
         #else
         float rawNet  = -aChestG;
@@ -566,6 +593,7 @@ public:
         const float alpha = CPReadyConfig::LOWPASS_FILTER_ALPHA;
         lastFilteredNetAccel = (alpha * rawNet) + ((1.0f - alpha) * lastFilteredNetAccel);
         outNetAccel = lastFilteredNetAccel;
+        outRawNetAccel = rawNet;
         return true;
     }
 
@@ -583,22 +611,28 @@ private:
         return true;
     }
 
-    // Reads the vertical axis of both sensors in g. Returns false on a failed bus read;
+    // Reads all three axes of both sensors in g. Returns false on a failed bus read;
     // repeated failures or frozen readings latch sensorFault.
-    bool readSensors(float& chestZ, float& baseZ) {
+    bool readSensors(Vec3& chest, Vec3& base) {
         selectMuxChannel(chestMuxChannel);
         sensors_event_t aChest, gChest, tempChest;
         bool ok = chestSensor.getEvent(&aChest, &gChest, &tempChest);
-        chestZ = aChest.acceleration.z / SENSORS_GRAVITY_STANDARD;
+        chest.x = aChest.acceleration.x / SENSORS_GRAVITY_STANDARD;
+        chest.y = aChest.acceleration.y / SENSORS_GRAVITY_STANDARD;
+        chest.z = aChest.acceleration.z / SENSORS_GRAVITY_STANDARD;
 
         #if USE_DUAL_MPU
         selectMuxChannel(baseMuxChannel);
         sensors_event_t aBase, gBase, tempBase;
         ok = baseSensor.getEvent(&aBase, &gBase, &tempBase) && ok;
-        baseZ = aBase.acceleration.z / SENSORS_GRAVITY_STANDARD;
+        base.x = aBase.acceleration.x / SENSORS_GRAVITY_STANDARD;
+        base.y = aBase.acceleration.y / SENSORS_GRAVITY_STANDARD;
+        base.z = aBase.acceleration.z / SENSORS_GRAVITY_STANDARD;
         #else
-        baseZ = 0.0f;
+        base = {0.0f, 0.0f, 0.0f};
         #endif
+        const float chestZ = chest.z;
+        const float baseZ = base.z;
 
         if (!ok) {
             if (consecutiveReadFailures < 255) consecutiveReadFailures++;

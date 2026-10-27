@@ -32,7 +32,7 @@ that mattered most, and where they stand after this pass:
 | **C3** | The recoil phase can end on the first sample after it starts. | Smooth strokes are cut in half. Depth reads about ½ and every stroke is flagged as leaning, so the trainee hears **"Release chest completely"** for correct compressions. | **Fixed** (P1.3); regression-tested |
 | **C4** | A fixed 0.45 g start threshold is applied after a low-pass filter. | Shallow strokes (≤ 4–4.5 cm) and smooth strokes are **not counted at all**. "Push harder" can never fire for the most common novice error, and averages are biased upward. | **Fixed** with an adaptive threshold (P1.4); regression-tested |
 | **C5** | The "recoil" flag measures how hard the chest decelerates at the **bottom** of the stroke, not whether it returns at the top. | **Leaning is invisible** (shown in the replay). The recoil metric, the recoil percentage and the highest-priority voice cue are not valid measures of recoil. | **Mitigated** (P1.5): flagged as an estimate, no cue, not graded. A real fix needs the FSR (P2.6). |
-| **C6** | Depth = K·a_pp·T² depends on the *shape* of the stroke, not just its depth. | The same 5.5 cm compression reads anywhere from 1.9 cm to 4.2 cm depending on technique. One K calibration cannot fix this. | **Open**: needs the Phase 2 estimator and recorded data |
+| **C6** | Depth = K·a_pp·T² depends on the *shape* of the stroke, not just its depth. | The same 5.5 cm compression reads anywhere from 1.9 cm to 4.2 cm depending on technique. One K calibration cannot fix this. | **Fixed in software** (revision 3): depth is integrated per stroke, within 0.2 cm on every synthetic shape. Still needs validation on the vest (§9.7). |
 
 C2–C6 were demonstrated by compiling the **unmodified** `CompressionTracker.h` on a PC and
 replaying physically consistent strokes through it (Appendix A, `audit_evidence/`). C1 was
@@ -603,8 +603,9 @@ any data is collected for the paper.
 |---|---|
 | Done in the working tree; verified in software | P1.2, P1.3, P1.4 (interim adaptive threshold), P1.5 (a–c), P1.6, P1.8, P1.9, P1.10, P1.11, P0.5 (demo mode compiles; README fixed), parts of P3.1 (uint16 count and sequence number, as a 16-byte v2), P4.5, P4.6 (except "Stop running session"), the iOS half of P4.7 |
 | Done; needs a hardware check | P1.1 (BLE disconnect), P1.7 (sensor fault handling; saturation detection and bus recovery not done), P1.12 (direct 0x68/0x69 wiring) |
-| Partly done | P0.2: a native regression test exists (`CPReady_Program/test_native/`), but not yet as `pio test -e native`, and the command state machine still lives in `main.cpp` and is untested |
-| Open | P0.1 tag and branch, P0.3, P0.4, all of Phase 2, P3.2–P3.8, P4.1–P4.4, P4.8 (partly covered), Phase 5 |
+| Done in revision 3 (algorithm refinement), verified in software | P2.1 (tilt: gravity-vector projection; raw signal for depth), P2.2 as **cycle-bounded integration** instead of the Fourier estimator (§9.7 explains why), P2.4 (median live rate; session rate from periods), P2.7 (K·a·T² heuristics removed), P2.8 simulator half (physical waveform). Also bump rejection (< 1 cm), a weak-stroke recoil-exit fix, and a native check of the simulator scenario. |
+| Partly done | P0.2: native tests exist (`CPReady_Program/test_native/`), but not yet as `pio test -e native`, and the command state machine still lives in `main.cpp` and is untested. P2.3: detection is unchanged apart from the bump rejection and the arm-level fix. |
+| Open | P0.1 tag, P0.3, P0.4, P2.5, P2.6 (team decision: no force sensor in the product), bench half of P2.8, P3.2–P3.8, P4.1–P4.4, P4.8 (partly covered), Phase 5 |
 
 ### Phase 0: Foundations (do first)
 
@@ -935,15 +936,14 @@ Baseline: commit `3c086a5` on `main`. The changes are committed on the local bra
 
 ### 9.5 Limits that remain after this pass
 
-- **Depth (C6).** At the default K, a 5.5 cm push now reads 2.2–4.5 cm depending on stroke
-  shape (`results_after_fixes.txt`, section A). Re-calibrating K centres one shape but cannot
-  remove the spread. Depth must not be reported as validated until P2.2 is done and checked
-  against recorded data.
+- **Depth (C6).** At the default K, a 5.5 cm push read 2.2–4.5 cm depending on stroke
+  shape (`results_after_fixes.txt`, section A). *Addressed in revision 3 (§9.7).*
 - **Recoil (C5).** Leaning is still invisible; recoil is shown as estimated and is not graded.
 - **Strong spring ringing.** A synthetic 4 mm, 8 Hz bounce after every stroke still
   double-counts at 80 cpm. Real manikin data will show whether this happens.
 - **Bumps during pauses.** The adaptive threshold falls to 0.12 g during a pause, so a hand
-  repositioning harder than that can count as a stroke.
+  repositioning harder than that could count as a stroke. *Addressed in revision 3: a
+  detection with under 1 cm of motion is not counted.*
 
 ### 9.6 How to review or revert
 
@@ -951,6 +951,37 @@ Baseline: commit `3c086a5` on `main`. The changes are committed on the local bra
 - Revert a file: `git checkout main -- <path>`.
 - Full backup taken before any change:
   `..\CPReady_backup_before_audit_fixes_2026-10-27.zip` (next to the `CPReady` folder).
+
+### 9.7 Revision 3: algorithm refinement
+
+The full report, with before/after numbers and the hardware checklist, is
+`ALGORITHM_REFINEMENT_REPORT.md`. In short:
+
+- **Depth** is integrated per stroke (`include/DepthEstimator.h`) from the unfiltered
+  vertical acceleration, instead of K·a·T². On every synthetic shape, cadence and depth the
+  median error is ≤ 0.2 cm (it was up to 3.7 cm, always reading short). K becomes a correction factor around 1.0.
+  Saved K values are discarded once, through an NVS depth-model version key.
+- **Why integration rather than the Fourier estimator of P2.2:**
+  - it measures each stroke on its own instead of a 3 s average;
+  - it needs no periodicity, so a change of rate or depth shows up on the next stroke;
+  - it is simpler to test.
+
+  Both are in the literature, and the Fourier prototype stays in `audit_evidence` for
+  comparison on recorded data.
+- **Tilt:** samples are projected onto the gravity direction learned at calibration.
+- **Rate:** the live rate is the median of the last three periods, and the session rate is
+  strokes per minute of steady compressing.
+- **Bumps:** a detection with under 1 cm of motion is not counted.
+- **Weak-stroke fix:** the recoil arm level (0.04 g) sat above the finish level (−0.05 g), so
+  strokes peaking under about 0.17 g could end on the way down. The arm minimum is now
+  0.08 g. The Phase 1 regression test missed this, because counting still came out right.
+- **Simulator:** it now generates physical motion, so it exercises the same depth method as
+  the vest. A native test checks its whole cue drill.
+- **Verification:**
+  - 233/233 regression checks pass, and the simulator check passes.
+  - The same extended test fails 80 checks on the Phase 1 tracker.
+  - Each of the two new protections was reverted on a scratch copy and shown to fail its test.
+  - Both firmware images build (`esp32dev` flash 90.1 %).
 
 ---
 
