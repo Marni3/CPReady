@@ -25,42 +25,32 @@ private:
     // Single-thread bridge flag for disconnection events
     volatile bool hasDisconnectedFlag;
 
+    // Commands lost because the queue was full (reported from the main loop)
+    volatile uint32_t droppedCommandCount;
+
+    // Sequence number stamped into every metrics notification, so the app can count lost packets
+    uint16_t notifySequence;
+
     void onConnect(BLEServer* pServer) override {
         isClientConnected = true;
         hasDisconnectedFlag = false;
-        Serial.printf("[BLE] Client connected. Active clients: %d\n", pServer->getConnectedCount());
+        Serial.println("[BLE] Client connected.");
     }
 
-    void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override {
-        isClientConnected = true;
-        hasDisconnectedFlag = false;
-        Serial.printf("[BLE] Client connected (conn_id=%d). Active clients: %d\n",
-                      param->connect.conn_id, pServer->getConnectedCount());
-    }
-
+    // Arduino-ESP32 calls onDisconnect() BEFORE it decrements the connected count, so
+    // getConnectedCount() still includes the departing client here. CPReady only ever
+    // has one client, so every disconnect is "the" disconnect: always resume advertising.
     void onDisconnect(BLEServer* pServer) override {
-        if (pServer->getConnectedCount() == 0) {
-            isClientConnected = false;
-            hasDisconnectedFlag = true; // Signal main thread to abort any active session
-            pServer->startAdvertising(); // Resume advertising immediately for re-pairing
-            Serial.println("[BLE] Client disconnected. Advertising resumed.");
-        } else {
-            Serial.printf("[BLE] Client disconnect event, but %d client(s) still connected.\n",
-                          pServer->getConnectedCount());
-        }
+        isClientConnected = false;
+        hasDisconnectedFlag = true; // Signal main thread to abort any active session
+        BLEDevice::startAdvertising(); // Resume advertising immediately for re-pairing
+        Serial.println("[BLE] Client disconnected. Advertising resumed.");
     }
 
     void onDisconnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override {
-        Serial.printf("[BLE] Client disconnect event (conn_id=%d)\n", param->disconnect.conn_id);
-        if (pServer->getConnectedCount() == 0) {
-            isClientConnected = false;
-            hasDisconnectedFlag = true;
-            pServer->startAdvertising();
-            Serial.println("[BLE] All clients disconnected. Advertising resumed.");
-        } else {
-            Serial.printf("[BLE] Stale disconnect for conn_id=%d ignored; %d client(s) still connected.\n",
-                          param->disconnect.conn_id, pServer->getConnectedCount());
-        }
+        // Both overloads are invoked; this one only adds the reason to the log.
+        Serial.printf("[BLE] Disconnect reason 0x%02X (conn_id=%d)\n",
+                      param->disconnect.reason, param->disconnect.conn_id);
     }
 
     // Executed in FreeRTOS background task context when Flutter writes a command
@@ -71,14 +61,17 @@ private:
             size_t copyLen = rxVal.length() < 63 ? rxVal.length() : 63;
             memcpy(cmdBuf, rxVal.data(), copyLen);
             cmdBuf[copyLen] = '\0';
-            xQueueSend(commandQueue, cmdBuf, 0);
+            if (xQueueSend(commandQueue, cmdBuf, 0) != pdTRUE) {
+                droppedCommandCount++;
+            }
         }
     }
 
 public:
-    BleManager() 
+    BleManager()
         : pServer(nullptr), pNotifyChar(nullptr), pCommandChar(nullptr),
-          isClientConnected(false), commandQueue(nullptr), hasDisconnectedFlag(false) {}
+          isClientConnected(false), commandQueue(nullptr), hasDisconnectedFlag(false),
+          droppedCommandCount(0), notifySequence(0) {}
 
     void begin(const char* deviceName = CPReadyConfig::BLE_DEVICE_NAME) {
         if (commandQueue == nullptr) {
@@ -90,7 +83,7 @@ public:
 
         BLEService* pService = pServer->createService(CPReadyConfig::BLE_SERVICE_UUID);
 
-        // Notify Characteristic: pushes 11-byte CPRMetricsPacket
+        // Notify Characteristic: pushes the 16-byte CPRMetricsPacket and 12-byte config report
         pNotifyChar = pService->createCharacteristic(
             CPReadyConfig::BLE_CHAR_NOTIFY_UUID,
             BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
@@ -112,11 +105,14 @@ public:
         BLEDevice::startAdvertising();
     }
 
-    // Transmits an 11-byte binary packet (realtime, calibration, or final summary)
+    // Transmits a 16-byte metrics packet (realtime, calibration, error or final summary),
+    // stamped with the next sequence number.
     bool sendPacket(const CPRMetricsPacket& packet) {
         if (!isClientConnected || pNotifyChar == nullptr || pServer == nullptr) return false;
         if (pServer->getConnectedCount() == 0) return false;
-        pNotifyChar->setValue((uint8_t*)&packet, sizeof(CPRMetricsPacket));
+        CPRMetricsPacket stamped = packet;
+        stamped.sequence = ++notifySequence;
+        pNotifyChar->setValue((uint8_t*)&stamped, sizeof(CPRMetricsPacket));
         pNotifyChar->notify();
         return true;
     }
@@ -146,6 +142,13 @@ public:
             return String(cmdBuf);
         }
         return String();
+    }
+
+    // Returns and clears the number of commands dropped because the queue was full
+    uint32_t consumeDroppedCommandCount() {
+        uint32_t dropped = droppedCommandCount;
+        droppedCommandCount = 0;
+        return dropped;
     }
 
     // Checked inside main loop() to abort active session on disconnection

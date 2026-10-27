@@ -50,7 +50,7 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
 
 ### 4. Response Timeout & Validation Rules
 - **Agreed Timeout**: **2.0 seconds** (2000 ms). If Flutter sends `"STOP"` and does not receive a Type 4 packet within 2.0s, it displays the *"Results Unavailable"* screen.
-- **Validation Criteria**: Flutter verifies `bytes.length >= 11` (12 bytes expected in current protocol), `rate <= 250`, `depth_tenths_mm <= 1000` (10.0 cm), and `ccf <= 100`.
+- **Validation Criteria**: Flutter accepts exactly 16 bytes (protocol v2), 12 bytes (v1) or 11 bytes (legacy), and checks `rate <= 250`, `depth_tenths_mm <= 1000` (10.0 cm), and `ccf <= 100`.
 
 ### 5. Final Results Retransmission (`"GET_RESULTS"`)
 - The ESP32 retains `lastFinalSummary` in RAM.
@@ -86,7 +86,7 @@ Below are the explicit engineering agreements answering the **"For Technical Ver
 
 ---
 
-## 3. Telemetry Packet Specification (12 Bytes Packed)
+## 3. Telemetry Packet Specification (16 Bytes Packed, Protocol v2)
 
 ```
 SERVICE UUID:        6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -94,32 +94,40 @@ METRICS CHAR UUID:   6e400002-b5a3-f393-e0a9-e50e24dcca9e  (Notify)
 COMMAND CHAR UUID:   6e400003-b5a3-f393-e0a9-e50e24dcca9e  (Write)
 ```
 
-| Byte Offset | Field Name | Type | Real-Time Meaning (`type=1`) | Final Summary Meaning (`type=4`) | Error Packet (`type=0xFF` / `5`) | Config Packet (`type=6`) |
-| :---: | :--- | :---: | :--- | :--- | :--- | :--- |
-| **0** | `packet_type` | `uint8` | `1` (Live Stream) | `4` (Finalized Results) | `0xFF` / `5` (Error) | `6` (Config Report) |
-| **1** | `recoil_status` | `uint8` | `1` = Full Recoil, `0` = Leaning | Recoil Compliance % (`0..100`) | `0` | Active Profile (`0`=Manikin, `1`=Bench) |
-| **2..3** | `rate_cpm` | `uint16` | Cadence (cpm) | Session Average Cadence (cpm) | `0` | `k_manikin_x1000` (uint16 LE) |
-| **4..5** | `depth_tenths_mm` | `uint16` | Depth in 0.1 mm | Session Trimmed Mean Depth | `0` | `k_bench_x1000` (uint16 LE) |
-| **6** | `ccf_percent` | `uint8` | Cumulative CCF % (`0..100`) | Final Session CCF % (`0..100`) | `0` | Auto-Profile (`1`=on, `0`=off) |
-| **7** | `audio_prompt_code` | `uint8` | Voice Cue (`0..6`) | `0` (Unused) | **Error Reason Code (`0..7`)** | `0` (Reserved) |
-| **8** | `total_compressions`| `uint8` | Stroke sequence count | Total valid compressions | `0` | `0` (Reserved) |
-| **9..10** | `session_elapsed_sec`| `uint16`| Elapsed duration (sec) | Total session duration (sec) | `0` | `0` (Reserved) |
-| **11** | `quality_flags` | `uint8` | Bitfield (steady, first, profile)| Final Quality Flags | `0` | `0` (Reserved) |
+The source of truth is `include/BLEReadings.h`. Bytes 0..11 are unchanged from the 12-byte v1 packet; bytes 12..15 were added in v2. The app still accepts 12- and 11-byte packets from older firmware.
 
-### Error Reason Codes (`audio_prompt_code` when `packet_type == 0xFF` or `5`)
+| Byte Offset | Field Name | Type | Real-Time Meaning (`type=1`) | Final Summary Meaning (`type=4`) | Error Packet (`type=5`) |
+| :---: | :--- | :---: | :--- | :--- | :--- |
+| **0** | `packet_type` | `uint8` | `1` (Live Stream) | `4` (Finalized Results) | `5` (Error) |
+| **1** | `recoil_status` | `uint8` | `1` = Full Recoil, `0` = Not full (estimate, see bit 3) | Recoil Compliance % (`0..100`) | `0` |
+| **2..3** | `rate_cpm` | `uint16` | Cadence (cpm); `0` on the first stroke and the stroke after a pause | Mean cadence of strokes with a real cadence | `0` |
+| **4..5** | `depth_tenths_mm` | `uint16` | Depth in 0.1 mm | Mean depth (first/post-pause and 10 cm-clamped strokes excluded) | `0` |
+| **6** | `ccf_percent` | `uint8` | CCF % so far (updated every packet, decays during pauses) | Final Session CCF % | `0` |
+| **7** | `audio_prompt_code` | `uint8` | Voice Cue (`0..6`), sent in **one** packet only | `0` (Unused) | **Error Reason Code (`0..7`)** |
+| **8** | `total_compressions`| `uint8` | Stroke count, saturates at 255 (use bytes 12..13) | Same | `0` |
+| **9..10** | `session_elapsed_sec`| `uint16`| Elapsed duration (sec), paused time excluded | Total session duration (sec) | `0` |
+| **11** | `quality_flags` | `uint8` | Bitfield (see below) | Final Quality Flags | `0` |
+| **12..13** | `stroke_count` | `uint16` | Stroke count without saturation | Total compressions | `0` |
+| **14..15** | `sequence` | `uint16` | Notification sequence number (+1 per metrics packet sent, wraps at 65535) | Same | Same |
 
-When an operation fails or a command cannot be executed, the firmware returns an error packet with the failure reason encoded in Byte 7:
+The sequence number lets the app count lost notifications (gaps), which is what the study's "Bluetooth data transmission reliability" measure needs. The app stores the count per session (History column `packets_lost`).
+
+The Type 6 configuration report keeps its own 12-byte layout (`CPRConfigPacket` in `BLEReadings.h`): `packet_type`, `profile`, `depth_k_x100`, `config_flags`, `practice_duration_sec`, `default_duration_sec`, `protocol_version`, `reserved`.
+
+### Error Reason Codes (`audio_prompt_code` when `packet_type == 5`)
+
+When an operation fails or a command cannot be executed, the firmware returns an error packet with the failure reason encoded in Byte 7. These match `BLEReadings.h` and `AppBleConfig`:
 
 | Error Code | Constant | Meaning / Cause | Recommended UI Action |
 | :---: | :--- | :--- | :--- |
-| **0** | `ERR_NONE` | No error reported. | Dismiss dialogs. |
-| **1** | `ERR_NOT_READY` | System or sensor baseline is not initialized. | Prompt user to wait for sensor boot. |
-| **2** | `ERR_MOTION_UNSTABLE` | Calibration failed: motion jitter > 0.08g or lean detected. | Prompt: *"Keep hands completely still and release pressure."* |
-| **3** | `ERR_CALIBRATION_TIMEOUT`| Calibration watchdog timed out before stability. | Prompt user to verify hand placement and retry. |
-| **4** | `ERR_BUFFER_OVERFLOW` | Sensor FIFO or communication buffer full. | Automatically retry baseline read. |
-| **5** | `ERR_WRONG_STATE` | Command rejected: invalid state (e.g. `CALIBRATE` while running). | Stop active session first. |
-| **6** | `ERR_NO_TRIAL_DATA` | Manikin calibration rejected: no valid trial compressions. | Prompt: *"Deliver at least 5 steady compressions before saving."* |
-| **7** | `ERR_I2C_FAULT` | Hardware I2C bus error communicating with IMU. | Warn: *"Hardware sensor communication error."* |
+| **0** | `ERR_NONE` | Unspecified error. | Generic message. |
+| **1** | `ERR_MOTION_UNSTABLE` | Calibration failed: motion spread over 0.30 g (net), 0.25 g (chest) or 0.20 g (base). | *"Keep hands completely still and release pressure."* |
+| **2** | `ERR_LOW_SAMPLE_COUNT` | Calibration collected fewer than 150 of 200 samples. | Check the device and retry. |
+| **3** | `ERR_GRAVITY_IMPLAUSIBLE` | Resting gravity outside 0.65–1.35 g (sensor tilted or upside down). | *"Lay the vest flat on the chest."* |
+| **4** | `ERR_SENSOR_ALIGNMENT` | Chest and base sensors disagree by more than 0.35 g. | Reposition the vest. |
+| **5** | `ERR_WRONG_STATE` | Command not valid in the current state (see the command table). | Depends on the command; never fatal to a running session. |
+| **6** | `ERR_NO_TRIAL_DATA` | `CALIBRATE_TARGET` without a completed trial of at least 5 strokes. | *"Deliver at least 5 steady compressions before saving."* |
+| **7** | `ERR_I2C_FAULT` | Sensor reads failed or froze; any calibration or session was abandoned. `CALIBRATE` retries the sensors. | *"Sensor problem: check the cables and recalibrate."* |
 
 ### Quality & Cadence Bitfield Flags (`quality_flags`)
 
@@ -130,7 +138,8 @@ Byte 11 conveys stroke quality, cadence regularity, and runtime kinematic profil
 | **Bit 0** | `0x01` | `CADENCE_FLAG_STEADY` | `1` = Cadence jitter $\le 25\%$ (steady rhythm), `0` = Inconsistent cadence. When `0`, Flutter should display an on-screen warning banner: *"Rhythm unsteady: depth readings may fluctuate"*. |
 | **Bit 1** | `0x02` | `CADENCE_FLAG_FIRST_OR_PAUSE` | `1` = First stroke of session or post-pause recovery stroke (period exceeded 0.85s and was safely bounded to fallback 0.55s). |
 | **Bit 2** | `0x04` | `CADENCE_FLAG_BENCH_MODE` | `1` = Bench testing profile active (`BENCH_TEST`), `0` = Standard manikin profile (`MANIKIN_STANDARD`). |
-| **Bits 3..7** | — | *Reserved* | Set to `0` for future extensions. |
+| **Bit 3** | `0x08` | `CADENCE_FLAG_RECOIL_ESTIMATED` | `1` = recoil is an acceleration estimate (no force sensor). It cannot detect leaning, so the app shows it without grading, and the firmware does not issue the "release chest completely" cue. |
+| **Bits 4..7** | — | *Reserved* | Set to `0` for future extensions. |
 
 ### Audio Guidance Cue Codes (`audio_prompt_code`)
 
@@ -141,7 +150,7 @@ The firmware contains a smart coaching engine with **3.5-second error persistenc
 | **0** | `PROMPT_NONE` | *(Silence)* | Technique is compliant or prompt cooldown active |
 | **1** | `PROMPT_PUSH_HARDER` | *"Push harder"* | Depth < 50 mm sustained for $\ge 3.5\text{ s}$ |
 | **2** | `PROMPT_PUSH_LESS` | *"Push shallower"* | Depth > 60 mm sustained for $\ge 3.5\text{ s}$ |
-| **3** | `PROMPT_RELEASE_FULLY` | *"Release chest completely"* | Recoil < -0.35g (leaning) sustained for $\ge 3.5\text{ s}$ |
+| **3** | `PROMPT_RELEASE_FULLY` | *"Release chest completely"* | Only with a force sensor (`RECOIL_MEASURED_BY_FORCE_SENSOR`) or `ENABLE_ESTIMATED_RECOIL_PROMPT`; the acceleration estimate cannot see leaning |
 | **4** | `PROMPT_SPEED_UP` | *"Speed up"* | Rate < 100 cpm sustained for $\ge 3.5\text{ s}$ |
 | **5** | `PROMPT_SLOW_DOWN` | *"Slow down"* | Rate > 120 cpm sustained for $\ge 3.5\text{ s}$ |
 | **6** | `PROMPT_GOOD_JOB` | *"Good compressions"* | Target metrics maintained continuously for $\ge 15\text{ s}$ |
@@ -149,6 +158,8 @@ The firmware contains a smart coaching engine with **3.5-second error persistenc
 ---
 
 ## 4. Flutter / Dart Integration Code
+
+> The maintained decoder is `FLUTTER/cpready/lib/src/core/metrics/cpr_metrics.dart`, which handles the 16-byte v2 packet (16-bit stroke count and sequence number). The sketch below shows the original 12-byte layout for illustration only.
 
 Copy-paste this complete parser and handler directly into your Flutter project:
 
@@ -322,23 +333,23 @@ class CPRSessionManager {
 
 The mobile application sends ASCII text commands to control session flow, calibrate sensors, and dynamically tune kinematic sensitivity:
 
+Every command is checked against the device state. An invalid command is answered with an error packet (`ERR_WRONG_STATE`, or `ERR_I2C_FAULT` while the sensors are faulty) and does not change the state. "Config" commands are only accepted while no calibration or session is running (STANDBY, CALIBRATED_READY or FAULT_ERROR).
+
 | Command | Arguments | Description | Example |
 | :--- | :--- | :--- | :--- |
-| `CALIBRATE` | None | Initiates 2.0-second stationary baseline calibration. | `CALIBRATE` |
-| `START` | None | Begins active CPR session once calibrated. | `START` |
-| `STOP` | None | Terminates active session and requests Type 4 summary packet. | `STOP` |
-| `GET_RESULTS` | None | Retransmits the last session summary (Type 4) packet. | `GET_RESULTS` |
-| `PAUSE` | None | Temporarily pauses active session timer and CCF accrual. | `PAUSE` |
-| `RESUME` | None | Resumes paused session. | `RESUME` |
-| `SET_TIME:<sec>` | `<sec>` (integer) | Overrides trial duration limit (0 = indefinite). **Auto-restores to 120s on session end, abort, STOP, or disconnect.** | `SET_TIME:120` |
-| `SET_K:<val>` | `<val>` (1.0..30.0) | Sets depth harmonic scalar $K$ and persists to flash NVS. | `SET_K:11.2` |
-| `SET_PROFILE:BENCH` | None | Activates bench test thresholds (0.25g start, -0.18g recoil, K=9.5) and persists to NVS. | `SET_PROFILE:BENCH` |
-| `SET_PROFILE:MANIKIN` | None | Activates standard adult manikin thresholds (0.45g start, -0.35g recoil, K=11.2) and persists to NVS. | `SET_PROFILE:MANIKIN` |
-| `CALIBRATE_TARGET:<target>` | `<target>` (float cm) | Performs proportional calibration: $K_{\text{new}} = K \times (\text{target} / \bar{D})$, saves to NVS, and **emits Packet Type 3 (`PKT_TYPE_CALIB_SUCCESS`) ACK**. | `CALIBRATE_TARGET:5.5` |
-| `SET_K_MANIKIN:<val>` | `<val>` (1.0..30.0) | Sets manikin-specific depth scalar $K_{\text{manikin}}$ and persists to NVS. | `SET_K_MANIKIN:11.2` |
-| `SET_K_BENCH:<val>` | `<val>` (1.0..30.0) | Sets bench-specific depth scalar $K_{\text{bench}}$ and persists to NVS. | `SET_K_BENCH:9.5` |
-| `RESET_CONFIG` | None | Clears flash NVS partition and restores factory defaults. | `RESET_CONFIG` |
-| `GET_CONFIG` | None | Returns Type 6 (`CPRConfigPacket`) over BLE with active profile and dual $K$ constants, and emits config over Serial. | `GET_CONFIG` |
+| `CALIBRATE` | None | Starts the 2.0 s stationary baseline. Rejected during a session. In FAULT_ERROR it first re-initialises the sensors (answers `ERR_I2C_FAULT` if they are still missing). Clears the previous session summary. | `CALIBRATE` |
+| `START` | None | Starts the session. **Only accepted in CALIBRATED_READY**; a repeated START while running is ignored; anything else answers `ERR_WRONG_STATE`. (The old automatic re-calibration was removed.) | `START` |
+| `STOP` | None | During a session: finalises it and sends the Type 4 summary. During calibration or while ready: cancels without a summary. Idle: ignored. | `STOP` |
+| `GET_RESULTS` | None | Retransmits the last session summary (Type 4). | `GET_RESULTS` |
+| `PAUSE` | None | Only while running. Stops the session clock: paused time counts toward neither elapsed time nor CCF. | `PAUSE` |
+| `RESUME` | None | Only while paused. The next stroke is treated as post-pause. | `RESUME` |
+| `SET_TIME:<sec>` | `<sec>` (0..3600) | Config. Auto-stop duration; `0` = manual stop. **Restored to 120 s after every session, abort or disconnect.** | `SET_TIME:120` |
+| `SET_K:<val>` | `<val>` (1.0..30.0) | Config. Sets the active profile's depth scalar $K$ and persists it to that profile's NVS key. | `SET_K:11.2` |
+| `SET_PROFILE:BENCH` | None | Config. Bench thresholds (0.25 g start cap, -0.18 g recoil) with the bench profile's own K. | `SET_PROFILE:BENCH` |
+| `SET_PROFILE:MANIKIN` | None | Config. Manikin thresholds (0.45 g start cap, -0.35 g recoil) with the manikin profile's own K. | `SET_PROFILE:MANIKIN` |
+| `CALIBRATE_TARGET:<target>` | `<target>` (float cm) | Config. $K_{\text{new}} = K \times (\text{target} / \bar{D})$ from the last trial, saved to NVS, then a Type 3 ACK. | `CALIBRATE_TARGET:5.5` |
+| `RESET_CONFIG` | None | Config. Clears flash NVS and restores factory defaults. | `RESET_CONFIG` |
+| `GET_CONFIG` | None | Sends the Type 6 configuration report. | `GET_CONFIG` |
 
 ## 5. Interaction Sequence Diagrams
 

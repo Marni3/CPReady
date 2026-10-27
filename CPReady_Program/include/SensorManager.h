@@ -40,6 +40,13 @@ private:
     float calBaseMax;         // Maximum raw base reading during calibration
     mutable uint8_t lastCalibrationFailureReason;
 
+    // Sensor health: failed bus reads and frozen (identical) readings
+    uint8_t  consecutiveReadFailures;
+    uint16_t identicalSampleCount;
+    float    lastChestZ;
+    float    lastBaseZ;
+    bool     sensorFault;
+
 public:
     SensorManager() 
         : chestMuxChannel(CPReadyConfig::PCA_CHANNEL_CHEST_DEFAULT),
@@ -57,7 +64,9 @@ public:
           calNetMin(999.0f), calNetMax(-999.0f),
           calChestMin(999.0f), calChestMax(-999.0f),
           calBaseMin(999.0f), calBaseMax(-999.0f),
-          lastCalibrationFailureReason(ERR_NONE) {}
+          lastCalibrationFailureReason(ERR_NONE),
+          consecutiveReadFailures(0), identicalSampleCount(0),
+          lastChestZ(0.0f), lastBaseZ(0.0f), sensorFault(false) {}
 
     // Multiplexer Channel Switching Helpers (with capacitive settling delay)
     void selectMuxChannel(uint8_t channel) {
@@ -310,6 +319,10 @@ public:
     }
 
     bool begin() {
+        consecutiveReadFailures = 0;
+        identicalSampleCount = 0;
+        sensorFault = false;
+
         delay(50); // Power-on stabilization delay for MPU-6050 and PCA9548A internal POR
         recoverI2CBus();
         scanI2CBus();
@@ -357,8 +370,28 @@ public:
         } else {
             // Direct bus fallback (without multiplexer)
             #if USE_DUAL_MPU
-            Serial.println("[ERROR] Dual MPU mode requires PCA9548A multiplexer at 0x70, but it was not detected!");
-            return false;
+            // Shared-bus wiring from the hardware guide: chest AD0 -> GND (0x68),
+            // base AD0 -> 3.3V (0x69).
+            Wire.beginTransmission(0x68);
+            bool chestPresent = (Wire.endTransmission() == 0);
+            Wire.beginTransmission(0x69);
+            bool basePresent = (Wire.endTransmission() == 0);
+            if (!chestPresent || !basePresent) {
+                Serial.println("[ERROR] Dual MPU mode needs either a PCA9548A at 0x70 or two MPUs on the main bus at 0x68 (chest) and 0x69 (base).");
+                return false;
+            }
+            chestI2CAddr = 0x68;
+            baseI2CAddr = 0x69;
+            Serial.println("[I2C] Direct bus dual mode: chest 0x68, base 0x69.");
+            if (!chestSensor.begin(chestI2CAddr, &Wire) || !baseSensor.begin(baseI2CAddr, &Wire)) {
+                Serial.println("[ERROR] Failed to initialize the MPUs on the main bus!");
+                return false;
+            }
+            chestSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+            chestSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+            baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+            baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+            return true;
             #else
             uint8_t directAddr = CPReadyConfig::CHEST_MPU_I2C_ADDR;
             Wire.beginTransmission(directAddr);
@@ -396,19 +429,29 @@ public:
         lastCalibrationFailureReason = ERR_NONE;
     }
 
+    // True once reads have failed SENSOR_FAULT_CONSECUTIVE_FAILS times in a row or the
+    // readings froze. Cleared only by begin()/reinitialize().
+    bool hasFault() const { return sensorFault; }
+
+    // Bus recovery plus full sensor re-initialisation, used to leave FAULT_ERROR.
+    bool reinitialize() {
+        Serial.println("[I2C] Re-initializing sensors after a fault...");
+        return begin();
+    }
+
     // Called periodically during the idle baseline window (with optional 100 Hz rate limiting)
     bool recordCalibrationSample(uint32_t currentMicros = 0) {
         if (currentMicros > 0) {
-            if (currentMicros - lastSampleMicros < CPReadyConfig::SAMPLE_INTERVAL_MICROS) {
+            if (!sampleDue(currentMicros)) {
                 return false;
             }
-            lastSampleMicros = currentMicros;
         }
 
-        selectMuxChannel(chestMuxChannel);
-        sensors_event_t aChest, gChest, tempChest;
-        chestSensor.getEvent(&aChest, &gChest, &tempChest);
-        float a1 = aChest.acceleration.z / SENSORS_GRAVITY_STANDARD;
+        float a1 = 0.0f;
+        float a2 = 0.0f;
+        if (!readSensors(a1, a2)) {
+            return false; // Failed samples are not counted; too many end in a fault
+        }
 
         calChestSum += a1;
         calSampleCount++;
@@ -418,11 +461,6 @@ public:
         if (a1 > calChestMax) calChestMax = a1;
 
         #if USE_DUAL_MPU
-        selectMuxChannel(baseMuxChannel);
-        sensors_event_t aBase, gBase, tempBase;
-        baseSensor.getEvent(&aBase, &gBase, &tempBase);
-        float a2 = aBase.acceleration.z / SENSORS_GRAVITY_STANDARD;
-
         calBaseSum  += a2;
 
         if (a2 < calBaseMin) calBaseMin = a2;
@@ -450,6 +488,9 @@ public:
             #endif
             isCalibrated = true;
         }
+        // The smoothing filter restarts from the new baseline instead of carrying the
+        // previous session's state into the first strokes.
+        lastFilteredNetAccel = 0.0f;
     }
 
     // Multi-tier calibration verification: sample count, motion spread, gravity sanity, and sensor alignment
@@ -500,23 +541,22 @@ public:
 
     uint8_t getCalibrationFailureReason() const { return lastCalibrationFailureReason; }
 
-    // Primary sampling function intended to run at configured rate (default 100 Hz)
+    // Primary sampling function intended to run at configured rate (default 100 Hz).
+    // Returns false when no sample is due or the sensor read failed.
     bool sample100Hz(float& outNetAccel, uint32_t currentMicros) {
-        if (currentMicros - lastSampleMicros < CPReadyConfig::SAMPLE_INTERVAL_MICROS) {
+        if (!sampleDue(currentMicros)) {
             return false; // Not time yet (non-blocking)
         }
-        lastSampleMicros = currentMicros;
 
-        selectMuxChannel(chestMuxChannel);
-        sensors_event_t aChest, gChest, tempChest;
-        chestSensor.getEvent(&aChest, &gChest, &tempChest);
-        float aChestG = (aChest.acceleration.z / SENSORS_GRAVITY_STANDARD) - chestGravityOffset;
+        float chestZ = 0.0f;
+        float baseZ = 0.0f;
+        if (!readSensors(chestZ, baseZ)) {
+            return false;
+        }
+        float aChestG = chestZ - chestGravityOffset;
 
         #if USE_DUAL_MPU
-        selectMuxChannel(baseMuxChannel);
-        sensors_event_t aBase, gBase, tempBase;
-        baseSensor.getEvent(&aBase, &gBase, &tempBase);
-        float aBaseG  = (aBase.acceleration.z / SENSORS_GRAVITY_STANDARD) - baseGravityOffset;
+        float aBaseG  = baseZ - baseGravityOffset;
         float rawNet  = -(aChestG - aBaseG);
         #else
         float rawNet  = -aChestG;
@@ -529,6 +569,64 @@ public:
         return true;
     }
 
+private:
+    // Fixed-rate scheduler: advances by whole intervals so loop jitter does not lower
+    // the sample rate, but never tries to catch up on more than one missed sample.
+    bool sampleDue(uint32_t currentMicros) {
+        if (currentMicros - lastSampleMicros < CPReadyConfig::SAMPLE_INTERVAL_MICROS) {
+            return false;
+        }
+        lastSampleMicros += CPReadyConfig::SAMPLE_INTERVAL_MICROS;
+        if (currentMicros - lastSampleMicros >= CPReadyConfig::SAMPLE_INTERVAL_MICROS) {
+            lastSampleMicros = currentMicros;
+        }
+        return true;
+    }
+
+    // Reads the vertical axis of both sensors in g. Returns false on a failed bus read;
+    // repeated failures or frozen readings latch sensorFault.
+    bool readSensors(float& chestZ, float& baseZ) {
+        selectMuxChannel(chestMuxChannel);
+        sensors_event_t aChest, gChest, tempChest;
+        bool ok = chestSensor.getEvent(&aChest, &gChest, &tempChest);
+        chestZ = aChest.acceleration.z / SENSORS_GRAVITY_STANDARD;
+
+        #if USE_DUAL_MPU
+        selectMuxChannel(baseMuxChannel);
+        sensors_event_t aBase, gBase, tempBase;
+        ok = baseSensor.getEvent(&aBase, &gBase, &tempBase) && ok;
+        baseZ = aBase.acceleration.z / SENSORS_GRAVITY_STANDARD;
+        #else
+        baseZ = 0.0f;
+        #endif
+
+        if (!ok) {
+            if (consecutiveReadFailures < 255) consecutiveReadFailures++;
+            if (consecutiveReadFailures >= CPReadyConfig::SENSOR_FAULT_CONSECUTIVE_FAILS && !sensorFault) {
+                sensorFault = true;
+                Serial.println("[I2C FAULT] Sensor reads keep failing. Check the sensor cables.");
+            }
+            return false;
+        }
+        consecutiveReadFailures = 0;
+
+        // A sensor that lost power and came back sits in sleep mode and returns its last
+        // register contents forever. Real readings always carry a few LSB of noise.
+        if (chestZ == lastChestZ && baseZ == lastBaseZ) {
+            if (identicalSampleCount < 0xFFFF) identicalSampleCount++;
+            if (identicalSampleCount >= CPReadyConfig::SENSOR_STUCK_SAMPLE_LIMIT && !sensorFault) {
+                sensorFault = true;
+                Serial.println("[I2C FAULT] Sensor readings are frozen (sensor reset or asleep).");
+            }
+        } else {
+            identicalSampleCount = 0;
+        }
+        lastChestZ = chestZ;
+        lastBaseZ = baseZ;
+        return true;
+    }
+
+public:
     bool getIsCalibrated() const { return isCalibrated; }
     bool getHasMultiplexer() const { return hasMultiplexer; }
     uint8_t getChestChannel() const { return chestMuxChannel; }

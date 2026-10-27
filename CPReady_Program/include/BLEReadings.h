@@ -8,7 +8,10 @@
  * CPReady BLE Telemetry & Packet Specification
  * ==============================================================================
  * 
- * PACKET SIZE: Exactly 12 Bytes (Packed Little-Endian)
+ * PACKET SIZE: Exactly 16 Bytes (Packed Little-Endian)
+ *   Bytes 0..11 keep the original 12-byte layout. Bytes 12..15 (protocol v2) add an
+ *   unsaturated 16-bit stroke count and a notification sequence number, so the app can
+ *   count compressions past 255 and measure lost packets.
  * SERVICE UUID:        6e400001-b5a3-f393-e0a9-e50e24dcca9e
  * METRICS CHAR UUID:   6e400002-b5a3-f393-e0a9-e50e24dcca9e
  * COMMAND CHAR UUID:   6e400003-b5a3-f393-e0a9-e50e24dcca9e
@@ -46,8 +49,9 @@ constexpr uint8_t ERR_I2C_FAULT           = 7; // I2C communication fault or sen
 constexpr uint8_t CADENCE_FLAG_STEADY       = (1 << 0); // Bit 0: 1 = Steady rhythmic cadence, 0 = Erratic/Unsteady
 constexpr uint8_t CADENCE_FLAG_FIRST_STROKE = (1 << 1); // Bit 1: 1 = First stroke or stroke following an idle pause
 constexpr uint8_t CADENCE_FLAG_BENCH_MODE   = (1 << 2); // Bit 2: 1 = Bench profile active, 0 = Manikin profile
+constexpr uint8_t CADENCE_FLAG_RECOIL_ESTIMATED = (1 << 3); // Bit 3: 1 = recoil is an acceleration estimate (no force sensor)
 
-// Strict 1-byte packed network packet (Exactly 12 Bytes)
+// Strict 1-byte packed network packet (Exactly 16 Bytes)
 #pragma pack(push, 1)
 struct CPRMetricsPacket {
     // Byte Offset 0: Packet Type Identifier
@@ -77,10 +81,16 @@ struct CPRMetricsPacket {
 
     // Byte Offset 11: Cadence Quality & Engine Bitmask Flags
     uint8_t  quality_flags;
+
+    // Byte Offset 12..13: Stroke count without the 255 saturation of byte 8
+    uint16_t stroke_count;
+
+    // Byte Offset 14..15: Notification sequence number, set by BleManager for every sent packet
+    uint16_t sequence;
 };
 #pragma pack(pop)
 
-static_assert(sizeof(CPRMetricsPacket) == 12, "CPRMetricsPacket must be exactly 12 bytes");
+static_assert(sizeof(CPRMetricsPacket) == 16, "CPRMetricsPacket must be exactly 16 bytes");
 
 // Type 6 Device Configuration Report Packet (Exactly 12 Bytes)
 #pragma pack(push, 1)
@@ -130,6 +140,8 @@ struct CPRSessionSummary {
         pkt.total_compressions = (uint8_t)(total_compressions > 255 ? 255 : total_compressions);
         pkt.session_elapsed_sec= total_duration_sec;
         pkt.quality_flags      = quality_flags;
+        pkt.stroke_count       = total_compressions;
+        pkt.sequence           = 0;
         return pkt;
     }
 };
@@ -166,6 +178,8 @@ struct CPRReading {
         pkt.total_compressions = (uint8_t)(stroke_count > 255 ? 255 : stroke_count);
         pkt.session_elapsed_sec= (uint16_t)elapsed_seconds;
         pkt.quality_flags      = quality_flags;
+        pkt.stroke_count       = stroke_count;
+        pkt.sequence           = 0;
         return pkt;
     }
 
@@ -176,7 +190,7 @@ struct CPRReading {
         r.recoil_complete   = (pkt.recoil_status == 1);
         r.ccf_percentage    = (float)pkt.ccf_percent;
         r.audio_prompt_code = pkt.audio_prompt_code;
-        r.stroke_count      = pkt.total_compressions;
+        r.stroke_count      = pkt.stroke_count;
         r.elapsed_seconds   = (uint32_t)pkt.session_elapsed_sec;
         r.quality_flags     = pkt.quality_flags;
         return r;
@@ -247,6 +261,9 @@ struct CPRReading {
      final totalCount = byteData.getUint8(8);
      final elapsed = byteData.getUint16(9, Endian.little);
      final flags = (bytes.length >= 12) ? byteData.getUint8(11) : 0x01; // Default to steady if 11 bytes received
+     // Protocol v2 (16 bytes): bytes 12..13 = uint16 stroke count, bytes 14..15 = uint16 sequence
+     final strokeCount16 = (bytes.length >= 16) ? byteData.getUint16(12, Endian.little) : totalCount;
+     final sequence = (bytes.length >= 16) ? byteData.getUint16(14, Endian.little) : null;
 
      return CPRMetrics(
        packetType: type,
@@ -257,7 +274,7 @@ struct CPRReading {
        depthMm: depthTenths / 10.0,
        ccfPercent: ccf,
        audioPromptCode: audioCue,
-       totalCompressions: totalCount,
+       totalCompressions: strokeCount16,
        elapsedSeconds: elapsed,
        qualityFlags: flags,
      );

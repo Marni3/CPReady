@@ -1,9 +1,15 @@
 # CPReady Firmware Architectural Audit & Defect Analysis
 
+> **Superseded (27 Oct 2026).** Items 1, 2, 6, 7 and 8 were fixed before that date.
+> Items 3 (live CCF), 4 (demo build), 5 (PAUSE), 10 (255 count) and 11 (`.ino` parity)
+> are fixed in the Phase 1 changes recorded in
+> `../../CPREADY_SYSTEM_AUDIT_AND_IMPROVEMENT_PLAN.md`; item 9 (doc drift) is partly
+> fixed. That document is the current audit and plan.
+
 **Audit Date**: October 2026  
 **Auditor**: Antigravity Technical Consultation  
 **Target Codebase**: `CPReady_Program` (ESP32 Dev Module, Dual MPU6050, BLE Telemetry)  
-**Status**: Pending User Review (Pre-Implementation)
+**Status**: Superseded — see note above
 
 ---
 

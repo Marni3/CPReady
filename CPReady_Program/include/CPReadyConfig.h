@@ -12,6 +12,7 @@
 #define DEMO_DEPTH_MM          55        // AHA adult target: 50-60 mm
 #define DEMO_RATE_CPM          110       // AHA target: 100-120 /min
 #define DEMO_RECOIL_OK         true      // AHA: full recoil required
+#define DEMO_CCF_PERCENT       85        // AHA: CCF >= 60%, ideally > 80%
 // ---- Hardware Sensor Configuration ----
 #define USE_DUAL_MPU           true      // Set true for 2 MPUs (chest + base); false for 1 MPU (chest only)
 
@@ -48,6 +49,10 @@ namespace CPReadyConfig {
     constexpr float       BENCH_COMPRESSION_START_THRESHOLD_G = 0.25f;     // Relaxed start trigger for hand bench testing (g)
     constexpr float       BENCH_RECOIL_THRESHOLD_G            = -0.18f;    // Relaxed upward recoil threshold for bench testing (g)
     constexpr float       BENCH_DEPTH_CALIBRATION_K           = 9.5f;      // Scaled harmonic depth constant for bench testing
+
+    // Accepted range for any depth scalar K (runtime SET_K, CALIBRATE_TARGET and NVS restore)
+    constexpr float       DEPTH_K_MIN                         = 1.0f;
+    constexpr float       DEPTH_K_MAX                         = 30.0f;
 
     // Kinematic Hardening Bounds & Cadence Consistency
     constexpr float       MIN_CPR_PERIOD_SEC            = 0.38f;    // Max realistic cadence limit (~158 CPM)
@@ -104,9 +109,26 @@ namespace CPReadyConfig {
     constexpr uint32_t    SAMPLING_RATE_HZ              = 100;     // Sensor loop sampling rate (100 samples/sec)
     constexpr uint32_t    SAMPLE_INTERVAL_MICROS        = 1000000 / SAMPLING_RATE_HZ; // Microsecond interval between samples (10,000 us)
     constexpr float       LOWPASS_FILTER_ALPHA          = 0.25f;   // Exponential smoothing factor (~4.5 Hz lowpass cutoff)
-    constexpr uint32_t    REFRACTORY_LOCKOUT_MS         = 250;     // Minimum pause between strokes to reject impact bounces
+    constexpr uint32_t    REFRACTORY_LOCKOUT_MS         = 300;     // Minimum onset-to-onset interval (200 cpm ceiling); timed from stroke START
+    constexpr uint32_t    MIN_END_TO_ONSET_MS           = 80;      // Quiet time after a stroke ends before the next onset may start
     constexpr float       STROKE_FINISH_THRESHOLD_G     = -0.05f;  // Upward zero-crossing threshold to mark stroke completion
-    constexpr uint32_t    PAUSE_DETECTION_TIMEOUT_MS    = 1500;    // Pause gap threshold before pausing active CCF accumulation
+    constexpr float       RECOIL_ARM_FRACTION           = 0.30f;   // Recoil phase must swing below -(fraction x stroke peak) before it can finish
+    constexpr float       RECOIL_ARM_MIN_G              = 0.04f;   // ...and at least this far below zero
+    constexpr float       MIN_START_THRESHOLD_G         = 0.12f;   // Floor of the adaptive downstroke threshold (filtered g)
+    constexpr float       ADAPTIVE_START_FRACTION       = 0.40f;   // Adaptive threshold = fraction x recent signal envelope, capped at the profile threshold
+    constexpr float       ENVELOPE_DECAY_PER_SAMPLE     = 0.993f;  // Signal-envelope decay at 100 Hz (half-life ~1 s)
+    constexpr uint32_t    MIN_VALID_PERIOD_MS           = 300;     // Shortest stroke period accepted as a cadence (200 cpm)
+    constexpr uint32_t    PAUSE_DETECTION_TIMEOUT_MS    = 1500;    // A gap longer than this is a pause: no CCF credit, no rate, cue streaks reset
+
+    // Chest recoil source. Without a force sensor the "recoil" flag is an acceleration
+    // proxy that cannot see leaning, so it is reported as estimated and does not drive
+    // the "release chest completely" voice cue.
+    constexpr bool        RECOIL_MEASURED_BY_FORCE_SENSOR = false;
+    constexpr bool        ENABLE_ESTIMATED_RECOIL_PROMPT  = false;
+
+    // Sensor health monitoring
+    constexpr uint8_t     SENSOR_FAULT_CONSECUTIVE_FAILS = 5;      // Failed reads in a row (50 ms) before the sensor is declared faulty
+    constexpr uint16_t    SENSOR_STUCK_SAMPLE_LIMIT      = 50;     // Identical raw readings in a row (0.5 s) that indicate a frozen sensor
     constexpr float       DEPTH_MIN_LIMIT_CM            = 0.0f;    // Minimum allowable depth clamp to reject negative outliers
     constexpr float       DEPTH_MAX_LIMIT_CM            = 10.0f;   // Maximum allowable depth clamp to reject physical artifacts
 }

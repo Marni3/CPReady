@@ -18,9 +18,64 @@ DeviceState state = DeviceState::STANDBY;
 uint32_t calibrationStartMillis = 0;
 uint32_t lastBleNotifyMillis = 0;
 uint32_t lastCalibProgressNotifyMillis = 0;
+uint32_t demoSessionStartMillis = 0;
 
 // Configurable target duration (in seconds, default set in CPReadyConfig; 0 = manual stop)
-uint32_t practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC; 
+uint32_t practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+
+// Calibration progress / success packet: recoil reported as complete, steady cadence flag set.
+CPRMetricsPacket makeCalibrationPacket(uint8_t packetType, uint16_t elapsedSec) {
+    CPRMetricsPacket pkt{};
+    pkt.packet_type         = packetType;
+    pkt.recoil_status       = 1;
+    pkt.audio_prompt_code   = PROMPT_NONE;
+    pkt.session_elapsed_sec = elapsedSec;
+    pkt.quality_flags       = CADENCE_FLAG_STEADY;
+    return pkt;
+}
+
+// Error packet: the reason code travels in byte 7 (audio_prompt_code).
+void sendError(uint8_t reason) {
+    CPRMetricsPacket pkt{};
+    pkt.packet_type       = PKT_TYPE_ERROR;
+    pkt.audio_prompt_code = reason;
+    ble.sendPacket(pkt);
+}
+
+// Commands that change configuration are refused while a calibration or session runs,
+// so a session never mixes two profiles or two depth scalars.
+bool configChangeAllowed() {
+    return state == DeviceState::STANDBY || state == DeviceState::CALIBRATED_READY ||
+           state == DeviceState::FAULT_ERROR;
+}
+
+bool rejectConfigChange(const String& message) {
+    if (configChangeAllowed()) return false;
+    Serial.println("[FLOW WARN] " + message + " rejected: calibration or session in progress.");
+    sendError(ERR_WRONG_STATE);
+    return true;
+}
+
+// Parses a non-negative whole number; false for anything else (toInt() would return 0).
+bool parseSeconds(const String& text, uint32_t& outSeconds) {
+    if (text.length() == 0 || text.length() > 5) return false;
+    for (unsigned int i = 0; i < text.length(); i++) {
+        if (!isDigit(text[i])) return false;
+    }
+    outSeconds = (uint32_t)text.toInt();
+    return true;
+}
+
+void startCalibration(uint32_t now) {
+    // A new calibration starts a new session attempt: drop the previous summary so a
+    // later GET_RESULTS can never return another trainee's results.
+    tracker.reset();
+    sensors.resetCalibration();
+    calibrationStartMillis = now;
+    lastCalibProgressNotifyMillis = now;
+    state = DeviceState::CALIBRATING;
+    ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_PROGRESS, 0));
+}
 
 // Helper: Finalizes the active session and broadcasts final summary packet
 void endAndFinalizeSession(uint32_t now) {
@@ -35,14 +90,9 @@ void endAndFinalizeSession(uint32_t now) {
     summary.avg_depth_cm = (float)DEMO_DEPTH_MM / 10.0f;
     summary.recoil_compliance_percent = DEMO_RECOIL_OK ? 100.0f : 50.0f;
     summary.final_ccf_percent = DEMO_CCF_PERCENT;
-    if (now > calibrationStartMillis + CPReadyConfig::CALIBRATION_DURATION_MS) {
-        uint32_t activeMs = now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS;
-        summary.total_compressions = (uint16_t)(activeMs / 550);
-        summary.total_duration_sec = (uint16_t)(activeMs / 1000);
-    } else {
-        summary.total_compressions = 0;
-        summary.total_duration_sec = 0;
-    }
+    uint32_t activeMs = now - demoSessionStartMillis;
+    summary.total_compressions = (uint16_t)(activeMs / 550);
+    summary.total_duration_sec = (uint16_t)(activeMs / 1000);
     #else
     CPRSessionSummary summary = tracker.finalizeSession(now);
     #endif
@@ -54,61 +104,82 @@ void endAndFinalizeSession(uint32_t now) {
         summary.avg_rate_cpm, summary.avg_depth_cm, summary.recoil_compliance_percent, summary.final_ccf_percent, summary.total_compressions);
 }
 
+// Sensor fault during calibration or a session: abandon it (no summary), tell the app,
+// and wait in FAULT_ERROR until a CALIBRATE succeeds in re-initialising the sensors.
+void enterSensorFault() {
+    Serial.println("[FAULT] Sensor communication failed. Session abandoned; send CALIBRATE to retry.");
+    tracker.reset();
+    sensors.resetCalibration();
+    practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+    state = DeviceState::FAULT_ERROR;
+    sendError(ERR_I2C_FAULT);
+}
+
+void saveDepthK(float k) {
+    bool isBench = (tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST);
+    prefs.putFloat(isBench ? "k_bench" : "k_manikin", k);
+}
+
 /**
  * Standardized BLE Message / Command Dispatcher
- * 
- * Receives incoming text commands from the mobile application.
+ *
+ * Receives incoming text commands from the mobile application. Every command is
+ * checked against the current state; an invalid one answers ERR_WRONG_STATE.
  */
 void onReceiveMessage_BLE(String message) {
     message.trim();
     message.toUpperCase();
     Serial.println("[BLE CMD] Received: " + message);
+    uint32_t now = millis();
 
     if (message == "CALIBRATE") {
-        if (state == DeviceState::ACTIVE_SESSION) {
-            Serial.println("[FLOW WARN] Calibrate requested while session is active! Rejecting.");
-            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, ERR_WRONG_STATE, 0, 0, 0};
-            ble.sendPacket(errPkt);
+        if (state == DeviceState::ACTIVE_SESSION || state == DeviceState::SESSION_PAUSED) {
+            Serial.println("[FLOW WARN] Calibrate requested while a session is running! Rejecting.");
+            sendError(ERR_WRONG_STATE);
             return;
         }
+        #if !ENABLE_DEMO_MODE
+        if (state == DeviceState::FAULT_ERROR || sensors.hasFault()) {
+            if (!sensors.reinitialize()) {
+                Serial.println("[FAULT] Sensors still unavailable.");
+                state = DeviceState::FAULT_ERROR;
+                sendError(ERR_I2C_FAULT);
+                return;
+            }
+            state = DeviceState::STANDBY;
+        }
+        #endif
         Serial.println("[FLOW] Calibrate received. Initiating stationary baseline calibration...");
-        sensors.resetCalibration();
-        calibrationStartMillis = millis();
-        lastCalibProgressNotifyMillis = calibrationStartMillis;
-        state = DeviceState::CALIBRATING;
-
-        // Broadcast initial calibration progress packet (Packet Type 2)
-        CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0, CADENCE_FLAG_STEADY};
-        ble.sendPacket(calibPkt);
+        startCalibration(now);
     }
     else if (message == "START") {
         if (state == DeviceState::CALIBRATED_READY) {
             Serial.println("[FLOW] Device is calibrated and ready. Starting active CPR session!");
-            tracker.startSession(millis());
+            tracker.startSession(now);
+            demoSessionStartMillis = now;
+            lastBleNotifyMillis = now;
             state = DeviceState::ACTIVE_SESSION;
-            Serial.println("[FLOW] Live practice session started! Ready for compressions.");
         }
-        else if (state == DeviceState::CALIBRATING) {
-            Serial.println("[FLOW WARN] Start requested while calibration is still ongoing! Rejecting.");
-            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, ERR_WRONG_STATE, 0, 0, 0};
-            ble.sendPacket(errPkt);
+        else if (state == DeviceState::ACTIVE_SESSION) {
+            // A retried START must not restart or abandon the running session.
+            Serial.println("[FLOW] Start received while already running; ignored.");
         }
         else {
-            // Fallback / legacy 1-step behavior: trigger calibration first
-            Serial.println("[FLOW] Start received from uncalibrated state. Auto-calibrating first...");
-            sensors.resetCalibration();
-            calibrationStartMillis = millis();
-            lastCalibProgressNotifyMillis = calibrationStartMillis;
-            state = DeviceState::CALIBRATING;
-
-            CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0, CADENCE_FLAG_STEADY};
-            ble.sendPacket(calibPkt);
+            // START needs a fresh baseline. The old fallback silently re-calibrated, which
+            // abandoned a running session and left the app showing a session that never began.
+            Serial.println("[FLOW WARN] Start rejected: send CALIBRATE and wait for the baseline first.");
+            sendError(state == DeviceState::FAULT_ERROR ? ERR_I2C_FAULT : ERR_WRONG_STATE);
         }
     }
     else if (message == "STOP") {
-        if (state == DeviceState::ACTIVE_SESSION || state == DeviceState::SESSION_PAUSED || state == DeviceState::CALIBRATING) {
+        if (state == DeviceState::ACTIVE_SESSION || state == DeviceState::SESSION_PAUSED) {
             Serial.println("[FLOW] Stop received from app during active operation.");
-            endAndFinalizeSession(millis());
+            endAndFinalizeSession(now);
+        } else if (state == DeviceState::CALIBRATING || state == DeviceState::CALIBRATED_READY) {
+            // No session ran, so there is nothing to summarise.
+            Serial.println("[FLOW] Stop received before the session started; calibration cancelled.");
+            sensors.resetCalibration();
+            state = DeviceState::STANDBY;
         } else {
             Serial.println("[FLOW] Stop received while idle; ignoring to preserve session summary.");
         }
@@ -119,57 +190,69 @@ void onReceiveMessage_BLE(String message) {
         ble.sendPacket(finalPacket);
     }
     else if (message == "PAUSE") {
-        Serial.println("[FLOW] Pause received.");
-        state = DeviceState::SESSION_PAUSED;
+        if (state == DeviceState::ACTIVE_SESSION) {
+            Serial.println("[FLOW] Pause received; session clock stopped.");
+            tracker.pauseSession(now);
+            state = DeviceState::SESSION_PAUSED;
+        } else if (state != DeviceState::SESSION_PAUSED) {
+            sendError(ERR_WRONG_STATE);
+        }
     }
     else if (message == "RESUME") {
-        Serial.println("[FLOW] Resume received.");
-        state = DeviceState::ACTIVE_SESSION;
+        if (state == DeviceState::SESSION_PAUSED) {
+            Serial.println("[FLOW] Resume received.");
+            tracker.resumeSession(now);
+            state = DeviceState::ACTIVE_SESSION;
+        } else if (state != DeviceState::ACTIVE_SESSION) {
+            sendError(ERR_WRONG_STATE);
+        }
     }
     else if (message.startsWith("SET_TIME:")) {
-        int sec = message.substring(9).toInt();
-        if (sec > 0) {
+        if (rejectConfigChange(message)) return;
+        uint32_t sec = 0;
+        if (parseSeconds(message.substring(9), sec) && sec <= 3600) {
             practiceDurationSec = sec;
-            Serial.printf("[CONFIG] Session duration set to %d seconds.\n", practiceDurationSec);
+            Serial.printf("[CONFIG] Session duration set to %u seconds (0 = manual stop).\n", (unsigned)practiceDurationSec);
+        } else {
+            Serial.println("[CONFIG] Invalid SET_TIME value ignored.");
         }
     }
     else if (message.startsWith("SET_K:")) {
+        if (rejectConfigChange(message)) return;
         float k = message.substring(6).toFloat();
-        if (k >= 1.0f && k <= 30.0f) {
+        if (k >= CPReadyConfig::DEPTH_K_MIN && k <= CPReadyConfig::DEPTH_K_MAX) {
             tracker.setDepthK(k);
-            bool isBench = (tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST);
-            prefs.putFloat(isBench ? "k_bench" : "k_manikin", k);
-            prefs.putFloat("depth_k", k);
+            saveDepthK(k);
             Serial.printf("[NVS] Depth calibration scalar K updated to %.2f (persisted to flash)\n", k);
         }
     }
     else if (message == "SET_PROFILE:BENCH") {
+        if (rejectConfigChange(message)) return;
         tracker.setProfile(CPReadyConfig::KinematicProfile::BENCH_TEST);
         prefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST);
         Serial.printf("[NVS] Kinematic profile set to BENCH_TEST (active K=%.2f)\n", tracker.getDepthK());
     }
     else if (message == "SET_PROFILE:MANIKIN") {
+        if (rejectConfigChange(message)) return;
         tracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         prefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         Serial.printf("[NVS] Kinematic profile set to MANIKIN_STANDARD (active K=%.2f)\n", tracker.getDepthK());
     }
     else if (message.startsWith("CALIBRATE_TARGET:")) {
+        if (rejectConfigChange(message)) return;
         float targetCm = message.substring(17).toFloat();
         float newK = 0.0f;
         if (tracker.calibrateFromLastSummary(targetCm, newK)) {
-            bool isBench = (tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST);
-            prefs.putFloat(isBench ? "k_bench" : "k_manikin", newK);
-            prefs.putFloat("depth_k", newK);
+            saveDepthK(newK);
             Serial.printf("[CALIB] Auto-calibrated scalar K to %.2f based on target %.2f cm (persisted to flash)\n", newK, targetCm);
-            CPRMetricsPacket calibDonePkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0, CADENCE_FLAG_STEADY};
-            ble.sendPacket(calibDonePkt);
+            ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
         } else {
             Serial.printf("[CALIB ERR] Failed to calibrate target %.2f cm: no valid completed session depth found!\n", targetCm);
-            CPRMetricsPacket errPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, ERR_NO_TRIAL_DATA, 0, 0, 0};
-            ble.sendPacket(errPkt);
+            sendError(ERR_NO_TRIAL_DATA);
         }
     }
     else if (message == "RESET_CONFIG") {
+        if (rejectConfigChange(message)) return;
         prefs.clear();
         tracker.setManikinK(CPReadyConfig::DEPTH_CALIBRATION_K);
         tracker.setBenchK(CPReadyConfig::BENCH_DEPTH_CALIBRATION_K);
@@ -206,6 +289,30 @@ void onReceiveMessage_BLE(String message) {
     }
 }
 
+// Loads the per-profile depth scalars. Older firmware also wrote a shared "depth_k" key
+// on every change; it is migrated once (only into the profile it belonged to) and removed,
+// so a bench K can no longer leak into the manikin K after a reboot.
+void loadDepthCalibration(uint8_t savedProfile) {
+    if (prefs.isKey("depth_k")) {
+        float legacyK = prefs.getFloat("depth_k", 0.0f);
+        const char* key = (savedProfile == (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST) ? "k_bench" : "k_manikin";
+        if (!prefs.isKey(key) && legacyK >= CPReadyConfig::DEPTH_K_MIN && legacyK <= CPReadyConfig::DEPTH_K_MAX) {
+            prefs.putFloat(key, legacyK);
+        }
+        prefs.remove("depth_k");
+    }
+
+    float savedManikinK = prefs.getFloat("k_manikin", CPReadyConfig::DEPTH_CALIBRATION_K);
+    float savedBenchK = prefs.getFloat("k_bench", CPReadyConfig::BENCH_DEPTH_CALIBRATION_K);
+
+    // Same bounds as SET_K, so a value acknowledged at runtime survives a reboot
+    if (savedManikinK < CPReadyConfig::DEPTH_K_MIN || savedManikinK > CPReadyConfig::DEPTH_K_MAX) savedManikinK = CPReadyConfig::DEPTH_CALIBRATION_K;
+    if (savedBenchK < CPReadyConfig::DEPTH_K_MIN || savedBenchK > CPReadyConfig::DEPTH_K_MAX) savedBenchK = CPReadyConfig::BENCH_DEPTH_CALIBRATION_K;
+
+    tracker.setManikinK(savedManikinK);
+    tracker.setBenchK(savedBenchK);
+}
+
 void setup() {
     Serial.begin(115200);
     Serial.println("\n=========================================");
@@ -217,22 +324,12 @@ void setup() {
     uint8_t savedProfile = prefs.getUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
     if (savedProfile > 1) savedProfile = 0;
 
-    // Load per-profile K factors (with legacy fallback to "depth_k")
-    float savedLegacyK = prefs.getFloat("depth_k", CPReadyConfig::DEPTH_CALIBRATION_K);
-    float savedManikinK = prefs.getFloat("k_manikin", savedLegacyK);
-    float savedBenchK = prefs.getFloat("k_bench", CPReadyConfig::BENCH_DEPTH_CALIBRATION_K);
-
-    // Sanity-check bounds to prevent runaway persisted K
-    if (savedManikinK < 2.0f || savedManikinK > 25.0f) savedManikinK = CPReadyConfig::DEPTH_CALIBRATION_K;
-    if (savedBenchK < 2.0f || savedBenchK > 25.0f) savedBenchK = CPReadyConfig::BENCH_DEPTH_CALIBRATION_K;
-
-    tracker.setManikinK(savedManikinK);
-    tracker.setBenchK(savedBenchK);
+    loadDepthCalibration(savedProfile);
     tracker.setProfile((CPReadyConfig::KinematicProfile)savedProfile);
 
     Serial.printf("[NVS] Flash configuration loaded: Profile=%s | Manikin K=%.2f | Bench K=%.2f (Active K=%.2f)\n",
         savedProfile == (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST ? "BENCH_TEST" : "MANIKIN_STANDARD",
-        savedManikinK, savedBenchK, tracker.getDepthK());
+        tracker.getManikinK(), tracker.getBenchK(), tracker.getDepthK());
 
     #if ENABLE_DEMO_MODE
     Serial.println("[DEMO] *** DEMO / SIMULATION MODE ENABLED ***");
@@ -240,7 +337,7 @@ void setup() {
     #else
     if (!sensors.begin()) {
         #if USE_DUAL_MPU
-        Serial.println("[ERROR] Failed to initialize MPU6050 sensors via PCA9548A multiplexer! Check wiring and 0x70 address.");
+        Serial.println("[ERROR] Failed to initialize the MPU6050 sensors! Check the PCA9548A (0x70) or the 0x68/0x69 wiring.");
         #else
         Serial.println("[ERROR] Failed to initialize chest MPU6050 sensor! Check wiring.");
         #endif
@@ -252,7 +349,7 @@ void setup() {
                 sensors.getChestChannel(), sensors.getChestI2CAddress(),
                 sensors.getBaseChannel(), sensors.getBaseI2CAddress());
         } else {
-            Serial.println("[OK] Dual-MPU mode initialized.");
+            Serial.println("[OK] Dual-MPU mode initialized on the main bus (0x68 chest, 0x69 base).");
         }
         #else
         if (sensors.getHasMultiplexer()) {
@@ -277,7 +374,7 @@ void loop() {
     // 1. Check for Bluetooth Disconnection during active operation
     if (ble.checkAndClearDisconnectionEvent()) {
         practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
-        if (state == DeviceState::CALIBRATING || state == DeviceState::ACTIVE_SESSION || 
+        if (state == DeviceState::CALIBRATING || state == DeviceState::ACTIVE_SESSION ||
             state == DeviceState::SESSION_PAUSED || state == DeviceState::CALIBRATED_READY) {
             Serial.println("[BLE WARN] Disconnected during active session! Immediately aborting.");
             tracker.reset();
@@ -293,19 +390,26 @@ void loop() {
             onReceiveMessage_BLE(cmd);
         }
     }
+    uint32_t dropped = ble.consumeDroppedCommandCount();
+    if (dropped > 0) {
+        Serial.printf("[BLE WARN] %u command(s) dropped: command queue full.\n", (unsigned)dropped);
+    }
 
     // State: CALIBRATING (Trainee rests hands idle on chest for configured duration)
     if (state == DeviceState::CALIBRATING) {
         #if !ENABLE_DEMO_MODE
         sensors.recordCalibrationSample(nowMicros);
+        if (sensors.hasFault()) {
+            enterSensorFault();
+            return;
+        }
         #endif
 
         // Periodically broadcast calibration progress packet (Packet Type 2)
         if (now - lastCalibProgressNotifyMillis >= CPReadyConfig::CALIBRATION_PROGRESS_INTERVAL_MS) {
             lastCalibProgressNotifyMillis = now;
             uint16_t elapsedCalib = (uint16_t)((now - calibrationStartMillis) / 1000);
-            CPRMetricsPacket calibPkt = {PKT_TYPE_CALIB_PROGRESS, 1, 0, 0, 0, PROMPT_NONE, 0, elapsedCalib, CADENCE_FLAG_STEADY};
-            ble.sendPacket(calibPkt);
+            ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_PROGRESS, elapsedCalib));
         }
 
         // Check if calibration window has elapsed
@@ -315,8 +419,7 @@ void loop() {
             if (!sensors.isCalibrationStable()) {
                 uint8_t reason = sensors.getCalibrationFailureReason();
                 Serial.printf("[ERROR] Calibration aborted: stability/plausibility checks failed (reason=%d).\n", reason);
-                CPRMetricsPacket errorPkt = {PKT_TYPE_ERROR, 0, 0, 0, 0, reason, 0, 0, 0};
-                ble.sendPacket(errorPkt);
+                sendError(reason);
                 sensors.resetCalibration();
                 state = DeviceState::STANDBY;
             } else {
@@ -324,8 +427,7 @@ void loop() {
                 Serial.println("[FLOW] Calibration finished. Baselines stored. System is CALIBRATED_READY.");
 
                 // Signal Flutter that calibration succeeded (Packet Type 3)
-                CPRMetricsPacket successPkt = {PKT_TYPE_CALIB_SUCCESS, 1, 0, 0, 0, PROMPT_NONE, 0, 0, CADENCE_FLAG_STEADY};
-                ble.sendPacket(successPkt);
+                ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
 
                 // Transition to CALIBRATED_READY and await instructor's "START"
                 state = DeviceState::CALIBRATED_READY;
@@ -347,7 +449,7 @@ void loop() {
             demoReading.depth_cm          = (float)DEMO_DEPTH_MM / 10.0f; // mm to cm
             demoReading.recoil_complete   = DEMO_RECOIL_OK;
             demoReading.ccf_percentage    = DEMO_CCF_PERCENT;
-            demoReading.elapsed_seconds   = (now - calibrationStartMillis - CPReadyConfig::CALIBRATION_DURATION_MS) / 1000;
+            demoReading.elapsed_seconds   = (now - demoSessionStartMillis) / 1000;
             demoReading.audio_prompt_code = PROMPT_NONE;
             demoReading.stroke_count      = (uint16_t)(demoReading.elapsed_seconds * 1.8f);
             demoReading.quality_flags     = CADENCE_FLAG_STEADY;
@@ -362,7 +464,12 @@ void loop() {
         }
         #else
         float netAccel = 0.0f;
-        if (sensors.sample100Hz(netAccel, nowMicros)) {
+        bool sampled = sensors.sample100Hz(netAccel, nowMicros);
+        if (sensors.hasFault()) {
+            enterSensorFault();
+            return;
+        }
+        if (sampled) {
             // Process current sample through the harmonic pedometer engine
             bool strokeCompleted = tracker.processSample(netAccel, now);
 
@@ -378,6 +485,8 @@ void loop() {
                 if (strokeCompleted) {
                     Serial.println("[STROKE] " + reading.toDebugString());
                 }
+                // The cue is announced once; the 5 Hz heartbeat must not repeat it.
+                tracker.clearAudioPrompt();
             }
 
             // Auto-stop if session exceeds configured practice duration
@@ -389,7 +498,7 @@ void loop() {
         #endif
     }
     else {
-        // Standby, Calibrated Ready, or Fault Error: yield CPU to feed IDLE and BLE background tasks
+        // Standby, Calibrated Ready, Paused or Fault Error: yield CPU to feed IDLE and BLE background tasks
         delay(5);
     }
 
