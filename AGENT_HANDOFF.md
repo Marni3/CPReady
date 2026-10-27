@@ -31,7 +31,7 @@ accurate**. The original request was a critical audit plus an improvement plan, 
 
 | Topic | Decision |
 |---|---|
-| Git | Work on branch **`for-finalization`** (they asked for "for finalization"; spaces are illegal in branch names). Commit as you go. Push only when asked; they asked once, on 28 Oct, and it was pushed then. Never touch `main` or force-push. |
+| Git | Work on branch **`for-finalization`** (they asked for "for finalization"; spaces are illegal in branch names). Commit as you go. Push only when asked. They asked on 28 Oct, but the push was denied (403, no write access; see §3). Never touch `main` or force-push. |
 | Hardware | **Ignore the KiCad schematic** (it is an unwired ESP32-S3 parts placement). The real hardware is a classic ESP32 with 2× MPU-6050 behind a PCA9548A. The firmware only has to work on an ESP32. |
 | Force sensor | **No force sensor in the product** (hardware constraints; analog FSRs unreliable). Recoil stays "estimated". The **lab** build may optionally support an FSR402 or an RFP602. |
 | RFP602 module | The user's photo shows the standard **analog** "thin-film pressure sensor voltage conversion module": VCC/GND/DO/AO pins, a potentiometer and an LM393 comparator. **It is not I2C.** Use AO → GPIO34 (ADC1), powered from **3.3 V** (at 5 V, AO can exceed the ESP32 ADC range). DO is a threshold on/off output set by the potentiometer. |
@@ -48,9 +48,18 @@ accurate**. The original request was a critical audit plus an improvement plan, 
 ## 3. Git state
 
 Branch `for-finalization`, created from `main` at `3c086a5`. The remote is
-`github.com/Marni3/CPReady`. At the user's request the branch was **pushed to
-`origin/for-finalization` on 28 October 2026**. `main` is untouched. Push later work only
-when the user asks.
+`github.com/Marni3/CPReady`. **The branch is not on GitHub yet.** The user asked for a push
+on 28 October 2026, but GitHub refused it: `403 Permission to Marni3/CPReady.git denied to
+denniwise`, meaning the GitHub account signed in on this PC has no write access. One of
+these has to happen first:
+
+- the repo owner (Marni3) gives `denniwise` write access, and then you run
+  `git push -u origin for-finalization`;
+- or the user signs in with an account that has access;
+- or the user approves pushing to a fork and opening a PR.
+
+`main` is untouched locally and on GitHub. Don't force-push, and don't push anywhere the
+user hasn't approved.
 
 | Commit | Content |
 |---|---|
@@ -59,7 +68,7 @@ when the user asks.
 | `3965701` | docs: audit and improvement plan, plus `audit_evidence/` |
 | `97698e5` | docs: `LAB_MODE_ARCHITECTURE.md` proposal (not implemented) |
 | `aa5c2a8` | feat(firmware): algorithm refinement (§4.3) |
-| (last) | docs: this handoff file; "pushed" status in the report and audit |
+| (last two) | docs: this handoff file and branch status in the report and audit |
 
 Other state:
 
