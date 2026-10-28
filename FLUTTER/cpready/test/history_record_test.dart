@@ -1,4 +1,4 @@
-/// History schema v3 and quality-flag provenance.
+/// History schema v4 and quality-flag / packet-loss provenance.
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,19 +6,48 @@ import 'package:cpready/src/config/config.dart';
 import 'package:cpready/src/core/history/session_record.dart';
 
 void main() {
-  test('schema v3 keeps the v2 quality_flags column and adds settings', () {
-    expect(AppHistory.schemaVersion, 3);
+  test('schema v4 keeps quality_flags and settings and adds packets_lost', () {
+    expect(AppHistory.schemaVersion, 4);
     expect(AppHistory.columnQualityFlags, 'quality_flags');
     expect(AppHistory.createSessionsV2, contains('quality_flags'));
     expect(
       AppHistory.migrateSessionsV1ToV2,
       'ALTER TABLE sessions ADD COLUMN quality_flags INTEGER',
     );
+    expect(AppHistory.createSessionsV4, contains('quality_flags'));
+    expect(AppHistory.createSessionsV4, contains('packets_lost'));
+    expect(
+      AppHistory.migrateSessionsV3ToV4,
+      'ALTER TABLE sessions ADD COLUMN packets_lost INTEGER',
+    );
     expect(AppDeviceSettings.createTable, contains(AppDeviceSettings.table));
     expect(
       AppDeviceSettings.createTable,
       contains(AppDeviceSettings.columnDepthK),
     );
+  });
+
+  test('record round-trips the lost-packet count', () {
+    final record = SessionRecord(
+      traineeName: 'Alexandra',
+      status: SessionStatus.completed,
+      startedAt: DateTime(2026, 10, 26, 10),
+      endedAt: DateTime(2026, 10, 26, 10, 2),
+      durationSeconds: 120,
+      packetCount: 598,
+      packetsLost: 2,
+      rateCpm: 110,
+      depthTenthsMm: 550,
+      recoilPercent: 100,
+      ccfPercent: 90,
+      totalCompressions: 230,
+    );
+
+    final loaded = SessionRecord.fromMap(record.toMap());
+
+    expect(loaded.packetCount, 598);
+    expect(loaded.packetsLost, 2);
+    expect(loaded.totalCompressions, 230);
   });
 
   test('record round-trips quality flags and bench provenance', () {

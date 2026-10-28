@@ -192,16 +192,18 @@ class AppStrings {
   static const String setupProfileSendFailed =
       'Could not send the mode change to the device.';
 
-  /// Confirmation shown before SET_PROFILE, because current firmware resets K.
+  /// Confirmation shown before SET_PROFILE: each mode has its own depth
+  /// scalar (K), so depth readings change with the mode.
   static const String profileSwitchWarningTitle = 'Change training mode?';
   static const String profileSwitchWarningBody =
-      'Switching modes resets the device’s calibrated depth scalar (K). '
-      'Recalibrate the manikin before relying on depth readings.';
+      'Each mode keeps its own depth calibration (K), so depth readings change '
+      'with the mode. If this mode was never calibrated, run Manikin '
+      'Calibration before relying on depth.';
   static const String profileSwitchConfirm = 'Switch mode';
 
   /// Persistent reminder after a successful mode change.
   static const String profileSwitchResetNotice =
-      'Mode changed. Recalibrate the manikin before using depth readings.';
+      'Mode changed. Depth now uses this mode’s calibration (K).';
 
   // -----------------------------------------------------------------------
   // Device Settings
@@ -239,10 +241,10 @@ class AppStrings {
 
   static const String deviceSettingsProfileSection = 'Kinematic profile';
   static const String deviceSettingsProfileHelper =
-      'Changing modes resets the device’s calibrated K. Recalibrate the manikin '
-      'afterwards.';
+      'Each mode keeps its own calibrated K. Check K after switching and '
+      'calibrate the manikin if this mode was never calibrated.';
   static const String deviceSettingsProfileChanged =
-      'Mode changed. Recalibrate the manikin before using depth readings.';
+      'Mode changed. Depth now uses this mode’s calibration (K).';
   static const String deviceSettingsProfileFailed =
       'Could not change the device mode.';
 
@@ -387,7 +389,7 @@ class AppStrings {
 
   /// Helper line under the heading.
   static const String beginCompressionBody =
-      'Get into position as live session start automatically.';
+      'Get into position. The live session starts automatically.';
 
   // -----------------------------------------------------------------------
   // Live practice
@@ -453,6 +455,12 @@ class AppStrings {
   static const String sessionResultsUnavailable = 'Results Unavailable';
   static const String sessionResultsUnavailableDetail =
       'The device did not return a final summary, so this session was not saved.';
+
+  /// Status shown when the vest reported a sensor failure mid-session.
+  static const String sessionSensorFault = 'Sensor Problem';
+  static const String sessionSensorFaultDetail =
+      'A vest sensor stopped responding, so this session was not saved. '
+      'Check the sensor cables, then recalibrate and try again.';
 
   /// Button that re-sends GET_RESULTS from the unavailable-results screen.
   static const String sessionRetryRetrieval = 'Retry Retrieval';

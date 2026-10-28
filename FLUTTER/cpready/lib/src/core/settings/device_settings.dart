@@ -1,8 +1,7 @@
 /// Last known device configuration, persisted on the phone.
 ///
-/// The firmware cannot always report its configuration (F-01 is pending), so
-/// this row is what Device Settings and Practice Setup show before the first
-/// successful read-back. Values written here are the app's best knowledge, not
+/// Older firmware cannot report its configuration, so this row is what Device
+/// Settings and Practice Setup show before the first successful read-back. Values written here are the app's best knowledge, not
 /// a device acknowledgement: only a Type 6 report is authoritative.
 
 import '../../config/config.dart';
@@ -28,8 +27,9 @@ class DeviceSettings {
 
   final KinematicProfile profile;
 
-  /// Calibrated depth scalar, or null when it is unknown. A profile switch or
-  /// factory reset clears it because current firmware resets K.
+  /// Calibrated depth scalar, or null when it is unknown. A profile switch
+  /// clears it (the other profile's K is not known until read back) and so
+  /// does a factory reset.
   final double? depthK;
 
   final int practiceDurationSec;

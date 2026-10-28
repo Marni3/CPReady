@@ -23,7 +23,8 @@ class AppHistory {
   /// losing their history.
   ///
   /// v3 is additive: it only creates the Device Settings table.
-  static const int schemaVersion = 3;
+  /// v4 is additive: it adds [columnPacketsLost] to the sessions table.
+  static const int schemaVersion = 4;
 
   // -----------------------------------------------------------------------
   // Table and columns
@@ -48,6 +49,10 @@ class AppHistory {
 
   /// Firmware quality_flags byte (steady/first-stroke/bench mode).
   static const String columnQualityFlags = 'quality_flags';
+
+  /// Telemetry notifications lost during the session (sequence-number gaps);
+  /// the received count is [columnPacketCount]. NULL for rows before v4.
+  static const String columnPacketsLost = 'packets_lost';
 
   // Provenance.
   static const String columnDeviceName = 'device_name';
@@ -100,10 +105,38 @@ CREATE TABLE $tableSessions (
 )
 ''';
 
+  /// Schema v4 DDL: v2 plus the lost-packet count.
+  static const String createSessionsV4 =
+      '''
+CREATE TABLE $tableSessions (
+  $columnId                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  $columnTraineeName        TEXT    NOT NULL,
+  $columnStatus             TEXT    NOT NULL,
+  $columnStartedAt          TEXT    NOT NULL,
+  $columnEndedAt            TEXT    NOT NULL,
+  $columnDurationSeconds    INTEGER NOT NULL,
+  $columnPacketCount        INTEGER NOT NULL,
+  $columnRateCpm            INTEGER,
+  $columnDepthTenthsMm      INTEGER,
+  $columnRecoilPercent      INTEGER,
+  $columnCcfPercent         INTEGER,
+  $columnTotalCompressions  INTEGER,
+  $columnQualityFlags       INTEGER,
+  $columnDeviceName         TEXT,
+  $columnFirmwareVersion    TEXT,
+  $columnAppVersion         TEXT,
+  $columnPacketsLost        INTEGER
+)
+''';
+
   /// Additive v1 → v2 migration. Existing rows keep all their data and get a
   /// null quality_flags value.
   static const String migrateSessionsV1ToV2 =
       'ALTER TABLE $tableSessions ADD COLUMN $columnQualityFlags INTEGER';
+
+  /// Additive v3 → v4 migration. Existing rows get a null packets_lost value.
+  static const String migrateSessionsV3ToV4 =
+      'ALTER TABLE $tableSessions ADD COLUMN $columnPacketsLost INTEGER';
 
   // -----------------------------------------------------------------------
   // Session status values (stored verbatim in [columnStatus])

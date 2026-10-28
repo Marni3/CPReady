@@ -1,4 +1,4 @@
-/// Decoded Type 6 configuration report (proposed F-01).
+/// Decoded Type 6 configuration report (F-01).
 ///
 /// Layout (12 bytes, little-endian):
 ///   0      packet_type (6)
@@ -10,7 +10,7 @@
 ///   9      protocol_version
 ///   10..11 reserved
 ///
-/// The current firmware does not emit this packet. [fromBytes] validates it so
+/// The firmware sends it in reply to GET_CONFIG. [fromBytes] validates it so
 /// malformed or future-version reports are ignored instead of populating the
 /// UI with invented values.
 

@@ -42,6 +42,10 @@ class SessionRecord {
   /// Number of telemetry packets recorded during the session.
   final int packetCount;
 
+  /// Telemetry packets lost during the session (sequence gaps). Null for rows
+  /// saved before schema v4 or with firmware that sends no sequence numbers.
+  final int? packetsLost;
+
   // FINAL_SUMMARY values. All null for an interrupted session.
   final int? rateCpm;
   final int? depthTenthsMm;
@@ -65,6 +69,7 @@ class SessionRecord {
     required this.endedAt,
     required this.durationSeconds,
     required this.packetCount,
+    this.packetsLost,
     this.rateCpm,
     this.depthTenthsMm,
     this.recoilPercent,
@@ -130,6 +135,7 @@ class SessionRecord {
     AppHistory.columnEndedAt: endedAt.toIso8601String(),
     AppHistory.columnDurationSeconds: durationSeconds,
     AppHistory.columnPacketCount: packetCount,
+    AppHistory.columnPacketsLost: packetsLost,
     AppHistory.columnRateCpm: rateCpm,
     AppHistory.columnDepthTenthsMm: depthTenthsMm,
     AppHistory.columnRecoilPercent: recoilPercent,
@@ -155,6 +161,7 @@ class SessionRecord {
           .toLocal(),
       durationSeconds: map[AppHistory.columnDurationSeconds] as int? ?? 0,
       packetCount: map[AppHistory.columnPacketCount] as int? ?? 0,
+      packetsLost: map[AppHistory.columnPacketsLost] as int?,
       rateCpm: map[AppHistory.columnRateCpm] as int?,
       depthTenthsMm: map[AppHistory.columnDepthTenthsMm] as int?,
       recoilPercent: map[AppHistory.columnRecoilPercent] as int?,

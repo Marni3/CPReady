@@ -1,7 +1,8 @@
 /// The two kinematic profiles the firmware can run.
 ///
-/// Selecting a profile also resets the firmware's depth scalar to that
-/// profile's default, so the choice is sent only when the user changes it.
+/// Each profile keeps its own depth scalar (K) on the device, so switching
+/// profiles changes the K in use; the choice is sent only when the user
+/// changes it.
 
 import '../../config/ble.dart';
 

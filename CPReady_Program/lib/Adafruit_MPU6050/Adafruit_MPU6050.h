@@ -39,6 +39,8 @@
 #define MPU6050_GYRO_CONFIG 0x1B ///< Gyro specfic configuration register
 #define MPU6050_ACCEL_CONFIG                                                   \
   0x1C ///< Accelerometer specific configration register
+#define MPU6500_ACCEL_CONFIG2                                                  \
+  0x1D ///< MPU-6500 family: accelerometer low-pass filter (A_DLPF_CFG)
 #define MPU6050_INT_PIN_CONFIG 0x37 ///< Interrupt pin configuration register
 #define MPU6050_INT_ENABLE 0x38     ///< Interrupt enable configuration register
 #define MPU6050_INT_STATUS 0x3A     ///< Interrupt status register
@@ -261,9 +263,17 @@ public:
   Adafruit_Sensor *getAccelerometerSensor(void);
   Adafruit_Sensor *getGyroSensor(void);
 
+  /// WHO_AM_I value read by begin(): 0x68 for an MPU-6050, 0x70/0x72 for
+  /// MPU-6500-class parts and clones.
+  uint8_t getChipId(void) const { return _chip_id; }
+
 private:
   void _getRawSensorData(void);
   void _scaleSensorData(void);
+
+  float _accel_scale = 16384; ///< LSB per g for the configured range
+  float _gyro_scale = 131;    ///< LSB per deg/s for the configured range
+  uint8_t _chip_id = 0;       ///< WHO_AM_I read by begin()
 
 protected:
   float temperature, ///< Last reading's temperature (C)
@@ -285,7 +295,7 @@ protected:
       _sensorid_gyro,       ///< ID number for gyro
       _sensorid_temp;       ///< ID number for temperature
 
-  void _read(void);
+  bool _read(void);
   virtual bool _init(int32_t sensor_id);
 
 private:

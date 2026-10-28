@@ -1,0 +1,26 @@
+﻿[CUE] push harder    at   8.9 s (phase: shallow)
+[CUE] push less      at  16.0 s (phase: deep)
+[CUE] speed up       at  24.7 s (phase: slow)
+[CUE] slow down      at  30.2 s (phase: fast)
+[CUE] good job       at  50.8 s (phase: good)
+[CUE] good job       at  66.1 s (phase: good)
+
+== Each phase is measured at its own depth and rate ==
+[PASS] warm-up: median depth                                    got     5.58  (expected 5.20 .. 5.80)
+[PASS] warm-up: median rate                                     got   109.09  (expected 108.00 .. 112.00)
+[PASS] shallow: median depth                                    got     4.14  (expected 3.70 .. 4.30)
+[PASS] shallow: median rate                                     got   109.09  (expected 108.00 .. 112.00)
+[PASS] deep: median depth                                       got     7.10  (expected 6.70 .. 7.30)
+[PASS] deep: median rate                                        got   109.09  (expected 108.00 .. 112.00)
+[PASS] slow: median depth                                       got     5.64  (expected 5.20 .. 5.80)
+[PASS] slow: median rate                                        got    85.71  (expected 83.00 .. 87.00)
+[PASS] fast: median depth                                       got     5.62  (expected 5.20 .. 5.80)
+[PASS] fast: median rate                                        got   146.34  (expected 143.00 .. 147.00)
+[PASS] good: median depth                                       got     5.60  (expected 5.20 .. 5.80)
+[PASS] good: median rate                                        got   109.09  (expected 108.00 .. 112.00)
+
+== Every coaching cue fires, in scenario order ==
+[PASS] expected cues found in order                             got     5.00  (expected 5.00 .. 5.00)
+[PASS] no 'release fully' cue (recoil is estimated)             got     1.00  (expected 1.00 .. 1.00)
+
+ALL PASSED: 0 failure(s)

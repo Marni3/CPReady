@@ -75,7 +75,7 @@ void main() {
     expect(find.text(AppStrings.setupProfileBench), findsOneWidget);
     expect(find.text(AppStrings.setupProfileSendFailed), findsNothing);
 
-    // Current firmware resets K on a profile change, so the app asks first.
+    // Each profile has its own K, so the app confirms before switching.
     await tester.tap(find.text(AppStrings.setupProfileBench));
     await tester.pumpAndSettle();
     expect(find.text(AppStrings.profileSwitchWarningTitle), findsOneWidget);

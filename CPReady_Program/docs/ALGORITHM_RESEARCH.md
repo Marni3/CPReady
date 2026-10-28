@@ -5,6 +5,23 @@
 **File Location**: `CPReady_Program/docs/ALGORITHM_RESEARCH.md`  
 **Date**: September 2026  
 
+> **Status, 27 October 2026.** The firmware no longer uses the depth formula in §3.2 and
+> §4 ($D = K \cdot a_{pp} \cdot T^2$). That relationship holds only for a pure sine. On
+> real stroke shapes the same 5.5 cm push read 1.9–4.6 cm, and no single K could correct it
+> (audit finding C6). Depth is now computed by **cycle-bounded double integration**, the
+> approach of §3.3: each stroke is integrated on its own window, which keeps drift bounded
+> without assuming any stroke shape. The implementation is `include/DepthEstimator.h`, and
+> `CALIBRATION_AND_TUNING_GUIDE.md` §7 explains it in plain terms.
+>
+> Two corrections to this document:
+>
+> - The EMA filter in §4.3 does have phase lag, about 30 ms of group delay. That is why depth
+>   is now integrated from the unfiltered signal.
+> - The "≈45 % viscoelastic attenuation" explanation for K is not supported by the cited
+>   papers. K was compensating for the stroke-shape error.
+>
+> Verify every DOI in §5 before citing it.
+
 ---
 
 ## 1. Executive Summary & Problem Formulation

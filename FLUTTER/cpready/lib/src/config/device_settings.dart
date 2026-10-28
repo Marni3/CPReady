@@ -1,8 +1,8 @@
 /// Device Settings persistence configuration.
 ///
 /// The last known profile, depth scalar and duration are stored in the same
-/// SQLite database as History. This keeps the screen sensible when firmware
-/// does not answer GET_CONFIG (F-01 is still pending).
+/// SQLite database as History. This keeps the screen sensible when the
+/// firmware does not answer GET_CONFIG (versions older than F-01).
 ///
 /// The DDL lives here so the table shape is editable in one place; the
 /// repository in `lib/src/core/history/` executes it.

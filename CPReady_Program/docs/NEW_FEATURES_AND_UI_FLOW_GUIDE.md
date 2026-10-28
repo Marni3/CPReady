@@ -448,5 +448,5 @@ When calibration or session commands fail, firmware returns Byte 7 with a discre
 
 ### 8.3 3-Stroke Running Median Depth Smoothing & Trimmed Mean
 To solve the issue of erratic depth readings during rhythm onset without introducing double-integration drift:
-* **Real-Time Depth**: Stroke depth is calculated using $D = K \cdot a_{\text{pp}} \cdot T^2$, where $T$ is filtered through a **3-stroke running median window**. This stabilizes single-stroke period jitter without lag.
+* **Real-Time Depth** *(updated October 2026)*: Stroke depth is the chest displacement obtained by integrating each stroke's vertical acceleration (`include/DepthEstimator.h`), scaled by $K$ / profile default. It replaced $D = K \cdot a_{\text{pp}} \cdot T^2$, which depended on stroke shape. The live rate is the median of the last three stroke periods.
 * **Trimmed Session Mean**: The session average depth excludes the initial onset stroke (`CADENCE_FLAG_FIRST_STROKE`) and artifactual 10.0 cm clamp saturations, ensuring the session mean reflects true clinical performance.

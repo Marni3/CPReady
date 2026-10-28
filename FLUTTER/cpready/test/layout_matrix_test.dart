@@ -142,6 +142,15 @@ final List<_Case> _cases = <_Case>[
       durationSeconds: 12,
     ),
   ),
+  _Case(
+    'SummarySensorFault',
+    () => const SessionCompleteScreen(
+      traineeName: 'Alexandra Konstantinopoulos',
+      reason: SessionEndReason.sensorFault,
+      summary: null,
+      durationSeconds: 47,
+    ),
+  ),
 ];
 
 void main() {

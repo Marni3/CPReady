@@ -35,9 +35,22 @@ MetricRating? depthRating(double? cm) {
 }
 
 /// Grade for recoil, or null when there is no value yet.
-MetricRating? recoilRating(int? percent) {
-  if (percent == null || percent <= 0) return null;
-  return percent >= AppTargets.recoilFullPercent
+///
+/// 0 is a real value (no full release), so it grades poor rather than neutral.
+/// Pass [estimated] for firmware that marks recoil as an acceleration estimate:
+/// that value cannot see leaning, so it is shown but not graded.
+MetricRating? recoilRating(int? percent, {bool estimated = false}) {
+  if (percent == null || estimated) return null;
+  return percent >= AppTargets.recoilGoodPercent
+      ? MetricRating.good
+      : MetricRating.poor;
+}
+
+/// Grade for chest compression fraction against the AHA minimum, or null when
+/// there is no value.
+MetricRating? ccfRating(int? percent) {
+  if (percent == null) return null;
+  return percent >= AppTargets.ccfMinPercent
       ? MetricRating.good
       : MetricRating.poor;
 }

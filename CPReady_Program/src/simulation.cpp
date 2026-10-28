@@ -3,7 +3,7 @@
  *
  * Build target: PlatformIO environment `simulation` (`CPREADY_SIMULATION`).
  *
- * Exposes the same GATT service, the same 12-byte telemetry packet and the same
+ * Exposes the same GATT service, the same 16-byte telemetry packet and the same
  * text commands as the sensor build, but replaces the MPU-6050 pair with the
  * synthetic signal from SyntheticVest. That signal is processed by the
  * production CompressionTracker, so rate, depth, recoil, CCF, quality flags,
@@ -44,6 +44,7 @@ static uint32_t simLastCalibrationMicros = 0;
 
 static uint32_t simLastNotifyMs     = 0;
 static uint32_t simLastSampleMicros = 0;
+static float    simFilteredNetG     = 0.0f;   // Same low-pass as SensorManager, for detection
 
 static uint32_t simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
 
@@ -154,6 +155,8 @@ static CPRConfigPacket makeConfigPacket(uint8_t profile, float depthK, uint32_t 
  * reported later is a peak-to-peak quantity and a constant offset would cancel.
  */
 static void beginSimCalibration(uint32_t now) {
+    // As in main.cpp: a new calibration drops the previous summary.
+    simTracker.reset();
     simCalibrationStartMs    = now;
     simCalibrationProgressMs = now;
     simLastCalibrationMicros = micros();
@@ -171,32 +174,27 @@ static void beginSimCalibration(uint32_t now) {
 /**
  * Starts an active session and restarts the stroke scenario.
  *
- * The reference scalar matches the active profile's default so the simulated
- * stroke keeps its physical size; a retuned tracker scalar then shows up as a
- * proportional change in the reported depth.
+ * The simulated strokes have a fixed physical depth, so a retuned K shows up as a
+ * proportional change in the reported depth, exactly as on the vest.
  */
 static void startSimSession(uint32_t now) {
     const bool steadyTrial =
         simPracticeDurationSec > 0 &&
         simPracticeDurationSec <= SimConfig::STEADY_TRIAL_MAX_SEC;
 
-    const float referenceK =
-        simTracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST
-            ? CPReadyConfig::BENCH_DEPTH_CALIBRATION_K
-            : CPReadyConfig::DEPTH_CALIBRATION_K;
-
     simTracker.startSession(now);
-    simVest.begin(now, referenceK, steadyTrial);
+    simVest.begin(now, steadyTrial);
 
     simLastNotifyMs     = now;
     simLastSampleMicros = micros();
+    simFilteredNetG     = 0.0f;
     simLastPhase        = -1;
     simLastLoggedCue    = PROMPT_NONE;
     simState            = DeviceState::ACTIVE_SESSION;
 
-    Serial.printf("[FLOW] Session started: %s | reference K %.2f | duration %u s\n",
+    Serial.printf("[FLOW] Session started: %s | depth K %.2f | duration %u s\n",
                   steadyTrial ? "steady depth trial" : "cue scenario",
-                  referenceK, (unsigned)simPracticeDurationSec);
+                  simTracker.getDepthK(), (unsigned)simPracticeDurationSec);
 }
 
 /** Finalises the tracker and publishes the session summary. */
@@ -224,13 +222,25 @@ static void endSimSession(uint32_t now, const char* reason) {
 // Command handling
 // ---------------------------------------------------------------------------
 
+/** Configuration changes are refused while a calibration or session runs (as in main.cpp). */
+static bool simRejectConfigChange(const String& message) {
+    if (simState == DeviceState::STANDBY ||
+        simState == DeviceState::CALIBRATED_READY ||
+        simState == DeviceState::FAULT_ERROR) {
+        return false;
+    }
+    Serial.println("[FLOW] " + message + " rejected: calibration or session in progress.");
+    simBle.sendPacket(makeErrorPacket(ERR_WRONG_STATE));
+    return true;
+}
+
 static void handleBleCommand(String message) {
     message.trim();
     message.toUpperCase();
     Serial.println("[BLE CMD] Received: " + message);
 
     if (message == "CALIBRATE") {
-        if (simState == DeviceState::ACTIVE_SESSION) {
+        if (simState == DeviceState::ACTIVE_SESSION || simState == DeviceState::SESSION_PAUSED) {
             Serial.println("[FLOW] Calibrate rejected: active session running.");
             simBle.sendPacket(makeErrorPacket(ERR_WRONG_STATE));
             return;
@@ -241,13 +251,12 @@ static void handleBleCommand(String message) {
         if (simState == DeviceState::CALIBRATED_READY) {
             startSimSession(millis());
         }
-        else if (simState == DeviceState::CALIBRATING) {
-            Serial.println("[FLOW] Start rejected: calibration still running.");
-            simBle.sendPacket(makeErrorPacket(ERR_WRONG_STATE));
+        else if (simState == DeviceState::ACTIVE_SESSION) {
+            Serial.println("[FLOW] Start received while already running; ignored.");
         }
         else {
-            Serial.println("[FLOW] Start from an uncalibrated state; running calibration first.");
-            beginSimCalibration(millis());
+            Serial.println("[FLOW] Start rejected: send CALIBRATE and wait for the baseline first.");
+            simBle.sendPacket(makeErrorPacket(ERR_WRONG_STATE));
         }
     }
     else if (message == "STOP") {
@@ -255,9 +264,13 @@ static void handleBleCommand(String message) {
             simState == DeviceState::SESSION_PAUSED) {
             endSimSession(millis(), "stop command");
         }
+        else if (simState == DeviceState::CALIBRATING ||
+                 simState == DeviceState::CALIBRATED_READY) {
+            Serial.println("[FLOW] Stop before the session started; calibration cancelled.");
+            simState = DeviceState::STANDBY;
+        }
         else {
-            Serial.println("[FLOW] Stop with no active session; last summary resent.");
-            simBle.sendPacket(simTracker.getLastSummary().toPacket(PKT_TYPE_FINAL_SUMMARY));
+            Serial.println("[FLOW] Stop while idle; ignored (GET_RESULTS re-sends the summary).");
         }
     }
     else if (message == "GET_RESULTS") {
@@ -265,41 +278,62 @@ static void handleBleCommand(String message) {
         Serial.println("[FLOW] Summary resent.");
     }
     else if (message == "PAUSE") {
-        simState = DeviceState::SESSION_PAUSED;
-        Serial.println("[FLOW] Session paused.");
+        if (simState == DeviceState::ACTIVE_SESSION) {
+            simTracker.pauseSession(millis());
+            simState = DeviceState::SESSION_PAUSED;
+            Serial.println("[FLOW] Session paused.");
+        }
+        else if (simState != DeviceState::SESSION_PAUSED) {
+            simBle.sendPacket(makeErrorPacket(ERR_WRONG_STATE));
+        }
     }
     else if (message == "RESUME") {
         if (simState == DeviceState::SESSION_PAUSED) {
+            simTracker.resumeSession(millis());
             simState = DeviceState::ACTIVE_SESSION;
             Serial.println("[FLOW] Session resumed.");
         }
+        else if (simState != DeviceState::ACTIVE_SESSION) {
+            simBle.sendPacket(makeErrorPacket(ERR_WRONG_STATE));
+        }
     }
     else if (message.startsWith("SET_TIME:")) {
-        const int seconds = message.substring(9).toInt();
-        if (seconds > 0) {
+        if (simRejectConfigChange(message)) return;
+        const String digits = message.substring(9);
+        bool numeric = digits.length() > 0 && digits.length() <= 5;
+        for (unsigned int i = 0; numeric && i < digits.length(); i++) {
+            numeric = isDigit(digits[i]);
+        }
+        const long seconds = numeric ? digits.toInt() : -1;
+        if (seconds >= 0 && seconds <= 3600) {
             simPracticeDurationSec = (uint32_t)seconds;
-            Serial.printf("[CONFIG] Session duration set to %u s.\n", (unsigned)simPracticeDurationSec);
+            Serial.printf("[CONFIG] Session duration set to %u s (0 = manual stop).\n", (unsigned)simPracticeDurationSec);
         }
     }
     else if (message.startsWith("SET_K:")) {
+        if (simRejectConfigChange(message)) return;
         const float k = message.substring(6).toFloat();
-        if (k >= 1.0f && k <= 30.0f) {
+        if (k >= CPReadyConfig::DEPTH_K_MIN && k <= CPReadyConfig::DEPTH_K_MAX) {
             simTracker.setDepthK(k);
-            simPrefs.putFloat("depth_k", k);
+            simPrefs.putFloat(simTracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST
+                                  ? "k_bench" : "k_manikin", k);
             Serial.printf("[NVS] Depth scalar K set to %.2f.\n", k);
         }
     }
     else if (message == "SET_PROFILE:BENCH") {
+        if (simRejectConfigChange(message)) return;
         simTracker.setProfile(CPReadyConfig::KinematicProfile::BENCH_TEST);
         simPrefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST);
         Serial.printf("[NVS] Profile BENCH_TEST applied (K %.2f).\n", simTracker.getDepthK());
     }
     else if (message == "SET_PROFILE:MANIKIN") {
+        if (simRejectConfigChange(message)) return;
         simTracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         simPrefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         Serial.printf("[NVS] Profile MANIKIN_STANDARD applied (K %.2f).\n", simTracker.getDepthK());
     }
     else if (message.startsWith("CALIBRATE_TARGET:")) {
+        if (simRejectConfigChange(message)) return;
         const float targetCm = message.substring(17).toFloat();
         const float previousK = simTracker.getDepthK();
         float newK = 0.0f;
@@ -321,6 +355,7 @@ static void handleBleCommand(String message) {
         }
     }
     else if (message == "RESET_CONFIG") {
+        if (simRejectConfigChange(message)) return;
         simPrefs.clear();
         simTracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         simTracker.setDepthK(CPReadyConfig::DEPTH_CALIBRATION_K);
@@ -502,17 +537,18 @@ static void updateActiveSession(uint32_t now, uint32_t nowMicros) {
     if ((int8_t)phaseIndex != simLastPhase) {
         simLastPhase = (int8_t)phaseIndex;
         const SimConfig::Phase& phase = SimConfig::PHASES[phaseIndex];
-        Serial.printf("[SIM] Phase %u/%u: %s (%u cpm, %.1f cm, trough %.2f g)\n",
+        Serial.printf("[SIM] Phase %u/%u: %s (%u cpm, %.1f cm)\n",
                       (unsigned)(phaseIndex + 1),
                       (unsigned)SimConfig::PHASE_COUNT,
                       phase.label,
                       (unsigned)phase.rateCpm,
-                      phase.depthCm,
-                      phase.troughG);
+                      phase.depthCm);
     }
 
-    const float netAccelG = simVest.netAccelAt(now);
-    const bool strokeCompleted = simTracker.processSample(netAccelG, now);
+    const float rawNetG = simVest.netAccelAt(now);
+    const float alpha = CPReadyConfig::LOWPASS_FILTER_ALPHA;
+    simFilteredNetG = alpha * rawNetG + (1.0f - alpha) * simFilteredNetG;
+    const bool strokeCompleted = simTracker.processSample(simFilteredNetG, rawNetG, now);
 
     if (!strokeCompleted && (now - simLastNotifyMs < CPReadyConfig::BLE_NOTIFY_INTERVAL_MS)) {
         return;
@@ -534,9 +570,9 @@ static void updateActiveSession(uint32_t now, uint32_t nowMicros) {
     if (strokeCompleted) {
         Serial.println("[STROKE] " + reading.toDebugString());
     }
+    // As in main.cpp, a cue is announced in exactly one packet.
+    simTracker.clearAudioPrompt();
 
-    // The tracker keeps the last cue in the reading until the next stroke, and
-    // the 5 Hz heartbeat repeats it; log the transition only, not every copy.
     if (pkt.audio_prompt_code != PROMPT_NONE &&
         pkt.audio_prompt_code != simLastLoggedCue) {
         Serial.printf("[CUE] %s (%u) at %u s\n",
@@ -566,20 +602,21 @@ void setup() {
 
     const uint8_t savedProfile = simPrefs.getUChar(
         "profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+
+    // As in main.cpp: K values saved under the old depth model are discarded once.
+    if (simPrefs.getUChar("depth_model", 0) != CPReadyConfig::DEPTH_MODEL_VERSION) {
+        simPrefs.remove("depth_k");
+        simPrefs.remove("k_manikin");
+        simPrefs.remove("k_bench");
+        simPrefs.putUChar("depth_model", CPReadyConfig::DEPTH_MODEL_VERSION);
+        Serial.println("[NVS] Depth model changed: saved K values reset.");
+    }
     float savedKManikin = simPrefs.getFloat("k_manikin", 0.0f);
     float savedKBench = simPrefs.getFloat("k_bench", 0.0f);
-
-    if (savedKManikin <= 0.0f && savedKBench <= 0.0f) {
-        float legacyK = simPrefs.getFloat("depth_k", 0.0f);
-        if (legacyK >= 2.0f && legacyK <= 25.0f) {
-            savedKManikin = legacyK;
-            savedKBench = legacyK;
-        }
-    }
-    if (savedKManikin >= 2.0f && savedKManikin <= 25.0f) {
+    if (savedKManikin >= CPReadyConfig::DEPTH_K_MIN && savedKManikin <= CPReadyConfig::DEPTH_K_MAX) {
         simTracker.setManikinDepthK(savedKManikin);
     }
-    if (savedKBench >= 2.0f && savedKBench <= 25.0f) {
+    if (savedKBench >= CPReadyConfig::DEPTH_K_MIN && savedKBench <= CPReadyConfig::DEPTH_K_MAX) {
         simTracker.setBenchDepthK(savedKBench);
     }
     simTracker.setProfile((CPReadyConfig::KinematicProfile)savedProfile);

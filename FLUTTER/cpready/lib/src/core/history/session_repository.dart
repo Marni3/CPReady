@@ -44,6 +44,7 @@ class SessionRepository {
     AppHistory.columnDeviceName,
     AppHistory.columnFirmwareVersion,
     AppHistory.columnAppVersion,
+    AppHistory.columnPacketsLost,
   ];
 
   /// Opens the database on first use and keeps the handle for later calls.
@@ -58,7 +59,7 @@ class SessionRepository {
       options: OpenDatabaseOptions(
         version: AppHistory.schemaVersion,
         onCreate: (Database db, int version) async {
-          await db.execute(AppHistory.createSessionsV2);
+          await db.execute(AppHistory.createSessionsV4);
           await db.execute(AppDeviceSettings.createTable);
         },
         onUpgrade: _migrate,
@@ -80,6 +81,9 @@ class SessionRepository {
     }
     if (oldVersion < 3) {
       await db.execute(AppDeviceSettings.createTable);
+    }
+    if (oldVersion < 4) {
+      await db.execute(AppHistory.migrateSessionsV3ToV4);
     }
   }
 

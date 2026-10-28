@@ -1,0 +1,58 @@
+﻿=== A. Detection, rate and depth vs cadence (true depth 5.5 cm, no lean, manikin profile, 30 s) ===
+shape            cpm |  true   det   det% | rate_med  dep_med | recoil
+sine              80 |    39    39   100% |     80.0     2.39 |     0%
+sine              90 |    44    44   100% |     89.6     2.38 |     0%
+sine             100 |    49    49   100% |    100.0     2.33 |     0%
+sine             110 |    53    54   102% |    109.1     2.33 |     0%
+sine             120 |    58    58   100% |    120.0     2.27 |   100%
+sine             130 |    63    63   100% |    130.4     2.23 |   100%
+sine             140 |    68    68   100% |    139.5     2.22 |   100%
+sine             150 |    73    73   100% |    150.0     2.18 |   100%
+40/60 duty        80 |    39    39   100% |     80.0     3.26 |     0%
+40/60 duty        90 |    44    44   100% |     89.6     3.23 |     0%
+40/60 duty       100 |    49    49   100% |    100.0     3.07 |   100%
+40/60 duty       110 |    53    54   102% |    109.1     3.02 |   100%
+40/60 duty       120 |    58    59   102% |    120.0     2.89 |   100%
+40/60 duty       130 |    63    63   100% |    130.4     2.81 |   100%
+40/60 duty       140 |    68    68   100% |    139.5     2.79 |   100%
+40/60 duty       150 |    73    73   100% |    150.0     2.64 |   100%
+35/35/30 dwell    80 |    39    39   100% |     80.0     4.49 |   100%
+35/35/30 dwell    90 |    44    44   100% |     89.6     4.37 |   100%
+35/35/30 dwell   100 |    49    49   100% |    100.0     3.95 |   100%
+35/35/30 dwell   110 |    53    54   102% |    109.1     3.88 |   100%
+35/35/30 dwell   120 |    58    59   102% |    120.0     3.74 |   100%
+35/35/30 dwell   130 |    63    64   102% |    130.4     3.63 |   100%
+35/35/30 dwell   140 |    68    68   100% |    139.5     3.58 |   100%
+35/35/30 dwell   150 |    73    73   100% |    150.0     3.46 |   100%
+
+=== B. 'Recoil' flag vs real leaning (35/35/30 dwell, 120 cpm, manikin profile, 30 s) ===
+case                               |  true   det |  dep_med | recoil
+3.5 cm stroke, full release        |    58    59 |     2.38 |   100%
+4.0 cm stroke, full release        |    58    59 |     2.72 |   100%
+5.5 cm stroke, full release        |    58    59 |     3.74 |   100%
+5.5 cm stroke, 1.5 cm LEANING      |    58    59 |     3.74 |   100%
+6.0 cm stroke, 2.0 cm LEANING      |    58    59 |     4.08 |   100%
+
+=== C. Depth vs true depth (35/35/30 dwell, 120 cpm, manikin profile) ===
+  true | true#   det |  dep_med
+   3.0 |    58    59 |     2.04
+   4.0 |    58    59 |     2.72
+   5.0 |    58    59 |     3.40
+   5.5 |    58    59 |     3.74
+   6.0 |    58    59 |     4.08
+   7.0 |    58    59 |     4.76
+
+=== D. Same true depth (5.5 cm), different stroke shape, bench profile (0.25 g start) ===
+shape            cpm |  true   det | rate_med  dep_med | recoil
+sine             100 |    49    49 |    100.0     1.98 | recoil 100%
+sine             110 |    53    54 |    109.1     1.98 | recoil 100%
+sine             120 |    58    58 |    120.0     1.93 | recoil 100%
+sine             140 |    68    68 |    139.5     1.89 | recoil 100%
+40/60 duty       100 |    49    49 |    100.0     2.61 | recoil 100%
+40/60 duty       110 |    53    54 |    109.1     2.55 | recoil 100%
+40/60 duty       120 |    58    59 |    120.0     2.45 | recoil 100%
+40/60 duty       140 |    68    68 |    139.5     2.37 | recoil 100%
+35/35/30 dwell   100 |    49    49 |    100.0     3.35 | recoil 100%
+35/35/30 dwell   110 |    53    54 |    109.1     3.30 | recoil 100%
+35/35/30 dwell   120 |    58    59 |    120.0     3.17 | recoil 100%
+35/35/30 dwell   140 |    68    68 |    139.5     3.04 | recoil 100%

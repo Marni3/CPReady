@@ -10,10 +10,9 @@
  * PlatformIO environment.
  *
  * Each phase describes the physical stroke the simulated vest performs: the
- * cadence, the peak-to-peak depth it is meant to represent, and the trough of
- * the acceleration swing. The downstroke peak is derived from the depth target
- * and the trough, so the depth reading stays fixed when the trough is raised to
- * withhold recoil.
+ * cadence and the chest displacement per stroke. SyntheticVest turns that
+ * motion into the acceleration the sensors would measure, so the production
+ * tracker measures depth exactly as it does on the vest.
  *
  * Phases run back to back. The last phase repeats until the session ends, which
  * keeps a session that outlasts the table producing valid target-range strokes.
@@ -22,58 +21,49 @@ namespace SimConfig {
 
 struct Phase {
     uint16_t    rateCpm;     // Cadence the tracker should measure.
-    float       depthCm;     // Peak-to-peak depth the stroke should represent.
-    float       troughG;     // Minimum of the acceleration swing.
+    float       depthCm;     // Chest displacement of each stroke.
     uint16_t    durationMs;  // Time this phase is held.
     const char* label;
 };
 
 /**
- * Reference scalar used to convert a depth target into an acceleration
- * amplitude.
- *
- * The tracked depth is `K * delta_g * T^2`, so the swing behind a fixed depth
- * target depends on the profile's default scalar (11.2 g-s^2 for the manikin
- * profile, 9.5 for the bench profile). Using the profile default as reference
- * keeps the simulated stroke physically constant while the tracker scalar is
- * retuned, which is what makes a retune observable in the reported depth.
- */
-constexpr float REFERENCE_DEPTH_K = CPReadyConfig::DEPTH_CALIBRATION_K;
-
-/**
- * One pass through every coaching cue:
+ * One pass through every coaching cue the firmware can give:
  *
  *   warm-up  - first five seconds are silenced by the prompt grace period
- *   shallow  - depth below 5 cm, full recoil            -> "push harder"
- *   deep     - depth above 6 cm, full recoil            -> "push shallower"
- *   leaning  - trough above the recoil threshold        -> "release chest completely"
+ *   shallow  - depth below 5 cm                         -> "push harder"
+ *   deep     - depth above 6 cm                         -> "push shallower"
  *   slow     - 85 cpm                                   -> "speed up"
  *   fast     - 145 cpm                                  -> "slow down"
  *   good     - 15 s of target-range strokes             -> "good compressions"
+ *
+ * There is no leaning phase: leaning is a static load that accelerometers cannot
+ * see, so the firmware no longer issues "release chest completely".
  *
  * Error phases are 7 s: long enough for the six strokes or 3.5 s the tracker
  * needs to confirm an error, short enough that the 5 s prompt cooldown has not
  * expired before the next phase begins, so each error produces one prompt.
  */
 constexpr Phase PHASES[] = {
-    {110, 5.5f, -0.73f,  5000, "warm-up"},
-    {110, 4.0f, -0.50f,  7000, "shallow"},
-    {110, 7.0f, -0.95f,  7000, "deep"},
-    {110, 5.5f, -0.17f,  7000, "leaning"},
-    { 85, 5.5f, -0.44f,  7000, "slow"},
-    {145, 5.5f, -1.33f,  7000, "fast"},
-    {110, 5.5f, -0.73f, 20000, "good"},
+    {110, 5.5f,  5000, "warm-up"},
+    {110, 4.0f,  7000, "shallow"},
+    {110, 7.0f,  7000, "deep"},
+    { 85, 5.5f,  7000, "slow"},
+    {145, 5.5f,  7000, "fast"},
+    {110, 5.5f, 20000, "good"},
 };
 
 constexpr uint8_t PHASE_COUNT = sizeof(PHASES) / sizeof(PHASES[0]);
 
 /**
- * Share of a stroke cycle taken by one acceleration lobe. The two lobes
- * (downstroke and recoil) each occupy this fraction, leaving the rest of the
- * cycle at the baseline. The quiet tail is what separates one downstroke from
- * the next by more than REFRACTORY_LOCKOUT_MS at every supported cadence.
+ * Shape of one stroke cycle, as fractions of the period: push down, release, then
+ * hands still at the top. A dwell at the top is typical of trained rescuers and
+ * keeps consecutive strokes clearly separated.
  */
-constexpr float LOBE_FRACTION = 0.18f;
+constexpr float PUSH_FRACTION    = 0.35f;
+constexpr float RELEASE_FRACTION = 0.35f;
+
+/** Hands rest on the chest this long after START before the first push. */
+constexpr uint32_t START_DELAY_MS = 400;
 
 /** Simulated calibration sample rate, matching SensorManager's 100 Hz loop. */
 constexpr uint32_t SAMPLE_INTERVAL_MICROS = CPReadyConfig::SAMPLE_INTERVAL_MICROS;

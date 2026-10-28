@@ -29,8 +29,8 @@ class AppGuideSteps {
     ),
     GuideStep(
       lead: 'Look for normal breathing',
-      body: ' (remembering that gasping is not normal) and check for a pulse '
-          'simultaneously for no more than 10 seconds.',
+      body: ' for no more than 10 seconds, remembering that gasping is not '
+          'normal. If the person is not breathing normally, start CPR.',
     ),
     GuideStep(
       lead: 'Place the person flat',
@@ -55,7 +55,7 @@ class AppGuideSteps {
     ),
     GuideStep(
       lead: 'Minimize any pauses or interruptions',
-      body: ' to keeping the blood flowing, only stopping when an AED arrives '
+      body: ' to keep the blood flowing, only stopping when an AED arrives '
           'or advanced medical responders take over.',
     ),
   ];
