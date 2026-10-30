@@ -132,6 +132,60 @@ public:
         Wire.setTimeOut(CPReadyConfig::I2C_TIMEOUT_MS);
     }
 
+    // Hardware I2C bus recovery routine for downstream channels behind PCA9548A multiplexer.
+    // If an MPU6050 hung while being read, it may hold its channel's SDA low.
+    // By selecting the channel first, SCL clock pulses will pass through the PCA9548A FET pass-gate
+    // directly to the downstream sensor to clock out the stuck ACK/data bit.
+    void recoverDownstreamBus() {
+        if (!hasMultiplexer) return;
+
+        for (uint8_t ch = 0; ch < 8; ch++) {
+            Wire.beginTransmission(CPReadyConfig::PCA9548A_I2C_ADDR);
+            Wire.write(1 << ch);
+            if (Wire.endTransmission() != 0) {
+                continue;
+            }
+            delayMicroseconds(50);
+
+            // If downstream slave is holding SDA low, clock SCL up to 9 times through the pass-FET
+            if (digitalRead(CPReadyConfig::I2C_SDA_PIN) == LOW) {
+                Serial.printf("[I2C MUX] Downstream channel SD%d SDA stuck LOW. Clocking recovery pulses...\n", ch);
+                Wire.end();
+                pinMode(CPReadyConfig::I2C_SDA_PIN, INPUT_PULLUP);
+                pinMode(CPReadyConfig::I2C_SCL_PIN, OUTPUT);
+                digitalWrite(CPReadyConfig::I2C_SCL_PIN, HIGH);
+                delayMicroseconds(5);
+
+                for (int i = 0; i < 9; i++) {
+                    if (digitalRead(CPReadyConfig::I2C_SDA_PIN) == HIGH) {
+                        break;
+                    }
+                    digitalWrite(CPReadyConfig::I2C_SCL_PIN, LOW);
+                    delayMicroseconds(5);
+                    digitalWrite(CPReadyConfig::I2C_SCL_PIN, HIGH);
+                    delayMicroseconds(5);
+                }
+
+                // Generate explicit STOP condition
+                pinMode(CPReadyConfig::I2C_SDA_PIN, OUTPUT);
+                digitalWrite(CPReadyConfig::I2C_SDA_PIN, LOW);
+                delayMicroseconds(5);
+                digitalWrite(CPReadyConfig::I2C_SCL_PIN, HIGH);
+                delayMicroseconds(5);
+                digitalWrite(CPReadyConfig::I2C_SDA_PIN, HIGH);
+                delayMicroseconds(5);
+
+                pinMode(CPReadyConfig::I2C_SDA_PIN, INPUT_PULLUP);
+                pinMode(CPReadyConfig::I2C_SCL_PIN, INPUT_PULLUP);
+
+                Wire.begin(CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN);
+                Wire.setClock(CPReadyConfig::I2C_CLOCK_SPEED_HZ);
+                Wire.setTimeOut(CPReadyConfig::I2C_TIMEOUT_MS);
+            }
+        }
+        disableMux();
+    }
+
     // Automated boot-time I2C bus diagnostic scanner
     static void scanI2CBus() {
         Serial.printf("[I2C SCAN] Probing I2C bus (SDA=GPIO%d, SCL=GPIO%d, Speed=%d Hz)...\n",
@@ -343,6 +397,7 @@ public:
 
         if (hasMultiplexer) {
             Serial.printf("[I2C MUX] PCA9548A Multiplexer detected at address 0x%02X.\n", CPReadyConfig::PCA9548A_I2C_ADDR);
+            recoverDownstreamBus();
             scanMultiplexerChannels();
 
             bool muxDetected = detectAndMapChannels();
@@ -439,6 +494,13 @@ public:
         calBaseMin = 999.0f;
         calBaseMax = -999.0f;
         lastCalibrationFailureReason = ERR_NONE;
+
+        // Clear fault and stuck counters so idle standby glitches don't bleed into calibration
+        consecutiveReadFailures = 0;
+        identicalSampleCount = 0;
+        sensorFault = false;
+        lastChestZ = -999.0f;
+        lastBaseZ = -999.0f;
     }
 
     // True once reads have failed SENSOR_FAULT_CONSECUTIVE_FAILS times in a row or the
@@ -448,6 +510,11 @@ public:
     // Bus recovery plus full sensor re-initialisation, used to leave FAULT_ERROR.
     bool reinitialize() {
         Serial.println("[I2C] Re-initializing sensors after a fault...");
+        consecutiveReadFailures = 0;
+        identicalSampleCount = 0;
+        sensorFault = false;
+        lastChestZ = -999.0f;
+        lastBaseZ = -999.0f;
         return begin();
     }
 
@@ -460,7 +527,7 @@ public:
         }
 
         Vec3 chest, base;
-        if (!readSensors(chest, base)) {
+        if (!readSensors(chest, base, false)) { // Bypass frozen check during motionless calibration
             return false; // Failed samples are not counted; too many end in a fault
         }
         const float a1 = chest.z;
@@ -613,7 +680,7 @@ private:
 
     // Reads all three axes of both sensors in g. Returns false on a failed bus read;
     // repeated failures or frozen readings latch sensorFault.
-    bool readSensors(Vec3& chest, Vec3& base) {
+    bool readSensors(Vec3& chest, Vec3& base, bool checkFrozen = true) {
         selectMuxChannel(chestMuxChannel);
         sensors_event_t aChest, gChest, tempChest;
         bool ok = chestSensor.getEvent(&aChest, &gChest, &tempChest);
@@ -646,11 +713,16 @@ private:
 
         // A sensor that lost power and came back sits in sleep mode and returns its last
         // register contents forever. Real readings always carry a few LSB of noise.
-        if (chestZ == lastChestZ && baseZ == lastBaseZ) {
-            if (identicalSampleCount < 0xFFFF) identicalSampleCount++;
-            if (identicalSampleCount >= CPReadyConfig::SENSOR_STUCK_SAMPLE_LIMIT && !sensorFault) {
-                sensorFault = true;
-                Serial.println("[I2C FAULT] Sensor readings are frozen (sensor reset or asleep).");
+        // During stationary baseline calibration, identical readings on a still surface are normal and checked by gravity limits.
+        if (checkFrozen) {
+            if (chestZ == lastChestZ && baseZ == lastBaseZ) {
+                if (identicalSampleCount < 0xFFFF) identicalSampleCount++;
+                if (identicalSampleCount >= CPReadyConfig::SENSOR_STUCK_SAMPLE_LIMIT && !sensorFault) {
+                    sensorFault = true;
+                    Serial.println("[I2C FAULT] Sensor readings are frozen (sensor reset or asleep).");
+                }
+            } else {
+                identicalSampleCount = 0;
             }
         } else {
             identicalSampleCount = 0;

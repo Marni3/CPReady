@@ -140,8 +140,8 @@ namespace CPReadyConfig {
     constexpr bool        ENABLE_ESTIMATED_RECOIL_PROMPT  = false;
 
     // Sensor health monitoring
-    constexpr uint8_t     SENSOR_FAULT_CONSECUTIVE_FAILS = 5;      // Failed reads in a row (50 ms) before the sensor is declared faulty
-    constexpr uint16_t    SENSOR_STUCK_SAMPLE_LIMIT      = 50;     // Identical raw readings in a row (0.5 s) that indicate a frozen sensor
+    constexpr uint8_t     SENSOR_FAULT_CONSECUTIVE_FAILS = 15;     // Failed reads in a row (150 ms) before the sensor is declared faulty
+    constexpr uint16_t    SENSOR_STUCK_SAMPLE_LIMIT      = 250;    // Identical raw readings in a row (2.5 s) that indicate a frozen sensor
     constexpr float       DEPTH_MIN_LIMIT_CM            = 0.0f;    // Minimum allowable depth clamp to reject negative outliers
     constexpr float       DEPTH_MAX_LIMIT_CM            = 10.0f;   // Maximum allowable depth clamp to reject physical artifacts
 }
