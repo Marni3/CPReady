@@ -199,8 +199,8 @@ struct CPRReading {
     String toDebugString() const {
         char buf[160];
         snprintf(buf, sizeof(buf),
-            "Rate: %3.0f cpm | Depth: %4.2f cm | Recoil: %s | CCF: %3.0f%% | AudioCue: %d | Time: %3ds | Flags: 0x%02X",
-            rate_cpm, depth_cm, recoil_complete ? "OK" : "LEAN", ccf_percentage, audio_prompt_code, elapsed_seconds, quality_flags);
+            "Rate: %3.0f cpm | Depth: %4.2f cm | Recoil: %s | CCF: %3.0f%% | AudioCue: %d | Time: %3us | Flags: 0x%02X",
+            rate_cpm, depth_cm, recoil_complete ? "OK" : "LEAN", ccf_percentage, audio_prompt_code, (unsigned)elapsed_seconds, quality_flags);
         return String(buf);
     }
 };

@@ -55,14 +55,15 @@ private:
 
     // Executed in FreeRTOS background task context when Flutter writes a command
     void onWrite(BLECharacteristic* pChar) override {
-        std::string rxVal = pChar->getValue();
+        // Universal cross-version extraction: works on both Arduino-ESP32 v2.x (std::string) and v3.x (String)
+        String rxVal = pChar->getValue().c_str();
         if (rxVal.length() > 0 && commandQueue != nullptr) {
             char cmdBuf[64];
             size_t copyLen = rxVal.length() < 63 ? rxVal.length() : 63;
-            memcpy(cmdBuf, rxVal.data(), copyLen);
+            memcpy(cmdBuf, rxVal.c_str(), copyLen);
             cmdBuf[copyLen] = '\0';
             if (xQueueSend(commandQueue, cmdBuf, 0) != pdTRUE) {
-                droppedCommandCount++;
+                droppedCommandCount = droppedCommandCount + 1;
             }
         }
     }

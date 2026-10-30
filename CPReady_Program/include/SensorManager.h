@@ -188,8 +188,8 @@ public:
 
     // Automated boot-time I2C bus diagnostic scanner
     static void scanI2CBus() {
-        Serial.printf("[I2C SCAN] Probing I2C bus (SDA=GPIO%d, SCL=GPIO%d, Speed=%d Hz)...\n",
-            CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN, CPReadyConfig::I2C_CLOCK_SPEED_HZ);
+        Serial.printf("[I2C SCAN] Probing I2C bus (SDA=GPIO%d, SCL=GPIO%d, Speed=%lu Hz)...\n",
+            CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN, (unsigned long)CPReadyConfig::I2C_CLOCK_SPEED_HZ);
         uint8_t count = 0;
         for (uint8_t addr = 1; addr < 127; addr++) {
             Wire.beginTransmission(addr);

@@ -280,9 +280,9 @@ void onReceiveMessage_BLE(String message) {
 
         ble.sendPacket(cfgPkt);
 
-        Serial.printf("[CONFIG] Profile: %s | Depth K: %.2f | StartThresh: %.2fg | RecoilThresh: %.2fg | Duration: %d sec\n",
+        Serial.printf("[CONFIG] Profile: %s | Depth K: %.2f | StartThresh: %.2fg | RecoilThresh: %.2fg | Duration: %u sec\n",
             isBench ? "BENCH_TEST" : "MANIKIN_STANDARD",
-            tracker.getDepthK(), tracker.getCompressionStartThresholdG(), tracker.getRecoilThresholdG(), practiceDurationSec);
+            tracker.getDepthK(), tracker.getCompressionStartThresholdG(), tracker.getRecoilThresholdG(), (unsigned)practiceDurationSec);
     }
     else {
         Serial.println("[BLE CMD] Unhandled command: " + message);
