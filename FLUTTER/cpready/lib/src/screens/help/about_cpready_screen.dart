@@ -148,9 +148,11 @@ class AboutCPReadyScreen extends StatelessWidget {
             const SizedBox(height: 8),
 
             Text(
-              'BNHS-SHS STEM – Allied Health\n'
-              'Research 1 & 2 (Group 6)\n'
-              'A.Y. 2025–2026',
+              'Bataan National High School – Senior High School (BNHS-SHS)\n'
+              'Science, Technology, Engineering, and Mathematics (STEM) Health-Allied\n'
+              'Research I and II\n'
+              'Group 6 – NONAGON\n'
+              'A.Y. 2026–2027',
               textAlign: TextAlign.left,
               style: AppTypography.style(
                 size: 12.5,
