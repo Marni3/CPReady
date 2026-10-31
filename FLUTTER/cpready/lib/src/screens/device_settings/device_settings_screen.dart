@@ -8,6 +8,8 @@
 /// K, so depth readings change with the mode. SET_K and RESET_CONFIG are only
 /// sent after explicit user action; nothing is synced silently.
 
+import '../help/help_screen.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -438,16 +440,30 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
                 children: <Widget>[
                   const FlowBackButton(),
                   SizedBox(width: AppSpacing.flowBackTitleGap),
-                  Expanded(
-                    child: Text(
-                      AppStrings.deviceSettingsTitle,
-                      style: AppTypography.style(
-                        size: AppTypography.flowTitleSize,
-                        weight: AppTypography.headingWeight,
-                        color: AppColors.flowHeadingText,
-                      ),
-                    ),
+              Expanded(
+                child: Text(
+                  AppStrings.deviceSettingsTitle,
+                  style: AppTypography.style(
+                    size: AppTypography.flowTitleSize,
+                    weight: AppTypography.headingWeight,
+                    color: AppColors.flowHeadingText,
                   ),
+                ),
+              ),
+              
+               IconButton(
+                tooltip: 'Help & Information',
+                icon: const Icon(Icons.help_outline_rounded),
+                color: AppColors.flowHeadingText,
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (context) => const HelpScreen(),
+                    ),
+                  );
+                },
+              ),
+
                 ],
               ),
               SizedBox(height: AppSpacing.flowTitleGap),

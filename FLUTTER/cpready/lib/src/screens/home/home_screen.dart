@@ -1,10 +1,7 @@
 /// Tab 1 — Home.
 ///
-/// Layout: header (small logo + "CPREADY"/"Home" + a thin black divider), a
-/// gradient welcome card, the device-connection card, and a dotted info card.
-///
-/// Every visual value (colors, sizes, spacing, strings, durations) comes from
-/// `lib/src/config/`; this file only composes widgets.
+/// Layout: header, welcome card, and device connection card.
+/// Responsive layout for different screen sizes.
 
 import 'dart:async';
 
@@ -24,6 +21,7 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
+
     final double page = AppLayout.pagePaddingFor(
       MediaQuery.sizeOf(context).width,
     );
@@ -32,27 +30,55 @@ class HomeScreen extends StatelessWidget {
       bottom: false,
       child: Column(
         children: <Widget>[
-          ScreenHeader(pageLabel: AppStrings.homeHeaderPage),
+          ScreenHeader(
+            pageLabel: AppStrings.homeHeaderPage,
+          ),
+
           Expanded(
             child: ContentBounds(
               child: LayoutBuilder(
-                builder: (BuildContext context, BoxConstraints constraints) {
+                builder: (
+                  BuildContext context,
+                  BoxConstraints constraints,
+                ) {
+                  final double availableHeight =
+                      constraints.maxHeight;
+
+                  // Responsive spacing.
+                  final double topSpacing =
+                      (availableHeight * 0.04).clamp(16.0, 32.0);
+
+                  final double bottomSpacing =
+                      (availableHeight * 0.04).clamp(16.0, 28.0);
+
+                  final double sectionGap =
+                      (availableHeight * 0.035).clamp(16.0, 26.0);
+
+                  // The device card occupies a moderate portion
+                  // of the available height without being fixed.
+                  final double deviceCardMinHeight =
+                      availableHeight * 0.62;
+
                   return SingleChildScrollView(
-                    padding: EdgeInsets.symmetric(horizontal: page),
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        minHeight: constraints.maxHeight,
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: <Widget>[
-                          const _WelcomeCard(),
-                          SizedBox(height: AppSpacing.homeSectionGap),
-                          _DeviceCard(controller: controller),
-                          SizedBox(height: AppSpacing.homeSectionGap),
-                          const _InfoCard(),
-                        ],
-                      ),
+                    padding: EdgeInsets.only(
+                      left: page,
+                      right: page,
+                      top: topSpacing,
+                      bottom: bottomSpacing,
+                    ),
+                    child: Column(
+                      children: <Widget>[
+                        const _WelcomeCard(),
+
+                        SizedBox(
+                          height: sectionGap,
+                        ),
+
+                        _DeviceCard(
+                          controller: controller,
+                          minHeight: deviceCardMinHeight,
+                        ),
+                      ],
                     ),
                   );
                 },
@@ -69,8 +95,6 @@ class HomeScreen extends StatelessWidget {
 // Welcome card
 // ---------------------------------------------------------------------------
 
-/// Gradient banner: left-aligned "Welcome!" with "Start your training now"
-/// scaled to occupy exactly the same width on a single line.
 class _WelcomeCard extends StatelessWidget {
   const _WelcomeCard();
 
@@ -81,24 +105,32 @@ class _WelcomeCard extends StatelessWidget {
       weight: AppTypography.headingWeight,
       color: AppColors.homeWelcomeText,
     );
+
     final TextStyle subtitleStyle = AppTypography.style(
       size: AppTypography.homeWelcomeSubtitleSize,
       weight: AppTypography.headingWeight,
       color: AppColors.homeWelcomeText,
     );
 
-    // Size the subtitle so its single-line width matches "Welcome!" exactly.
-    final double titleWidth = _measure(AppStrings.homeWelcomeTitle, titleStyle);
+    final double titleWidth = _measure(
+      AppStrings.homeWelcomeTitle,
+      titleStyle,
+    );
+
     final double subtitleWidth = _measure(
       AppStrings.homeWelcomeSubtitle,
       subtitleStyle,
     );
+
     final double subtitleSize =
-        AppTypography.homeWelcomeSubtitleSize * (titleWidth / subtitleWidth);
+        AppTypography.homeWelcomeSubtitleSize *
+        (titleWidth / subtitleWidth);
 
     return Container(
       width: double.infinity,
-      constraints: BoxConstraints(minHeight: AppSizes.homeWelcomeCardMinHeight),
+      constraints: BoxConstraints(
+        minHeight: AppSizes.homeWelcomeCardMinHeight,
+      ),
       alignment: Alignment.centerLeft,
       padding: EdgeInsets.only(
         left: AppSpacing.homeWelcomeInset,
@@ -108,100 +140,158 @@ class _WelcomeCard extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         gradient: AppGradients.brandVertical,
-        borderRadius: BorderRadius.circular(AppSizes.homeCardRadius),
+        borderRadius: BorderRadius.circular(
+          AppSizes.homeCardRadius,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Text(AppStrings.homeWelcomeTitle, style: titleStyle),
-          SizedBox(height: AppSpacing.homeWelcomeGap),
+          Text(
+            AppStrings.homeWelcomeTitle,
+            style: titleStyle,
+          ),
+
+          SizedBox(
+            height: AppSpacing.homeWelcomeGap,
+          ),
+
           Text(
             AppStrings.homeWelcomeSubtitle,
             maxLines: 1,
             softWrap: false,
-            style: subtitleStyle.copyWith(fontSize: subtitleSize),
+            style: subtitleStyle.copyWith(
+              fontSize: subtitleSize,
+            ),
           ),
         ],
       ),
     );
   }
 
-  /// Width of [text] rendered on a single line with [style].
-  static double _measure(String text, TextStyle style) {
+  static double _measure(
+    String text,
+    TextStyle style,
+  ) {
     final TextPainter painter = TextPainter(
-      text: TextSpan(text: text, style: style),
+      text: TextSpan(
+        text: text,
+        style: style,
+      ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
     )..layout();
+
     final double width = painter.width;
+
     painter.dispose();
+
     return width;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Device card
+// Device connection card
 // ---------------------------------------------------------------------------
 
-/// White card with a brand-blue border that reflects the BLE connection state.
 class _DeviceCard extends StatelessWidget {
-  const _DeviceCard({required this.controller});
+  const _DeviceCard({
+    required this.controller,
+    required this.minHeight,
+  });
 
   final BleController controller;
+  final double minHeight;
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: controller,
-      builder: (BuildContext context, Widget? _) {
+      builder: (
+        BuildContext context,
+        Widget? _,
+      ) {
         final bool connected = controller.isConnected;
         final bool busy = controller.isBusy;
 
         return Container(
           width: double.infinity,
-          padding: EdgeInsets.all(AppSpacing.homeCardPadding),
+
+          constraints: BoxConstraints(
+            minHeight: minHeight,
+          ),
+
+          alignment: Alignment.center,
+
+          padding: EdgeInsets.all(
+            AppSpacing.homeCardPadding,
+          ),
+
           decoration: BoxDecoration(
             color: AppColors.surfaceCard,
-            borderRadius: BorderRadius.circular(AppSizes.homeCardRadius),
+            borderRadius: BorderRadius.circular(
+              AppSizes.homeCardRadius,
+            ),
             border: Border.all(
               color: AppColors.homeCardBorder,
               width: AppSizes.homeCardBorderWidth,
             ),
           ),
+
           child: (busy || connected)
               ? _ConnectingContent(
                   connected: connected,
-                  onCalibrate: () =>
-                      unawaited(_openManikinCalibration(context)),
-                  onSettings: () => context.pushNamed(AppRoutes.deviceSettings),
+                  onCalibrate: () => unawaited(
+                    _openManikinCalibration(context),
+                  ),
+                  onSettings: () => context.pushNamed(
+                    AppRoutes.deviceSettings,
+                  ),
                 )
-              : _NotConnectedContent(controller: controller),
+              : _NotConnectedContent(
+                  controller: controller,
+                ),
         );
       },
     );
   }
 }
 
-/// Nothing paired yet: illustration, prompt, and the connect button.
+// ---------------------------------------------------------------------------
+// Not connected
+// ---------------------------------------------------------------------------
+
 class _NotConnectedContent extends StatelessWidget {
-  const _NotConnectedContent({required this.controller});
+  const _NotConnectedContent({
+    required this.controller,
+  });
 
   final BleController controller;
 
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Padding(
-          padding: EdgeInsets.all(AppSpacing.homeBluetoothImagePadding),
-          child: Image(
-            image: AssetImage(AppAssets.bluetoothUnconnected),
-            width: AppSizes.homeBluetoothImageSize,
-            height: AppSizes.homeBluetoothImageSize,
+          padding: EdgeInsets.all(
+            AppSpacing.homeBluetoothImagePadding,
           ),
+         child: Image(
+          image: AssetImage(
+            AppAssets.bluetoothUnconnected,
+          ),
+          width: AppSizes.homeBluetoothImageSize * 1.50,
+          height: AppSizes.homeBluetoothImageSize * 1.50,
+          fit: BoxFit.contain,
         ),
-        SizedBox(height: AppSpacing.item),
+        ),
+
+        SizedBox(
+          height: AppSpacing.item + 24,
+        ),
+
         Text(
           AppStrings.homeDeviceNoneTitle,
           textAlign: TextAlign.center,
@@ -211,7 +301,11 @@ class _NotConnectedContent extends StatelessWidget {
             color: AppColors.homeCardText,
           ),
         ),
-        SizedBox(height: AppSpacing.small),
+
+        SizedBox(
+          height: AppSpacing.small,
+        ),
+
         Text(
           AppStrings.homeDeviceNoneSubtitle,
           textAlign: TextAlign.center,
@@ -221,7 +315,11 @@ class _NotConnectedContent extends StatelessWidget {
             color: AppColors.homeCardText,
           ),
         ),
-        SizedBox(height: AppSpacing.item),
+
+        SizedBox(
+          height: AppSpacing.item,
+        ),
+
         _GradientButton(
           label: AppStrings.homeDeviceConnect,
           onPressed: controller.connect,
@@ -231,8 +329,10 @@ class _NotConnectedContent extends StatelessWidget {
   }
 }
 
-/// Connecting / connected: title, instructions, illustration, status label,
-/// and — once connected — the manikin calibration entry point.
+// ---------------------------------------------------------------------------
+// Connecting / connected
+// ---------------------------------------------------------------------------
+
 class _ConnectingContent extends StatelessWidget {
   const _ConnectingContent({
     required this.connected,
@@ -247,9 +347,12 @@ class _ConnectingContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Text(
-          AppStrings.homeConnectingTitle,
+          connected
+              ? 'DEVICE CONNECTED'
+              : 'CONNECTING DEVICE',
           textAlign: TextAlign.center,
           style: AppTypography.style(
             size: AppTypography.homeConnectingTitleSize,
@@ -257,7 +360,12 @@ class _ConnectingContent extends StatelessWidget {
             color: AppColors.brandBlue,
           ),
         ),
-        SizedBox(height: AppSpacing.small),
+
+        SizedBox(
+          height: AppSpacing.small,
+        ),
+
+        if (!connected)
         Text(
           AppStrings.homeConnectingInstruction,
           textAlign: TextAlign.center,
@@ -267,16 +375,31 @@ class _ConnectingContent extends StatelessWidget {
             color: AppColors.homeCardText,
           ),
         ),
-        SizedBox(height: AppSpacing.item),
+
+        SizedBox(
+          height: AppSpacing.item,
+        ),
+
         Padding(
-          padding: EdgeInsets.all(AppSpacing.homeBluetoothImagePadding),
+          padding: EdgeInsets.all(
+            AppSpacing.homeBluetoothImagePadding,
+          ),
           child: Image(
-            image: AssetImage(AppAssets.bluetoothConnected),
-            width: AppSizes.homeBluetoothImageSize,
-            height: AppSizes.homeBluetoothImageSize,
+            image: AssetImage(
+              connected
+                ? AppAssets.bluetoothConnected
+                : AppAssets.bluetoothUnconnected,
+            ),
+            width: AppSizes.homeBluetoothImageSize * 1.30,
+            height: AppSizes.homeBluetoothImageSize * 1.30,
+            fit: BoxFit.contain,
           ),
         ),
-        SizedBox(height: AppSpacing.item),
+
+        SizedBox(
+          height: AppSpacing.item,
+        ),
+
         if (connected) ...<Widget>[
           Text(
             AppStrings.homeConnected,
@@ -286,13 +409,21 @@ class _ConnectingContent extends StatelessWidget {
               color: AppColors.connected,
             ),
           ),
-          SizedBox(height: AppSpacing.item),
+
+          SizedBox(
+            height: AppSpacing.item,
+          ),
+
           FlatActionButton(
             label: AppStrings.homeManikinCalibration,
             onPressed: onCalibrate,
           ),
+
           if (AppFeatures.enableDeviceSettings) ...<Widget>[
-            SizedBox(height: AppSpacing.flowActionStackGap),
+            SizedBox(
+              height: AppSpacing.flowActionStackGap,
+            ),
+
             FlatActionButton(
               label: AppStrings.homeDeviceSettings,
               onPressed: onSettings,
@@ -305,12 +436,16 @@ class _ConnectingContent extends StatelessWidget {
   }
 }
 
-/// "Scanning." → "Scanning.." → "Scanning..." on a repeat.
+// ---------------------------------------------------------------------------
+// Scanning label
+// ---------------------------------------------------------------------------
+
 class _ScanningLabel extends StatefulWidget {
   const _ScanningLabel();
 
   @override
-  State<_ScanningLabel> createState() => _ScanningLabelState();
+  State<_ScanningLabel> createState() =>
+      _ScanningLabelState();
 }
 
 class _ScanningLabelState extends State<_ScanningLabel> {
@@ -320,10 +455,17 @@ class _ScanningLabelState extends State<_ScanningLabel> {
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(AppDurations.homeScanInterval, (Timer _) {
-      if (!mounted) return;
-      setState(() => _dots = _dots % 3 + 1);
-    });
+
+    _timer = Timer.periodic(
+      AppDurations.homeScanInterval,
+      (Timer _) {
+        if (!mounted) return;
+
+        setState(() {
+          _dots = _dots % 3 + 1;
+        });
+      },
+    );
   }
 
   @override
@@ -346,52 +488,22 @@ class _ScanningLabelState extends State<_ScanningLabel> {
 }
 
 // ---------------------------------------------------------------------------
-// Info card
+// Manikin calibration
 // ---------------------------------------------------------------------------
 
-/// White card with a brand-blue dashed border and the CPReady blurb.
-class _InfoCard extends StatelessWidget {
-  const _InfoCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return DottedBorder(
-      color: AppColors.homeCardBorder,
-      strokeWidth: AppSizes.homeCardBorderWidth,
-      radius: AppSizes.homeCardRadius,
-      dash: AppSizes.homeDottedDash,
-      gap: AppSizes.homeDottedGap,
-      padding: EdgeInsets.all(AppSpacing.homeCardPadding),
-      child: Text(
-        AppStrings.homeInfoBody,
-        textAlign: TextAlign.center,
-        style: AppTypography.style(
-          size: AppTypography.homeInfoSize,
-          weight: FontWeight.normal,
-          color: AppColors.homeCardText,
-          height: 1.6,
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Entry-point guards
-// ---------------------------------------------------------------------------
-
-/// Manikin depth calibration is only meaningful on the MANIKIN profile.
-///
-/// The local settings row is the app's best knowledge when firmware has no
-/// read-back. If it says BENCH, send the user to Device Settings instead of
-/// starting a calibration against the wrong thresholds.
-Future<void> _openManikinCalibration(BuildContext context) async {
+Future<void> _openManikinCalibration(
+  BuildContext context,
+) async {
   DeviceSettings? settings;
+
   try {
-    settings = await AppScope.history(context).loadDeviceSettings();
+    settings = await AppScope.history(
+      context,
+    ).loadDeviceSettings();
   } catch (error) {
-    // No local fallback: let the existing calibration flow handle the device.
-    debugPrint('Device settings load failed: $error');
+    debugPrint(
+      'Device settings load failed: $error',
+    );
   }
 
   if (!context.mounted) return;
@@ -400,37 +512,57 @@ Future<void> _openManikinCalibration(BuildContext context) async {
     final bool? openSettings = await showDialog<bool>(
       context: context,
       builder: (BuildContext dialogContext) => AlertDialog(
-        title: const Text(AppStrings.homeCalibrationRequiresManikinTitle),
-        content: const Text(AppStrings.homeCalibrationRequiresManikinBody),
+        title: const Text(
+          AppStrings.homeCalibrationRequiresManikinTitle,
+        ),
+        content: const Text(
+          AppStrings.homeCalibrationRequiresManikinBody,
+        ),
         actions: <Widget>[
           TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text(AppStrings.actionCancel),
+            onPressed: () => Navigator.of(
+              dialogContext,
+            ).pop(false),
+            child: const Text(
+              AppStrings.actionCancel,
+            ),
           ),
+
           TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text(AppStrings.homeCalibrationRequiresManikinAction),
+            onPressed: () => Navigator.of(
+              dialogContext,
+            ).pop(true),
+            child: const Text(
+              AppStrings.homeCalibrationRequiresManikinAction,
+            ),
           ),
         ],
       ),
     );
 
     if (openSettings == true && context.mounted) {
-      context.pushNamed(AppRoutes.deviceSettings);
+      context.pushNamed(
+        AppRoutes.deviceSettings,
+      );
     }
+
     return;
   }
 
-  context.pushNamed(AppRoutes.manikinCalibration);
+  context.pushNamed(
+    AppRoutes.manikinCalibration,
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Shared bits
+// Gradient button
 // ---------------------------------------------------------------------------
 
-/// Full-width brand-gradient button with white bold text.
 class _GradientButton extends StatelessWidget {
-  const _GradientButton({required this.label, required this.onPressed});
+  const _GradientButton({
+    required this.label,
+    required this.onPressed,
+  });
 
   final String label;
   final VoidCallback onPressed;
@@ -439,20 +571,28 @@ class _GradientButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      constraints: BoxConstraints(minHeight: AppSizes.homeButtonHeight),
+      constraints: BoxConstraints(
+        minHeight: AppSizes.homeButtonHeight,
+      ),
       decoration: BoxDecoration(
         gradient: AppGradients.brandVertical,
-        borderRadius: BorderRadius.circular(AppSizes.homeButtonRadius),
+        borderRadius: BorderRadius.circular(
+          AppSizes.homeButtonRadius,
+        ),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(AppSizes.homeButtonRadius),
+          borderRadius: BorderRadius.circular(
+            AppSizes.homeButtonRadius,
+          ),
           onTap: onPressed,
           child: Padding(
             padding: EdgeInsets.symmetric(
-              horizontal: AppSpacing.homeButtonLabelInsetH,
-              vertical: AppSpacing.flowActionLabelInsetV,
+              horizontal:
+                  AppSpacing.homeButtonLabelInsetH,
+              vertical:
+                  AppSpacing.flowActionLabelInsetV,
             ),
             child: Center(
               child: Text(

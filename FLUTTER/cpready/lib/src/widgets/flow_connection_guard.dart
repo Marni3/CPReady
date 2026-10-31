@@ -2,8 +2,7 @@
 ///
 /// Every step up to the countdown is wrapped in [FlowConnectionGuard]: while the
 /// link is not connected — including a drop after the flow has started — the app
-/// shows the "connection lost" notice and returns to the Home tab, so a session
-/// can never carry on against a board that is not there.
+/// shows the connection notice and returns to the Home tab.
 ///
 /// Live Practice is not wrapped: a running session has state of its own to shut
 /// down, so it calls [abortFlowToHome] itself.
@@ -16,8 +15,9 @@ import 'package:go_router/go_router.dart';
 import '../config/config.dart';
 import '../core/app_scope.dart';
 import '../core/ble/ble_controller.dart';
+import '../core/tab_state.dart';
 
-/// Shows the link-lost notice, then closes the flow and returns to Home.
+/// Shows the connection notice, then closes the flow and returns to Home.
 Future<void> abortFlowToHome(BuildContext context) async {
   await showDialog<void>(
     context: context,
@@ -34,12 +34,19 @@ Future<void> abortFlowToHome(BuildContext context) async {
   );
 
   if (!context.mounted) return;
+
+  // Explicitly select the Home tab before navigating.
+  selectedTabNotifier.value = 0;
+
   context.go(AppRoutes.home);
 }
 
 /// Returns to Home as soon as the BLE link is gone.
 class FlowConnectionGuard extends StatefulWidget {
-  const FlowConnectionGuard({super.key, required this.child});
+  const FlowConnectionGuard({
+    super.key,
+    required this.child,
+  });
 
   /// The flow screen being guarded.
   final Widget child;
@@ -56,21 +63,29 @@ class _FlowConnectionGuardState extends State<FlowConnectionGuard> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+
     if (_initialized) return;
+
     _initialized = true;
 
     final controller = AppScope.of(context);
     _controller = controller;
+
     controller.addListener(_check);
+
     // The screen may also open on an already-dropped link.
     WidgetsBinding.instance.addPostFrameCallback((_) => _check());
   }
 
   void _check() {
     if (_aborted || !mounted) return;
+
     final controller = _controller;
+
     if (controller == null || controller.isConnected) return;
+
     _aborted = true;
+
     unawaited(abortFlowToHome(context));
   }
 
