@@ -66,8 +66,8 @@ class AppStrings {
   /// Device card — nothing connected yet.
   static const String homeDeviceNoneTitle = 'No device connected yet';
   static const String homeDeviceNoneSubtitle =
-      'Pair your device now and start training!';
-  static const String homeDeviceConnect = 'Connect your device now!';
+      'Connect your CPReady device to begin';
+  static const String homeDeviceConnect = 'Connect Device';
 
   /// Device card — connecting / scanning.
   static const String homeConnectingTitle = 'CONNECT DEVICE';
@@ -105,7 +105,7 @@ class AppStrings {
 
   static const String practiceHeaderPage = 'Practice';
   static const String practiceTitle = 'Practice';
-  static const String practiceSubtitle = 'Choose an option below.';
+  static const String practiceSubtitle = 'Choose an option below';
   static const String practiceGuide = 'Step-by-step Guide';
   static const String practiceGuideBody =
       'Tap to view the basic step-by-step guide for hands-only CPR.';
@@ -286,7 +286,7 @@ class AppStrings {
   /// Instruction inside the panel; it wraps to the card's width.
   static const String handPlacementInstruction = 'Place both hands on chest';
 
-  static const String handPlacementBegin = 'Begin Session';
+  static const String handPlacementBegin = 'Continue';
 
   // -----------------------------------------------------------------------
   // Calibration
@@ -298,7 +298,7 @@ class AppStrings {
   static const String calibrationReady = 'Baseline ready.';
   static const String calibrationError = 'Calibration problem.';
   static const String calibrationNotReady =
-      'Not ready. Keep hands still and release downward pressure.';
+      'Keep hands still and release downward pressure.';
   static const String calibrationTimeout =
       'Calibration timed out. Keep hands still and try again.';
   static const String calibrationRejected =
@@ -509,7 +509,7 @@ class AppStrings {
   // -----------------------------------------------------------------------
 
   /// Notice shown when a flow screen finds the board gone.
-  static const String flowLinkLostTitle = 'Connection lost';
+  static const String flowLinkLostTitle = 'No device connected';
   static const String flowLinkLostBody =
       'The CPReady device is not connected, so the practice session cannot '
       'continue. Reconnect from the Home screen and start again.';
