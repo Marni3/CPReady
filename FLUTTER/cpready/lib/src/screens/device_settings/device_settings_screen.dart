@@ -44,6 +44,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
   bool _profileSaving = false;
   bool _kSaving = false;
   bool _resetting = false;
+  bool _i2cSaving = false;
 
   /// True only after a Type 6 report populated the current values.
   bool _readBackSupported = false;
@@ -258,6 +259,60 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
           ? AppStrings.deviceSettingsKSent
           : AppStrings.deviceSettingsLocalSaveFailed;
       _statusIsError = !saved;
+    });
+  }
+
+  /// Sets the I2C bus speed (100 kHz standard or 400 kHz fast) after confirmation.
+  /// The firmware writes to NVS, acknowledges, delays 300 ms, and resets the ESP32.
+  Future<void> _setI2CSpeed(int khz) async {
+    if (_i2cSaving || _refreshing || !_controller.isConnected) return;
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          title: const Text(AppStrings.deviceSettingsI2CWarningTitle),
+          content: const Text(AppStrings.deviceSettingsI2CWarningMessage),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Confirm & Reset'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _i2cSaving = true;
+      _status = AppStrings.deviceSettingsI2CSending;
+      _statusIsError = false;
+    });
+
+    try {
+      await _controller.sendCommand(AppBleConfig.commandSetI2C(khz));
+    } catch (error) {
+      debugPrint('SET_I2C failed: $error');
+      if (!mounted) return;
+      setState(() {
+        _i2cSaving = false;
+        _status = 'Could not send I2C speed command.';
+        _statusIsError = true;
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _i2cSaving = false;
+      _status = 'I2C speed command sent. ESP32 is resetting... Reconnect when ready.';
+      _statusIsError = false;
     });
   }
 
@@ -508,6 +563,20 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
                     if (_kError != null) setState(() => _kError = null);
                   },
                   onSetK: _setK,
+                ),
+                SizedBox(height: AppSpacing.section),
+                _I2CSpeedPanel(
+                  saving: _i2cSaving,
+                  enabled:
+                      connected &&
+                      !_refreshing &&
+                      !_profileSaving &&
+                      !_kSaving &&
+                      !_resetting &&
+                      !_i2cSaving,
+                  sectionStyle: _sectionStyle(),
+                  bodyStyle: _bodyStyle(),
+                  onSpeedSelected: _setI2CSpeed,
                 ),
                 SizedBox(height: AppSpacing.section),
                 _ResetPanel(
@@ -851,3 +920,75 @@ class _SettingRow extends StatelessWidget {
     );
   }
 }
+
+class _I2CSpeedPanel extends StatelessWidget {
+  const _I2CSpeedPanel({
+    required this.saving,
+    required this.enabled,
+    required this.sectionStyle,
+    required this.bodyStyle,
+    required this.onSpeedSelected,
+  });
+
+  final bool saving;
+  final bool enabled;
+  final TextStyle sectionStyle;
+  final TextStyle bodyStyle;
+  final ValueChanged<int> onSpeedSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return FlowPanel(
+      padding: EdgeInsets.all(AppSpacing.card),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(AppStrings.deviceSettingsI2CSection, style: sectionStyle),
+          SizedBox(height: AppSpacing.small),
+          Text(AppStrings.deviceSettingsI2CHelper, style: bodyStyle),
+          SizedBox(height: AppSpacing.item),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: enabled && !saving ? () => onSpeedSelected(100) : null,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                  ),
+                  child: const Text(
+                    '100 kHz\n(Recommended)',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: enabled && !saving ? () => onSpeedSelected(400) : null,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                  ),
+                  child: const Text(
+                    '400 kHz\n(Fast Mode)',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (saving) ...<Widget>[
+            const SizedBox(height: 12),
+            const Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+

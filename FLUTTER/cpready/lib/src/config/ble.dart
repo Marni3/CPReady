@@ -63,6 +63,12 @@ class AppBleConfig {
   static String commandSetK(double depthK) =>
       'SET_K:${depthK.toStringAsFixed(2)}';
 
+  /// Resets the calibration factor K to default (11.20).
+  static const String commandResetK = 'RESET_K';
+
+  /// Sets the I2C bus speed (100 kHz standard or 400 kHz fast) and resets the ESP32.
+  static String commandSetI2C(int khz) => 'SET_I2C:$khz';
+
   /// Clears the firmware's flash configuration and restores factory defaults.
   static const String commandResetConfig = 'RESET_CONFIG';
 
@@ -119,7 +125,7 @@ class AppBleConfig {
 
   /// Accepted SET_K / config-report range.
   static const double depthKMin = 1.0;
-  static const double depthKMax = 30.0;
+  static const double depthKMax = 100.0;
 
   // -----------------------------------------------------------------------
   // Packet validation (see SOFTWARE_DEVELOPER_GUIDE.md §2.4)

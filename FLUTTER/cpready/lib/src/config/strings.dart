@@ -250,13 +250,13 @@ class AppStrings {
 
   static const String deviceSettingsKSection = 'Set depth K';
   static const String deviceSettingsKHelper =
-      'Enter a value from 1.00 to 30.00. SET_K writes and persists it on the '
+      'Enter a value from 1.00 to 100.00. SET_K writes and persists it on the '
       'device.';
   static const String deviceSettingsKHint = 'e.g. 11.20';
   static const String deviceSettingsKSet = 'Set K on Device';
   static const String deviceSettingsKSending = 'Sending K…';
   static const String deviceSettingsKInvalid =
-      'Enter a K value from 1.00 to 30.00.';
+      'Enter a K value from 1.00 to 100.00.';
   static const String deviceSettingsKSent =
       'K sent to the device. Refresh to verify it when read-back is supported.';
   static const String deviceSettingsKFailed = 'Could not send K to the device.';
@@ -272,6 +272,16 @@ class AppStrings {
       'Hold to reset device configuration';
   static const String deviceSettingsResetDone =
       'Device configuration reset. Recalibrate the manikin before a session.';
+  static const String deviceSettingsI2CSection = 'I2C Bus Speed';
+  static const String deviceSettingsI2CHelper =
+      'Select I2C clock speed. 100 kHz standard mode provides greater noise immunity on jumper wires.';
+  static const String deviceSettingsI2CWarningTitle = 'Change I2C Speed & Reset?';
+  static const String deviceSettingsI2CWarningMessage =
+      'Changing this option will reset the ESP32 and need reconnection. Do you want to proceed?';
+  static const String deviceSettingsI2C100 = '100 kHz (Standard)';
+  static const String deviceSettingsI2C400 = '400 kHz (Fast Mode)';
+  static const String deviceSettingsI2CSending = 'Applying I2C speed and resetting device...';
+
   static const String deviceSettingsResetFailed =
       'Could not reset the device configuration.';
 
