@@ -220,6 +220,12 @@ void onReceiveMessage_BLE(String message) {
         if (parseSeconds(message.substring(9), sec) && sec <= 3600) {
             practiceDurationSec = sec;
             Serial.printf("[CONFIG] Session duration set to %u seconds (0 = manual stop).\n", (unsigned)practiceDurationSec);
+            if (sec == CPReadyConfig::CALIBRATION_RUN_DURATION_SEC) {
+                // When 15s calibration duration is configured, always ensure default baseline K is restored
+                tracker.resetCalibrationToDefault();
+                saveDepthK(tracker.getDepthK());
+                Serial.printf("[CALIB] 15s calibration selected: depth K reset to factory baseline %.2f\n", tracker.getDepthK());
+            }
         } else {
             Serial.println("[CONFIG] Invalid SET_TIME value ignored.");
         }
@@ -232,6 +238,24 @@ void onReceiveMessage_BLE(String message) {
             saveDepthK(k);
             Serial.printf("[NVS] Depth calibration scalar K updated to %.2f (persisted to flash)\n", k);
         }
+    }
+    else if (message == "RESET_K" || message == "CALIBRATE_RESET") {
+        if (rejectConfigChange(message)) return;
+        tracker.resetCalibrationToDefault();
+        saveDepthK(tracker.getDepthK());
+        Serial.printf("[CALIB] Depth K reset to profile default: %.2f (persisted to flash)\n", tracker.getDepthK());
+        ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
+    }
+    else if (message.startsWith("SET_I2C:")) {
+        if (rejectConfigChange(message)) return;
+        uint32_t speed = message.substring(8).toInt();
+        uint32_t hz = (speed >= 400) ? 400000 : 100000;
+        prefs.putUInt("i2c_speed", hz);
+        sensors.setI2CSpeed(hz);
+        Serial.printf("[CONFIG] I2C speed set to %lu Hz in flash. Acknowledging and restarting ESP32...\n", (unsigned long)hz);
+        ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
+        delay(300); // Allow BLE packet to be flushed before rebooting
+        ESP.restart();
     }
     else if (message == "SET_PROFILE:BENCH") {
         if (rejectConfigChange(message)) return;
@@ -353,6 +377,10 @@ void setup() {
     Serial.println("[DEMO] *** DEMO / SIMULATION MODE ENABLED ***");
     Serial.println("[DEMO] Emulating CPR metrics for mobile app testing.");
     #else
+    uint32_t savedI2CSpeed = prefs.getUInt("i2c_speed", CPReadyConfig::I2C_CLOCK_SPEED_HZ);
+    if (savedI2CSpeed != 100000 && savedI2CSpeed != 400000) savedI2CSpeed = 100000;
+    sensors.setI2CSpeed(savedI2CSpeed);
+
     if (!sensors.begin()) {
         #if USE_DUAL_MPU
         Serial.println("[ERROR] Failed to initialize the MPU6050 sensors! Check the PCA9548A (0x70) or the 0x68/0x69 wiring.");
@@ -483,14 +511,15 @@ void loop() {
         #else
         float netAccel = 0.0f;
         float rawNetAccel = 0.0f;
-        bool sampled = sensors.sample100Hz(netAccel, rawNetAccel, nowMicros);
+        float dtSeconds = 0.01f;
+        bool sampled = sensors.sample100Hz(netAccel, rawNetAccel, dtSeconds, nowMicros);
         if (sensors.hasFault()) {
             enterSensorFault();
             return;
         }
         if (sampled) {
-            // Filtered sample detects strokes; the raw sample is integrated for depth
-            bool strokeCompleted = tracker.processSample(netAccel, rawNetAccel, now);
+            // Filtered sample detects strokes; the raw sample is integrated with true dt for depth
+            bool strokeCompleted = tracker.processSample(netAccel, rawNetAccel, now, dtSeconds);
 
             // Transmit immediately upon stroke completion, or throttle at configured interval
             if (strokeCompleted || (now - lastBleNotifyMillis >= CPReadyConfig::BLE_NOTIFY_INTERVAL_MS)) {
@@ -521,10 +550,6 @@ void loop() {
         delay(5);
     }
 
-    // Yield CPU slice to feed FreeRTOS BLE stack and IDLE watchdog without adding a 1ms+ sleep tick during sessions
-    if (state != DeviceState::ACTIVE_SESSION && state != DeviceState::CALIBRATING) {
-        delay(1);
-    } else {
-        taskYIELD();
-    }
+    // Yield CPU slice to feed FreeRTOS BLE stack and IDLE watchdog
+    delay(1);
 }

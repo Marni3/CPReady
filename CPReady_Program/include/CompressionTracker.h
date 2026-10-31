@@ -220,9 +220,11 @@ public:
             return false;
         }
         float ratio = targetDepthCm / lastFinalSummary.avg_depth_cm;
+        // Physically plausible calibration adjustment range (0.40x to 2.50x)
+        if (ratio < 0.40f || ratio > 2.50f) {
+            return false;
+        }
         float newK = depthCalibrationK * ratio;
-        if (newK < CPReadyConfig::DEPTH_K_MIN) newK = CPReadyConfig::DEPTH_K_MIN;
-        if (newK > CPReadyConfig::DEPTH_K_MAX) newK = CPReadyConfig::DEPTH_K_MAX;
 
         if (newK >= CPReadyConfig::DEPTH_K_MIN && newK <= CPReadyConfig::DEPTH_K_MAX) {
             setDepthK(newK);
@@ -231,6 +233,16 @@ public:
             return true;
         }
         return false;
+    }
+
+    void resetSummaryCalibrated() { summaryAlreadyCalibrated = false; }
+
+    void resetCalibrationToDefault() {
+        float defaultK = (currentProfile == CPReadyConfig::KinematicProfile::BENCH_TEST)
+            ? CPReadyConfig::BENCH_DEPTH_CALIBRATION_K
+            : CPReadyConfig::DEPTH_CALIBRATION_K;
+        setDepthK(defaultK);
+        summaryAlreadyCalibrated = false;
     }
 
     void setCompressionStartThresholdG(float g) {
@@ -261,10 +273,10 @@ public:
     // netAccel is the low-pass filtered signal, used to detect strokes. rawNetAccel is
     // the same sample before filtering, used for depth: the filter would shrink and
     // delay the motion it integrates.
-    bool processSample(float netAccel, float rawNetAccel, uint32_t currentMillis) {
+    bool processSample(float netAccel, float rawNetAccel, uint32_t currentMillis, float dtSeconds = 0.01f) {
         if (sessionStartMillis == 0 || pausedAtMillis != 0) return false;
 
-        depthEstimator.push(rawNetAccel);
+        depthEstimator.push(rawNetAccel, dtSeconds);
         const uint32_t sampleIndex = depthEstimator.sampleCount() - 1;
 
         uint32_t totalSessionTime = currentMillis - sessionStartMillis;
@@ -449,12 +461,13 @@ public:
                         validRateCount++;
                     }
 
-                    // Stroke-Qualified Mean accumulation: exclude first-strokes, unmeasured
-                    // strokes and clamped limit saturation
-                    if (depthKnown && !(flags & CADENCE_FLAG_FIRST_STROKE) &&
-                        reading.depth_cm < CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
-                        validDepthSum += reading.depth_cm;
-                        validStrokeCount++;
+                    // Stroke-Qualified Mean accumulation: exclude unmeasured strokes
+                    // and physical ceiling clamp artifacts. Valid post-pause strokes are included.
+                    if (depthKnown && reading.depth_cm < CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
+                        if (totalStrokeCount > 1 || reading.depth_cm >= CPReadyConfig::MIN_STROKE_DEPTH_CM) {
+                            validDepthSum += reading.depth_cm;
+                            validStrokeCount++;
+                        }
                     }
 
                     // 7. Audio Coaching Engine Evaluation

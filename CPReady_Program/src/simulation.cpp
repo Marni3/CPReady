@@ -307,8 +307,20 @@ static void handleBleCommand(String message) {
         const long seconds = numeric ? digits.toInt() : -1;
         if (seconds >= 0 && seconds <= 3600) {
             simPracticeDurationSec = (uint32_t)seconds;
+            if (simPracticeDurationSec == 15) {
+                simTracker.resetCalibrationToDefault();
+                simTracker.resetSummaryCalibrated();
+                Serial.printf("[CALIB] 15s session armed: K reset to default (%.2f)\n", simTracker.getDepthK());
+            }
             Serial.printf("[CONFIG] Session duration set to %u s (0 = manual stop).\n", (unsigned)simPracticeDurationSec);
         }
+    }
+    else if (message == "RESET_K" || message == "CALIBRATE_RESET") {
+        simTracker.resetCalibrationToDefault();
+        simPrefs.remove("k_manikin");
+        simPrefs.remove("k_bench");
+        Serial.printf("[CALIB] Depth K reset to default (%.2f)\n", simTracker.getDepthK());
+        simBle.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
     }
     else if (message.startsWith("SET_K:")) {
         if (simRejectConfigChange(message)) return;

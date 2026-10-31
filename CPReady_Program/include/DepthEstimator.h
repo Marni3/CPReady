@@ -25,10 +25,23 @@ public:
     // first stroke (up to the 2 s stroke watchdog) plus its resting lead-in.
     static constexpr uint16_t CAPACITY = 256;
 
+    struct Sample {
+        float rawNetG;
+        float dt; // elapsed time in seconds for this sample
+    };
+
     void reset() { count = 0; }
 
-    void push(float rawNetG) {
-        buffer[count % CAPACITY] = rawNetG;
+    static constexpr float nominalDt() {
+        return 1.0f / (float)CPReadyConfig::SAMPLING_RATE_HZ;
+    }
+
+    void push(float rawNetG, float dtSeconds = nominalDt()) {
+        // Guard against abnormal dt (e.g. post-pause or clock glitch)
+        if (dtSeconds <= 0.001f || dtSeconds > 0.050f) {
+            dtSeconds = nominalDt();
+        }
+        buffer[count % CAPACITY] = { rawNetG, dtSeconds };
         count++;
     }
 
@@ -43,28 +56,38 @@ public:
      * offset and tilt leakage; removing the mean velocity supplies the unknown velocity
      * at the window edge. Neither edge needs to be at rest, which is why the window can
      * run between two stroke completions (mid-upstroke).
+     *
+     * Double integration uses discrete Riemann sums with each sample's true dt,
+     * so depth is invariant to sample rate fluctuations and loop jitter.
      */
     bool closedCycleDepthCm(uint32_t from, uint32_t to, float& outCm) const {
         if (!available(from, to) || (to - from) < MIN_CYCLE_SAMPLES) return false;
-        const float n = (float)(to - from);
 
-        float meanA = 0.0f;
-        for (uint32_t i = from; i < to; i++) meanA += at(i);
-        meanA /= n;
+        float totalTime = 0.0f;
+        float weightedASum = 0.0f;
+        for (uint32_t i = from; i < to; i++) {
+            const Sample& s = atSample(i);
+            totalTime += s.dt;
+            weightedASum += s.rawNetG * s.dt;
+        }
+        if (totalTime <= 0.05f) return false;
+        const float meanA = weightedASum / totalTime;
 
         float v = 0.0f;
-        float sumV = 0.0f;
+        float weightedVSum = 0.0f;
         for (uint32_t i = from; i < to; i++) {
-            v += (at(i) - meanA) * DT;
-            sumV += v;
+            const Sample& s = atSample(i);
+            v += (s.rawNetG - meanA) * s.dt;
+            weightedVSum += v * s.dt;
         }
-        const float meanV = sumV / n;
+        const float meanV = weightedVSum / totalTime;
 
         v = 0.0f;
         float x = 0.0f, lo = 0.0f, hi = 0.0f;
         for (uint32_t i = from; i < to; i++) {
-            v += (at(i) - meanA) * DT;
-            x += (v - meanV) * DT;
+            const Sample& s = atSample(i);
+            v += (s.rawNetG - meanA) * s.dt;
+            x += (v - meanV) * s.dt;
             if (x < lo) lo = x;
             if (x > hi) hi = x;
         }
@@ -80,9 +103,8 @@ public:
      * crosses the threshold after the push has begun. The resting level just before
      * that is taken as zero acceleration.
      *
-     * Returns false when the chest was not actually still before the push (for example
-     * the previous stroke went undetected): integrating from a moving start gives a
-     * wrong depth, and no depth is better than a wrong one.
+     * REST_LIMIT_G (0.15g) allows normal human resting hand tremor and manikin spring
+     * noise without declaring motion.
      */
     bool fromRestDepthCm(uint32_t onset, uint32_t to, float& outCm) const {
         if (to <= onset || to > count) return false;
@@ -93,17 +115,26 @@ public:
         uint32_t restFrom = start >= REST_SAMPLES ? start - REST_SAMPLES : 0;
         if (restFrom < oldest()) restFrom = oldest();
         if (start - restFrom < MIN_REST_SAMPLES) return false;
-        float baseline = 0.0f;
-        for (uint32_t i = restFrom; i < start; i++) baseline += at(i);
-        baseline /= (float)(start - restFrom);
+
+        float restTime = 0.0f;
+        float restSum = 0.0f;
         for (uint32_t i = restFrom; i < start; i++) {
-            if (fabsf(at(i) - baseline) > REST_LIMIT_G) return false;
+            const Sample& s = atSample(i);
+            restSum += s.rawNetG * s.dt;
+            restTime += s.dt;
+        }
+        if (restTime <= 0.001f) return false;
+        const float baseline = restSum / restTime;
+
+        for (uint32_t i = restFrom; i < start; i++) {
+            if (fabsf(atSample(i).rawNetG - baseline) > REST_LIMIT_G) return false;
         }
 
         float v = 0.0f, x = 0.0f, lo = 0.0f, hi = 0.0f;
         for (uint32_t i = start; i < to; i++) {
-            v += (at(i) - baseline) * DT;
-            x += v * DT;
+            const Sample& s = atSample(i);
+            v += (s.rawNetG - baseline) * s.dt;
+            x += v * s.dt;
             if (x < lo) lo = x;
             if (x > hi) hi = x;
         }
@@ -111,23 +142,26 @@ public:
         return true;
     }
 
+    // Accessors for testing and debugging
+    const Sample& atSample(uint32_t index) const { return buffer[index % CAPACITY]; }
+    float at(uint32_t index) const { return buffer[index % CAPACITY].rawNetG; }
+    float atDt(uint32_t index) const { return buffer[index % CAPACITY].dt; }
+
 private:
-    static constexpr float DT = 1.0f / (float)CPReadyConfig::SAMPLING_RATE_HZ;
     static constexpr float G_TO_CM_S2 = 980.665f;
     static constexpr uint32_t MIN_CYCLE_SAMPLES = 20;  // 0.2 s; shorter is not a stroke cycle
     static constexpr uint32_t PRE_ONSET_SAMPLES = 20;  // Push start precedes the filtered trigger
     static constexpr uint32_t REST_SAMPLES = 20;       // Resting level before the push
     static constexpr uint32_t MIN_REST_SAMPLES = 5;    // Fewer cannot show that the chest was still
-    static constexpr float REST_LIMIT_G = 0.05f;       // About 10x MPU-6050 noise: larger means motion
+    static constexpr float REST_LIMIT_G = 0.15f;       // Allows human hand resting tremor without falsely rejecting stillness
 
-    float buffer[CAPACITY];
+    Sample buffer[CAPACITY];
     uint32_t count = 0;
 
     uint32_t oldest() const { return count > CAPACITY ? count - CAPACITY : 0; }
     bool available(uint32_t from, uint32_t to) const {
         return from < to && to <= count && from >= oldest();
     }
-    float at(uint32_t index) const { return buffer[index % CAPACITY]; }
 };
 
 #endif // DEPTH_ESTIMATOR_H

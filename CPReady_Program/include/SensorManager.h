@@ -51,6 +51,8 @@ private:
     float    lastChestZ;
     float    lastBaseZ;
     bool     sensorFault;
+    uint32_t lastSampleSuccessMicros;
+    uint32_t currentI2CSpeedHz;
 
 public:
     SensorManager() 
@@ -71,12 +73,21 @@ public:
           calBaseMin(999.0f), calBaseMax(-999.0f),
           lastCalibrationFailureReason(ERR_NONE),
           consecutiveReadFailures(0), identicalSampleCount(0),
-          lastChestZ(0.0f), lastBaseZ(0.0f), sensorFault(false) {
+          lastChestZ(0.0f), lastBaseZ(0.0f), sensorFault(false),
+          lastSampleSuccessMicros(0),
+          currentI2CSpeedHz(CPReadyConfig::I2C_CLOCK_SPEED_HZ) {
         chestAxis.reset();
         baseAxis.reset();
         calChestVecSum = {0.0f, 0.0f, 0.0f};
         calBaseVecSum = {0.0f, 0.0f, 0.0f};
     }
+
+    void setI2CSpeed(uint32_t speedHz) {
+        currentI2CSpeedHz = (speedHz >= 400000) ? 400000 : 100000;
+        Wire.setClock(currentI2CSpeedHz);
+        Serial.printf("[I2C] Bus clock speed set to %lu Hz\n", (unsigned long)currentI2CSpeedHz);
+    }
+    uint32_t getI2CSpeed() const { return currentI2CSpeedHz; }
 
     // Multiplexer Channel Switching Helpers (with capacitive settling delay)
     void selectMuxChannel(uint8_t channel) {
@@ -501,6 +512,7 @@ public:
         sensorFault = false;
         lastChestZ = -999.0f;
         lastBaseZ = -999.0f;
+        lastSampleSuccessMicros = 0;
     }
 
     // True once reads have failed SENSOR_FAULT_CONSECUTIVE_FAILS times in a row or the
@@ -638,7 +650,8 @@ public:
     // outNetAccel is low-pass filtered for stroke detection; outRawNetAccel is the same
     // sample unfiltered, for depth integration. Both are vertical (along the gravity
     // direction learned at calibration), so a tilted pad does not under-read.
-    bool sample100Hz(float& outNetAccel, float& outRawNetAccel, uint32_t currentMicros) {
+    // outDtSeconds provides the actual elapsed time for exact Riemann double integration.
+    bool sample100Hz(float& outNetAccel, float& outRawNetAccel, float& outDtSeconds, uint32_t currentMicros) {
         if (!sampleDue(currentMicros)) {
             return false; // Not time yet (non-blocking)
         }
@@ -647,6 +660,13 @@ public:
         if (!readSensors(chest, base)) {
             return false;
         }
+
+        uint32_t dtMicros = (lastSampleSuccessMicros > 0 && currentMicros > lastSampleSuccessMicros)
+            ? (currentMicros - lastSampleSuccessMicros)
+            : CPReadyConfig::SAMPLE_INTERVAL_MICROS;
+        lastSampleSuccessMicros = currentMicros;
+        outDtSeconds = (float)dtMicros / 1000000.0f;
+
         float aChestG = chestAxis.dynamicG(chest);
 
         #if USE_DUAL_MPU
@@ -662,6 +682,11 @@ public:
         outNetAccel = lastFilteredNetAccel;
         outRawNetAccel = rawNet;
         return true;
+    }
+
+    bool sample100Hz(float& outNetAccel, float& outRawNetAccel, uint32_t currentMicros) {
+        float dummyDt = 0.01f;
+        return sample100Hz(outNetAccel, outRawNetAccel, dummyDt, currentMicros);
     }
 
 private:

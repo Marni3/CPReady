@@ -65,7 +65,7 @@ namespace CPReadyConfig {
 
     // A detection whose integrated motion is smaller than this is a bump (hands
     // repositioned, vest knocked), not a compression, and is not counted.
-    constexpr float       MIN_STROKE_DEPTH_CM                 = 1.0f;
+    constexpr float       MIN_STROKE_DEPTH_CM                 = 0.8f;
 
     // Cadence Consistency
     constexpr float       MAX_CADENCE_JITTER_RATIO      = 0.25f;    // 25% period variance threshold to flag unsteady rhythm
@@ -113,7 +113,7 @@ namespace CPReadyConfig {
     constexpr uint8_t     PCA_CHANNEL_CHEST_DEFAULT     = 3;       // Default multiplexer channel for chest sensor (SD3/SC3)
     constexpr uint8_t     PCA_CHANNEL_BASE_DEFAULT      = 2;       // Default multiplexer channel for base sensor (SD2/SC2)
     constexpr bool        PCA_AUTO_SCAN_CHANNELS        = true;    // Dynamically scan channels 0-7 if sensors are plugged elsewhere
-    constexpr uint32_t    I2C_CLOCK_SPEED_HZ            = 400000;  // I2C bus clock in Fast Mode (400 kHz) for 100 Hz sampling integrity
+    constexpr uint32_t    I2C_CLOCK_SPEED_HZ            = 100000;  // I2C bus clock in Standard Mode (100 kHz) for high noise immunity on jumper wires
     constexpr uint32_t    I2C_TIMEOUT_MS                = 25;      // Bus read timeout to prevent lockup on wire disconnection
 
     // Kinematics & Filtering Engine
