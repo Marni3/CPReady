@@ -1,9 +1,8 @@
 /// Session Summary: shown when a practice session ends, and reused by the
 /// History detail screen for a stored session.
 ///
-/// Full-screen (no top header, no bottom nav) and with no back button — the
-/// only exit is Return to Home, which resets the route stack to the tab shell
-/// on the Home tab.
+/// After Live Practice, Return to Home is the only exit.
+/// When opened from History, a back arrow returns to the previous screen.
 ///
 /// Every visual value comes from `lib/src/config/`; this file only composes
 /// widgets.
@@ -74,6 +73,9 @@ class SessionCompleteScreen extends StatefulWidget {
   /// Optional GET_RESULTS retry used by the results-unavailable state.
   final Future<SessionResultData?> Function()? onRetryRetrieval;
 
+  /// True when viewing a previously saved session from History.
+  final bool fromHistory;
+
   const SessionCompleteScreen({
     super.key,
     required this.traineeName,
@@ -82,6 +84,7 @@ class SessionCompleteScreen extends StatefulWidget {
     required this.durationSeconds,
     this.historySaved = true,
     this.onRetryRetrieval,
+    this.fromHistory = false,
   });
 
   @override
@@ -93,17 +96,29 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
   late CprMetrics? _summary = widget.summary;
   late int _durationSeconds = widget.durationSeconds;
   late bool _historySaved = widget.historySaved;
+
   bool _retrying = false;
   bool _retryFailed = false;
 
   void _returnToHome(BuildContext context) {
-    // Home is tab 0 of the shell; reset to the root and let MainShell open it.
+    // Home is tab 0 of the shell; reset to the root.
     selectedTabNotifier.value = 0;
     context.go(AppRoutes.home);
   }
 
+  void _returnToHistory(BuildContext context) {
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      // Fallback if the detail screen was opened without a previous route.
+      selectedTabNotifier.value = 2;
+      context.go(AppRoutes.history);
+    }
+  }
+
   Future<void> _retryRetrieval() async {
     final callback = widget.onRetryRetrieval;
+
     if (callback == null || _retrying) return;
 
     setState(() {
@@ -112,6 +127,7 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
     });
 
     SessionResultData? result;
+
     try {
       result = await callback();
     } catch (error) {
@@ -119,12 +135,15 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
     }
 
     if (!mounted) return;
+
     setState(() {
       _retrying = false;
+
       if (result == null) {
         _retryFailed = true;
         return;
       }
+
       _reason = result.reason;
       _summary = result.summary;
       _durationSeconds = result.summary.elapsedSeconds;
@@ -139,10 +158,14 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
         widget.onRetryRetrieval != null;
 
     return PopScope(
-      canPop: false, // explicit exit only, never back into the session
+      // Never allow returning to an ended live practice session.
+      // History details may be closed using normal back navigation.
+      canPop: widget.fromHistory,
       child: AdaptiveScreen(
         padding: EdgeInsets.only(
-          top: AppSpacing.summaryTopPadding,
+          top: widget.fromHistory
+              ? AppSpacing.guideTopPadding
+              : AppSpacing.summaryTopPadding,
           bottom: AppSpacing.flowActionBottomPadding,
         ),
         child: Column(
@@ -152,42 +175,90 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
+                // HEADER
                 Padding(
                   padding: EdgeInsets.symmetric(
-                    horizontal: AppSpacing.summaryTitleInsetH,
+                    horizontal: widget.fromHistory
+                        ? AppLayout.pagePaddingFor(
+                            MediaQuery.sizeOf(context).width,
+                          )
+                        : AppSpacing.summaryTitleInsetH,
                   ),
-                  child: Text(
-                    AppStrings.sessionSummaryTitle,
-                    textAlign: TextAlign.left,
-                    style: AppTypography.style(
-                      size: AppTypography.summaryTitleSize,
-                      weight: AppTypography.headingWeight,
-                      color: AppColors.summaryHeadingText,
+                  child: widget.fromHistory
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: <Widget>[
+                            GestureDetector(
+                              onTap: () => _returnToHistory(context),
+                              behavior: HitTestBehavior.opaque,
+                              child: Padding(
+                                padding: EdgeInsets.only(
+                                  top: AppSpacing.guideBackTapV,
+                                  bottom: AppSpacing.guideBackTapV,
+                                  right: AppSpacing.guideBackTapRight,
+                                ),
+                                child: Icon(
+                                  Icons.arrow_back,
+                                  size: AppSizes.guideBackIconSize,
+                                  color: AppColors.guideBackIcon,
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: AppSpacing.guideBackTitleGap,
+                            ),
+                            Expanded(
+                              child: Text(
+                                'Session Summary',
+                                style: AppTypography.style(
+                                  size: AppTypography.guideTitleSize,
+                                  weight: AppTypography.headingWeight,
+                                  color: AppColors.guideTitleText,
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      : Text(
+                          AppStrings.sessionSummaryTitle,
+                          textAlign: TextAlign.left,
+                          style: AppTypography.style(
+                            size: AppTypography.summaryTitleSize,
+                            weight: AppTypography.headingWeight,
+                            color: AppColors.summaryHeadingText,
+                          ),
+                        ),
+                ),
+
+                // SESSION STATUS
+                // Only shown immediately after Live Practice.
+                if (!widget.fromHistory) ...<Widget>[
+                  SizedBox(height: AppSpacing.summaryBannerGap),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: AppSpacing.summaryTitleInsetH,
+                    ),
+                    child: _SavedBanner(
+                      reason: _reason,
+                      historySaved: _historySaved,
                     ),
                   ),
-                ),
-                SizedBox(height: AppSpacing.summaryBannerGap),
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: AppSpacing.summaryTitleInsetH,
-                  ),
-                  child: _SavedBanner(
-                    reason: _reason,
-                    historySaved: _historySaved,
-                  ),
-                ),
-                if (_retryFailed) ...<Widget>[
-                  SizedBox(height: AppSpacing.small),
-                  Text(
-                    AppStrings.sessionRetrievalFailed,
-                    textAlign: TextAlign.center,
-                    style: AppTypography.style(
-                      size: AppTypography.bodySmallSize,
-                      weight: FontWeight.normal,
-                      color: AppColors.summaryFailedText,
+
+                  if (_retryFailed) ...<Widget>[
+                    SizedBox(height: AppSpacing.small),
+                    Text(
+                      AppStrings.sessionRetrievalFailed,
+                      textAlign: TextAlign.center,
+                      style: AppTypography.style(
+                        size: AppTypography.bodySmallSize,
+                        weight: FontWeight.normal,
+                        color: AppColors.summaryFailedText,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
+
+                // TRAINEE INFORMATION
                 SizedBox(height: AppSpacing.summaryTraineeGap),
                 Padding(
                   padding: EdgeInsets.symmetric(
@@ -202,12 +273,16 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
                     ),
                   ),
                 ),
+
+                // SESSION METRICS
                 if (_summary != null) ...<Widget>[
                   if (_summary!.isBenchMode) ...<Widget>[
                     SizedBox(height: AppSpacing.small),
                     const Center(child: BenchBadge()),
                   ],
+
                   SizedBox(height: AppSpacing.summaryPanelGap),
+
                   Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.summaryPanelInsetH,
@@ -220,31 +295,36 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
                 ],
               ],
             ),
-            Padding(
-              padding: EdgeInsets.only(
-                top: AppSpacing.summaryActionTopGap,
-                left: AppSpacing.summaryActionInsetH,
-                right: AppSpacing.summaryActionInsetH,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  if (showRetry) ...<Widget>[
+
+            // ACTION BUTTONS
+            // Hidden when viewing an existing History record.
+            if (!widget.fromHistory)
+              Padding(
+                padding: EdgeInsets.only(
+                  top: AppSpacing.summaryActionTopGap,
+                  left: AppSpacing.summaryActionInsetH,
+                  right: AppSpacing.summaryActionInsetH,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    if (showRetry) ...<Widget>[
+                      FlatActionButton(
+                        label: AppStrings.sessionRetryRetrieval,
+                        onPressed: _retrying
+                            ? null
+                            : () => unawaited(_retryRetrieval()),
+                      ),
+                      SizedBox(height: AppSpacing.flowActionStackGap),
+                    ],
+
                     FlatActionButton(
-                      label: AppStrings.sessionRetryRetrieval,
-                      onPressed: _retrying
-                          ? null
-                          : () => unawaited(_retryRetrieval()),
+                      label: AppStrings.sessionReturnToHome,
+                      onPressed: () => _returnToHome(context),
                     ),
-                    SizedBox(height: AppSpacing.flowActionStackGap),
                   ],
-                  FlatActionButton(
-                    label: AppStrings.sessionReturnToHome,
-                    onPressed: () => _returnToHome(context),
-                  ),
-                ],
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -257,18 +337,26 @@ class _SavedBanner extends StatelessWidget {
   final SessionEndReason reason;
   final bool historySaved;
 
-  const _SavedBanner({required this.reason, required this.historySaved});
+  const _SavedBanner({
+    required this.reason,
+    required this.historySaved,
+  });
 
   @override
   Widget build(BuildContext context) {
     final bool saved = reason == SessionEndReason.completed;
+
     final Color background = saved
         ? AppColors.summarySavedBackground
         : AppColors.summaryFailedBackground;
+
     final Color foreground = saved
         ? AppColors.summarySavedText
         : AppColors.summaryFailedText;
-    final bool compact = AppLayout.isCompact(MediaQuery.sizeOf(context).width);
+
+    final bool compact = AppLayout.isCompact(
+      MediaQuery.sizeOf(context).width,
+    );
 
     final String title = switch (reason) {
       SessionEndReason.completed => AppStrings.sessionSaved,
@@ -277,6 +365,7 @@ class _SavedBanner extends StatelessWidget {
         AppStrings.sessionResultsUnavailable,
       SessionEndReason.sensorFault => AppStrings.sessionSensorFault,
     };
+
     final String detail = switch (reason) {
       SessionEndReason.completed => '',
       SessionEndReason.interrupted => AppStrings.sessionInterruptedDetail,
@@ -298,7 +387,9 @@ class _SavedBanner extends StatelessWidget {
           ),
           decoration: BoxDecoration(
             color: background,
-            borderRadius: BorderRadius.circular(AppSizes.summaryBannerRadius),
+            borderRadius: BorderRadius.circular(
+              AppSizes.summaryBannerRadius,
+            ),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -315,6 +406,7 @@ class _SavedBanner extends StatelessWidget {
                   color: foreground,
                 ),
               ),
+
               if (!saved) ...<Widget>[
                 SizedBox(height: AppSpacing.small),
                 Text(
@@ -330,6 +422,7 @@ class _SavedBanner extends StatelessWidget {
             ],
           ),
         ),
+
         if (saved && !historySaved) ...<Widget>[
           SizedBox(height: AppSpacing.small),
           Row(
@@ -364,7 +457,10 @@ class _MetricsPanel extends StatelessWidget {
   final CprMetrics metrics;
   final int durationSeconds;
 
-  const _MetricsPanel({required this.metrics, required this.durationSeconds});
+  const _MetricsPanel({
+    required this.metrics,
+    required this.durationSeconds,
+  });
 
   Widget _gradedCapsule(String text, MetricRating? rating) {
     return ValueCapsule(
@@ -399,7 +495,9 @@ class _MetricsPanel extends StatelessWidget {
       radius: AppSizes.summaryPanelRadius,
       borderWidth: AppSizes.summaryPanelBorderWidth,
       padding: EdgeInsets.symmetric(
-        horizontal: AppLayout.isCompact(MediaQuery.sizeOf(context).width)
+        horizontal: AppLayout.isCompact(
+          MediaQuery.sizeOf(context).width,
+        )
             ? AppSpacing.summaryPanelPaddingHCompact
             : AppSpacing.summaryPanelPaddingH,
         vertical: AppSpacing.summaryPanelPaddingV,
@@ -417,7 +515,9 @@ class _MetricsPanel extends StatelessWidget {
               ),
             ),
           ),
+
           SizedBox(height: AppSpacing.summaryRowGap),
+
           _MetricRow(
             label: AppStrings.sessionRate,
             capsule: _gradedCapsule(
@@ -425,7 +525,9 @@ class _MetricsPanel extends StatelessWidget {
               rateRating(metrics.rateCpm),
             ),
           ),
+
           SizedBox(height: AppSpacing.summaryRowGap),
+
           _MetricRow(
             label: AppStrings.sessionDepth,
             capsule: _gradedCapsule(
@@ -433,7 +535,9 @@ class _MetricsPanel extends StatelessWidget {
               depthRating(metrics.depthCm),
             ),
           ),
+
           SizedBox(height: AppSpacing.summaryRowGap),
+
           _MetricRow(
             label: AppStrings.sessionCcf,
             capsule: _gradedCapsule(
@@ -441,12 +545,18 @@ class _MetricsPanel extends StatelessWidget {
               ccfRating(metrics.ccfPercent),
             ),
           ),
+
           SizedBox(height: AppSpacing.summaryRowGap),
+
           _MetricRow(
             label: AppStrings.sessionCompressions,
-            capsule: _valueCapsule('${metrics.totalCompressions}'),
+            capsule: _valueCapsule(
+              '${metrics.totalCompressions}',
+            ),
           ),
+
           SizedBox(height: AppSpacing.summaryDurationGap),
+
           Padding(
             padding: EdgeInsets.symmetric(
               horizontal: AppSpacing.summaryRowPaddingH,
@@ -464,7 +574,9 @@ class _MetricsPanel extends StatelessWidget {
                     ),
                   ),
                 ),
+
                 SizedBox(width: AppSpacing.summaryRowGap),
+
                 Text(
                   durationText(durationSeconds),
                   style: AppTypography.style(
@@ -476,6 +588,7 @@ class _MetricsPanel extends StatelessWidget {
               ],
             ),
           ),
+
           SizedBox(height: AppSpacing.summaryDurationBottomPadding),
         ],
       ),
@@ -489,19 +602,26 @@ class _MetricRow extends StatelessWidget {
   final String label;
   final Widget capsule;
 
-  const _MetricRow({required this.label, required this.capsule});
+  const _MetricRow({
+    required this.label,
+    required this.capsule,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: BoxConstraints(minHeight: AppSizes.summaryRowMinHeight),
+      constraints: BoxConstraints(
+        minHeight: AppSizes.summaryRowMinHeight,
+      ),
       padding: EdgeInsets.symmetric(
         horizontal: AppSpacing.summaryRowPaddingH,
         vertical: AppSpacing.tiny,
       ),
       decoration: BoxDecoration(
         color: AppColors.summaryRowBackground,
-        borderRadius: BorderRadius.circular(AppSizes.summaryRowRadius),
+        borderRadius: BorderRadius.circular(
+          AppSizes.summaryRowRadius,
+        ),
         border: Border.all(
           color: AppColors.summaryRowBorder,
           width: AppSizes.summaryRowBorderWidth,
@@ -519,7 +639,9 @@ class _MetricRow extends StatelessWidget {
               ),
             ),
           ),
+
           SizedBox(width: AppSpacing.summaryRowGap),
+
           capsule,
         ],
       ),
