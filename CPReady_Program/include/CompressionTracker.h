@@ -221,6 +221,9 @@ public:
         }
         float ratio = targetDepthCm / lastFinalSummary.avg_depth_cm;
         float newK = depthCalibrationK * ratio;
+        if (newK < CPReadyConfig::DEPTH_K_MIN) newK = CPReadyConfig::DEPTH_K_MIN;
+        if (newK > CPReadyConfig::DEPTH_K_MAX) newK = CPReadyConfig::DEPTH_K_MAX;
+
         if (newK >= CPReadyConfig::DEPTH_K_MIN && newK <= CPReadyConfig::DEPTH_K_MAX) {
             setDepthK(newK);
             outNewK = newK;
@@ -686,6 +689,7 @@ public:
 
     const CPRReading& getReading() const { return reading; }
     CPRSessionSummary getLastSummary() const { return lastFinalSummary; }
+    uint32_t getTotalSamplesProcessed() const { return depthEstimator.sampleCount(); }
 };
 
 #endif // COMPRESSION_TRACKER_H

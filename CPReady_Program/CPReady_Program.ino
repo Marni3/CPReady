@@ -100,8 +100,22 @@ void endAndFinalizeSession(uint32_t now) {
     // Transmit finalized results packet (Packet Type 4) to Flutter
     CPRMetricsPacket finalPacket = summary.toPacket(PKT_TYPE_FINAL_SUMMARY);
     ble.sendPacket(finalPacket);
+    #if !ENABLE_DEMO_MODE
+    if (summary.total_duration_sec > 0) {
+        float sampleHz = (float)tracker.getTotalSamplesProcessed() / (float)summary.total_duration_sec;
+        Serial.printf("[DIAG RATE] Effective sensor sampling: %u samples over %u s (%.1f Hz - Target: 100 Hz)\n",
+            (unsigned)tracker.getTotalSamplesProcessed(), (unsigned)summary.total_duration_sec, sampleHz);
+    }
+    #endif
     Serial.printf("[FINAL TX] Rate: %.0f cpm | Depth: %.2f cm | Recoil: %.0f%% | CCF: %.0f%% | Total: %d\n",
         summary.avg_rate_cpm, summary.avg_depth_cm, summary.recoil_compliance_percent, summary.final_ccf_percent, summary.total_compressions);
+    #if !ENABLE_DEMO_MODE
+    if (summary.total_duration_sec > 0) {
+        float sampleHz = (float)tracker.getTotalSamplesProcessed() / (float)summary.total_duration_sec;
+        Serial.printf("[DIAG RATE] Effective sensor sampling: %u samples over %u s (%.1f Hz - Target: 100 Hz)\n",
+            (unsigned)tracker.getTotalSamplesProcessed(), (unsigned)summary.total_duration_sec, sampleHz);
+    }
+    #endif
 }
 
 // Sensor fault during calibration or a session: abandon it (no summary), tell the app,
@@ -188,6 +202,13 @@ void onReceiveMessage_BLE(String message) {
         Serial.println("[FLOW] Retransmission requested via GET_RESULTS.");
         CPRMetricsPacket finalPacket = tracker.getLastSummary().toPacket(PKT_TYPE_FINAL_SUMMARY);
         ble.sendPacket(finalPacket);
+    #if !ENABLE_DEMO_MODE
+    if (summary.total_duration_sec > 0) {
+        float sampleHz = (float)tracker.getTotalSamplesProcessed() / (float)summary.total_duration_sec;
+        Serial.printf("[DIAG RATE] Effective sensor sampling: %u samples over %u s (%.1f Hz - Target: 100 Hz)\n",
+            (unsigned)tracker.getTotalSamplesProcessed(), (unsigned)summary.total_duration_sec, sampleHz);
+    }
+    #endif
     }
     else if (message == "PAUSE") {
         if (state == DeviceState::ACTIVE_SESSION) {
@@ -247,7 +268,7 @@ void onReceiveMessage_BLE(String message) {
             Serial.printf("[CALIB] Auto-calibrated scalar K to %.2f based on target %.2f cm (persisted to flash)\n", newK, targetCm);
             ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
         } else {
-            Serial.printf("[CALIB ERR] Failed to calibrate target %.2f cm: no valid completed session depth found!\n", targetCm);
+            Serial.printf("[CALIB ERR] Failed to calibrate target %.2f cm! Check: target>0 (%.2f), trialAvgDepth>0 (%.2f), strokes>=5 (%u)\n", targetCm, targetCm, tracker.getLastSummary().avg_depth_cm, (unsigned)tracker.getLastSummary().total_compressions);
             sendError(ERR_NO_TRIAL_DATA);
         }
     }
@@ -514,6 +535,10 @@ void loop() {
         delay(5);
     }
 
-    // Yield CPU slice to feed FreeRTOS BLE stack and IDLE watchdog
-    delay(1);
+    // Yield CPU slice to feed FreeRTOS BLE stack and IDLE watchdog without adding a 1ms+ sleep tick during sessions
+    if (state != DeviceState::ACTIVE_SESSION && state != DeviceState::CALIBRATING) {
+        delay(1);
+    } else {
+        taskYIELD();
+    }
 }
