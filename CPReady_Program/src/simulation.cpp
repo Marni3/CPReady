@@ -26,6 +26,7 @@
 #include "CompressionTracker.h"
 #include "SimulationConfig.h"
 #include "SyntheticVest.h"
+#include "TelemetryStream.h"
 
 // --- Subsystems -------------------------------------------------------------
 
@@ -33,6 +34,7 @@ static BleManager         simBle;
 static CompressionTracker simTracker;
 static Preferences        simPrefs;
 static SyntheticVest      simVest;
+static TelemetryStream    simTelemetry;
 
 // --- Session state ----------------------------------------------------------
 
@@ -206,6 +208,7 @@ static void startSimSession(uint32_t now) {
     }
     simTracker.startSession(now);
     simVest.begin(now, steadyTrial);
+    simTelemetry.resetCounters();
 
     simLastNotifyMs     = now;
     simLastSampleMicros = micros();
@@ -221,6 +224,8 @@ static void startSimSession(uint32_t now) {
 
 /** Finalises the tracker and publishes the session summary. */
 static void endSimSession(uint32_t now, const char* reason) {
+    simTelemetry.flush();
+    simTelemetry.setEnabled(false);
     CPRSessionSummary summary = simTracker.finalizeSession(now);
     CPRMetricsPacket pkt = summary.toPacket(PKT_TYPE_FINAL_SUMMARY);
 
@@ -302,6 +307,12 @@ static void handleBleCommand(String message) {
     else if (message == "GET_RESULTS") {
         simBle.sendPacket(simTracker.getLastSummary().toPacket(PKT_TYPE_FINAL_SUMMARY));
         Serial.println("[FLOW] Summary resent.");
+    }
+    else if (message == "TELEM:1") {
+        simTelemetry.setEnabled(true);
+    }
+    else if (message == "TELEM:0") {
+        simTelemetry.setEnabled(false);
     }
     else if (message == "PAUSE") {
         if (simState == DeviceState::ACTIVE_SESSION) {
@@ -639,6 +650,14 @@ static void updateActiveSession(uint32_t now, uint32_t nowMicros) {
         : rawNetG * (CPReadyConfig::NOMINAL_INTEGRATOR_K / CPReadyConfig::DEPTH_CALIBRATION_K);
     const bool strokeCompleted = simTracker.processSample(simFilteredNetG, rawForDepthG, now);
 
+    // Synthetic raw frame: chest Z carries the inverse of the net signal and the
+    // base stays at zero, so an offline replay computes the same net value with
+    // the production -(chest - base) convention. The other axes stay at zero.
+    TelemetryFrames::SensorRawSample raw{};
+    raw.t_us = nowMicros;
+    raw.chest_mg[2] = (int16_t)lroundf(-rawNetG * 1000.0f);
+    simTelemetry.addSample(raw, simTracker.getReading().stroke_count, simState);
+
     if (!strokeCompleted && (now - simLastNotifyMs < CPReadyConfig::BLE_NOTIFY_INTERVAL_MS)) {
         return;
     }
@@ -718,6 +737,7 @@ void setup() {
                   simTracker.getDepthK());
 
     simBle.begin(CPReadyConfig::BLE_DEVICE_NAME);
+    simTelemetry.begin(&simBle);
     Serial.printf("[OK] BLE GATT server advertising as '%s'.\n", CPReadyConfig::BLE_DEVICE_NAME);
     Serial.println("[SIM] No sensors required.");
     Serial.println("[SIM] Console: SIM:STATUS | SIM:CALIB | SIM:START | SIM:STOP | "
@@ -732,6 +752,7 @@ void loop() {
 
     // A dropped link aborts an in-flight session, as in the sensor build.
     if (simBle.checkAndClearDisconnectionEvent()) {
+        simTelemetry.setEnabled(false);
         simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
         if (simKTrialOverride) simRestoreSavedK();
         if (simState == DeviceState::CALIBRATING ||

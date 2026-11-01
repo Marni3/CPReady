@@ -33,6 +33,13 @@ class PracticeSetupScreen extends StatefulWidget {
 
 class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   final TextEditingController _name = TextEditingController();
+  final TextEditingController _participantCode =
+      TextEditingController(text: 'P001');
+  final TextEditingController _experiment =
+      TextEditingController(text: 'practice');
+  final TextEditingController _notes = TextEditingController();
+
+  bool _telemetryEnabled = false;
 
   KinematicProfile _profile = KinematicProfile.manikin;
   int _practiceDurationSec = AppDeviceSettings.defaultPracticeDurationSec;
@@ -54,10 +61,19 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   @override
   void dispose() {
     _name.dispose();
+    _participantCode.dispose();
+    _experiment.dispose();
+    _notes.dispose();
     super.dispose();
   }
 
-  bool get _valid => _name.text.trim().isNotEmpty;
+  bool get _valid =>
+      _name.text.trim().isNotEmpty &&
+      (!_telemetryEnabled || _participantCode.text.trim().isNotEmpty);
+
+  void _setTelemetryEnabled(bool value) {
+    setState(() => _telemetryEnabled = value);
+  }
 
   /// Restores the last known mode so the selector does not claim MANIKIN when
   /// the device was last switched to BENCH.
@@ -76,6 +92,11 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
 
   void _continue() {
     if (!_valid) return;
+    final controller = AppScope.of(context);
+    controller.telemetryEnabled = _telemetryEnabled;
+    controller.telemetryParticipantCode = _participantCode.text.trim();
+    controller.telemetryExperiment = _experiment.text.trim();
+    controller.telemetryNotes = _notes.text.trim();
     context.pushNamed(AppRoutes.handPlacement, extra: _name.text.trim());
   }
 
@@ -140,11 +161,54 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
     );
   }
 
+  Widget _telemetryField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    ValueChanged<String>? onChanged,
+    TextCapitalization capitalization = TextCapitalization.sentences,
+  }) {
+    return TextField(
+      controller: controller,
+      onChanged: onChanged,
+      textCapitalization: capitalization,
+      autocorrect: capitalization != TextCapitalization.characters,
+      style: AppTypography.style(
+        size: AppTypography.flowFieldTextSize,
+        weight: FontWeight.normal,
+        color: AppColors.flowFieldText,
+      ),
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: AppColors.flowPanelBackground,
+        labelText: label,
+        labelStyle: AppTypography.style(
+          size: AppTypography.flowHelperSize,
+          weight: FontWeight.normal,
+          color: AppColors.flowFieldHint,
+        ),
+        hintText: hint,
+        hintStyle: AppTypography.style(
+          size: AppTypography.flowFieldTextSize,
+          weight: FontWeight.normal,
+          color: AppColors.flowFieldHint,
+        ),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: AppSpacing.flowFieldPaddingH,
+        ),
+        border: _fieldBorder(),
+        enabledBorder: _fieldBorder(),
+        focusedBorder: _fieldBorder(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final double page = AppLayout.pagePaddingFor(
       MediaQuery.sizeOf(context).width,
     );
+    final bool telemetrySupported = AppScope.of(context).supportsRawTelemetry;
 
     return AdaptiveScreen(
       padding: EdgeInsets.only(
@@ -263,6 +327,84 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                     size: AppTypography.flowHelperSize,
                     weight: FontWeight.normal,
                     color: AppColors.statusError,
+                  ),
+                ),
+              ],
+              SizedBox(height: AppSpacing.setupProfileTopGap),
+              Text(
+                AppStrings.setupTelemetryTitle,
+                style: AppTypography.style(
+                  size: AppTypography.setupProfileLabelSize,
+                  weight: FontWeight.bold,
+                  color: AppColors.flowHeadingText,
+                ),
+              ),
+              SizedBox(height: AppSpacing.flowHelperGap),
+              Text(
+                AppStrings.setupTelemetryBody,
+                style: AppTypography.style(
+                  size: AppTypography.flowHelperSize,
+                  weight: FontWeight.normal,
+                  color: AppColors.flowHelperText,
+                ),
+              ),
+              SizedBox(height: AppSpacing.flowHelperGap),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      AppStrings.setupTelemetryToggle,
+                      style: AppTypography.style(
+                        size: AppTypography.flowFieldTextSize,
+                        weight: FontWeight.w600,
+                        color: AppColors.flowHeadingText,
+                      ),
+                    ),
+                  ),
+                  Switch(
+                    value: _telemetryEnabled && telemetrySupported,
+                    onChanged: telemetrySupported ? _setTelemetryEnabled : null,
+                  ),
+                ],
+              ),
+              if (!telemetrySupported) ...<Widget>[
+                Text(
+                  AppStrings.setupTelemetryUnsupported,
+                  style: AppTypography.style(
+                    size: AppTypography.flowHelperSize,
+                    weight: FontWeight.normal,
+                    color: AppColors.flowHelperText,
+                  ),
+                ),
+              ],
+              if (_telemetryEnabled && telemetrySupported) ...<Widget>[
+                SizedBox(height: AppSpacing.flowHelperGap),
+                _telemetryField(
+                  controller: _participantCode,
+                  label: AppStrings.setupParticipantCodeLabel,
+                  hint: AppStrings.setupParticipantCodeHint,
+                  onChanged: (_) => setState(() {}),
+                  capitalization: TextCapitalization.characters,
+                ),
+                SizedBox(height: AppSpacing.flowHelperGap),
+                _telemetryField(
+                  controller: _experiment,
+                  label: AppStrings.setupExperimentLabel,
+                  hint: AppStrings.setupExperimentHint,
+                ),
+                SizedBox(height: AppSpacing.flowHelperGap),
+                _telemetryField(
+                  controller: _notes,
+                  label: AppStrings.setupNotesLabel,
+                  hint: AppStrings.setupNotesHint,
+                ),
+                SizedBox(height: AppSpacing.flowHelperGap),
+                Text(
+                  AppStrings.setupTelemetryCodeHelper,
+                  style: AppTypography.style(
+                    size: AppTypography.flowHelperSize,
+                    weight: FontWeight.normal,
+                    color: AppColors.flowHelperText,
                   ),
                 ),
               ],

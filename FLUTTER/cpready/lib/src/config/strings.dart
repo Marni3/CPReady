@@ -206,6 +206,27 @@ class AppStrings {
       'Mode changed. Depth now uses this mode’s calibration (K).';
 
   // -----------------------------------------------------------------------
+  // Practice setup — raw data recording
+  // -----------------------------------------------------------------------
+
+  static const String setupTelemetryTitle = 'Raw sensor data';
+  static const String setupTelemetryBody =
+      'Record chest and base acceleration at 100 Hz and upload the session '
+      'afterwards. Training mode and live coaching are unchanged.';
+  static const String setupTelemetryToggle = 'Record raw sensor data';
+  static const String setupParticipantCodeLabel = 'Participant code*';
+  static const String setupParticipantCodeHint = 'P001';
+  static const String setupExperimentLabel = 'Experiment label';
+  static const String setupExperimentHint = 'practice';
+  static const String setupNotesLabel = 'Notes (optional)';
+  static const String setupNotesHint = 'e.g. first session';
+  static const String setupTelemetryCodeHelper =
+      'Use a code, not the trainee name. It is stored with the dataset.';
+  static const String setupTelemetryUnsupported =
+      'This device connection has no raw telemetry characteristic. Update '
+      'the firmware to record raw data.';
+
+  // -----------------------------------------------------------------------
   // Device Settings
   // -----------------------------------------------------------------------
 
@@ -275,12 +296,14 @@ class AppStrings {
   static const String deviceSettingsI2CSection = 'I2C Bus Speed';
   static const String deviceSettingsI2CHelper =
       'Select I2C clock speed. 100 kHz standard mode provides greater noise immunity on jumper wires.';
-  static const String deviceSettingsI2CWarningTitle = 'Change I2C Speed & Reset?';
+  static const String deviceSettingsI2CWarningTitle =
+      'Change I2C Speed & Reset?';
   static const String deviceSettingsI2CWarningMessage =
       'Changing this option will reset the ESP32 and need reconnection. Do you want to proceed?';
   static const String deviceSettingsI2C100 = '100 kHz (Standard)';
   static const String deviceSettingsI2C400 = '400 kHz (Fast Mode)';
-  static const String deviceSettingsI2CSending = 'Applying I2C speed and resetting device...';
+  static const String deviceSettingsI2CSending =
+      'Applying I2C speed and resetting device...';
 
   static const String deviceSettingsSensSection = 'Detection Sensitivity';
   static const String deviceSettingsSensHelper =
@@ -491,6 +514,18 @@ class AppStrings {
   static const String sessionRetryRetrieval = 'Retry Retrieval';
   static const String sessionRetrievalFailed =
       'The device still did not return a summary.';
+
+  // Raw telemetry status on the result screen.
+  static const String telemetrySavedLocal = 'Raw sensor data saved locally';
+  static const String telemetryUploading = 'Uploading raw sensor data…';
+  static const String telemetryUploaded = 'Raw sensor data uploaded';
+  static const String telemetryUploadNotConfigured =
+      'Saved locally — Supabase upload is not configured';
+  static const String telemetryUploadFailed =
+      'Saved locally — upload failed; it will retry';
+  static const String telemetryNoSamples =
+      'No raw samples received — check the BLE MTU and firmware';
+  static const String telemetryInterruptedSuffix = ' (session interrupted)';
 
   /// Shown when the session could not be written to the History database.
   static const String sessionHistoryFailed =

@@ -24,7 +24,8 @@ class AppHistory {
   ///
   /// v3 is additive: it only creates the Device Settings table.
   /// v4 is additive: it adds [columnPacketsLost] to the sessions table.
-  static const int schemaVersion = 4;
+  /// v5 is additive: it creates the raw-telemetry upload queue table.
+  static const int schemaVersion = 5;
 
   // -----------------------------------------------------------------------
   // Table and columns
@@ -54,6 +55,60 @@ class AppHistory {
   /// the received count is [columnPacketCount]. NULL for rows before v4.
   static const String columnPacketsLost = 'packets_lost';
 
+  // -----------------------------------------------------------------------
+  // Raw telemetry upload queue (schema v5)
+  // -----------------------------------------------------------------------
+
+  static const String tableTelemetry = 'telemetry_sessions';
+
+  static const String columnTelemetryId = 'id';
+  static const String columnTelemetryParticipantCode = 'participant_code';
+  static const String columnTelemetryExperiment = 'experiment';
+  static const String columnTelemetryNotes = 'notes';
+  static const String columnTelemetryStatus = 'status';
+  static const String columnTelemetryStartedAt = 'started_at_local';
+  static const String columnTelemetryEndedAt = 'ended_at_local';
+  static const String columnTelemetryLocalPath = 'local_path';
+  static const String columnTelemetrySampleCount = 'sample_count';
+  static const String columnTelemetryFrameCount = 'frame_count';
+  static const String columnTelemetryMissingSamples = 'missing_samples';
+  static const String columnTelemetryMissingFrames = 'missing_frames';
+  static const String columnTelemetrySizeBytes = 'size_bytes';
+  static const String columnTelemetryUploadAttempts = 'upload_attempts';
+  static const String columnTelemetryLastError = 'last_error';
+  static const String columnTelemetryRemotePrefix = 'remote_prefix';
+  static const String columnTelemetryDeviceName = 'device_name';
+  static const String columnTelemetryDeviceId = 'device_id';
+  static const String columnTelemetryAppVersion = 'app_version';
+  static const String columnTelemetryCreatedAt = 'created_at_local';
+
+  /// Additive v5 table. Every raw recording has one row, created when the
+  /// session starts and updated when it stops and when an upload is attempted.
+  static const String createTelemetryV5 = '''
+CREATE TABLE $tableTelemetry (
+  $columnTelemetryId               TEXT PRIMARY KEY,
+  $columnTelemetryParticipantCode  TEXT NOT NULL,
+  $columnTelemetryExperiment       TEXT,
+  $columnTelemetryNotes            TEXT,
+  $columnTelemetryStatus           TEXT NOT NULL,
+  $columnTelemetryStartedAt        TEXT NOT NULL,
+  $columnTelemetryEndedAt          TEXT,
+  $columnTelemetryLocalPath        TEXT NOT NULL,
+  $columnTelemetrySampleCount      INTEGER NOT NULL DEFAULT 0,
+  $columnTelemetryFrameCount       INTEGER NOT NULL DEFAULT 0,
+  $columnTelemetryMissingSamples   INTEGER NOT NULL DEFAULT 0,
+  $columnTelemetryMissingFrames    INTEGER NOT NULL DEFAULT 0,
+  $columnTelemetrySizeBytes        INTEGER NOT NULL DEFAULT 0,
+  $columnTelemetryUploadAttempts   INTEGER NOT NULL DEFAULT 0,
+  $columnTelemetryLastError        TEXT,
+  $columnTelemetryRemotePrefix     TEXT,
+  $columnTelemetryDeviceName       TEXT,
+  $columnTelemetryDeviceId         TEXT,
+  $columnTelemetryAppVersion       TEXT,
+  $columnTelemetryCreatedAt        TEXT NOT NULL
+)
+''';
+
   // Provenance.
   static const String columnDeviceName = 'device_name';
   static const String columnFirmwareVersion = 'firmware_version';
@@ -61,8 +116,7 @@ class AppHistory {
 
   /// Schema v1 DDL. Kept for migration tests and for documentation of the
   /// shape that existed before [columnQualityFlags] was added.
-  static const String createSessionsV1 =
-      '''
+  static const String createSessionsV1 = '''
 CREATE TABLE $tableSessions (
   $columnId                 INTEGER PRIMARY KEY AUTOINCREMENT,
   $columnTraineeName        TEXT    NOT NULL,
@@ -83,8 +137,7 @@ CREATE TABLE $tableSessions (
 ''';
 
   /// Schema v2 DDL: v1 plus the firmware's quality flags.
-  static const String createSessionsV2 =
-      '''
+  static const String createSessionsV2 = '''
 CREATE TABLE $tableSessions (
   $columnId                 INTEGER PRIMARY KEY AUTOINCREMENT,
   $columnTraineeName        TEXT    NOT NULL,
@@ -106,8 +159,7 @@ CREATE TABLE $tableSessions (
 ''';
 
   /// Schema v4 DDL: v2 plus the lost-packet count.
-  static const String createSessionsV4 =
-      '''
+  static const String createSessionsV4 = '''
 CREATE TABLE $tableSessions (
   $columnId                 INTEGER PRIMARY KEY AUTOINCREMENT,
   $columnTraineeName        TEXT    NOT NULL,
@@ -147,6 +199,32 @@ CREATE TABLE $tableSessions (
 
   /// A session that ended early (e.g. the BLE link dropped).
   static const String statusInterrupted = 'interrupted';
+
+  // -----------------------------------------------------------------------
+  // Raw telemetry status values
+  // -----------------------------------------------------------------------
+
+  /// Recording is open; an app kill leaves this value behind.
+  static const String telemetryRecording = 'recording';
+
+  /// Files are finalised and waiting for an upload attempt.
+  static const String telemetryComplete = 'complete';
+
+  /// Files are finalised but the link dropped/sensor failed mid-session.
+  static const String telemetryInterrupted = 'interrupted';
+
+  /// The app was killed before the recording could be finalised. Files stay
+  /// local for manual recovery; the queue does not auto-upload them.
+  static const String telemetryIncomplete = 'incomplete';
+
+  /// Every file and the metadata row reached Supabase.
+  static const String telemetryUploaded = 'uploaded';
+
+  /// The last upload attempt failed; the queue retries on the next launch.
+  static const String telemetryFailed = 'failed';
+
+  /// Stop retrying after this many failed attempts; the local files remain.
+  static const int telemetryMaxUploadAttempts = 5;
 
   // -----------------------------------------------------------------------
   // Display formats

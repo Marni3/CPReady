@@ -36,8 +36,14 @@ namespace CPReadyConfig {
     constexpr const char* BLE_SERVICE_UUID              = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";  // Primary GATT service UUID
     constexpr const char* BLE_CHAR_NOTIFY_UUID          = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";  // Telemetry notification characteristic
     constexpr const char* BLE_CHAR_COMMAND_UUID         = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";  // Mobile app command write characteristic
+    constexpr const char* BLE_CHAR_RAW_UUID             = "6e400004-b5a3-f393-e0a9-e50e24dcca9e";  // Raw accelerometer telemetry characteristic
     constexpr uint32_t    BLE_UPDATE_HZ                 = 5;                                        // Telemetry update rate in Hz
     constexpr uint32_t    BLE_NOTIFY_INTERVAL_MS        = 1000 / BLE_UPDATE_HZ;                     // Telemetry push rate (default 200 ms / 5 Hz)
+
+    // Raw telemetry: opt-in at runtime with TELEM:1, off by default. Frames are
+    // sized from the negotiated ATT MTU, so an MTU of 247 carries 10 samples.
+    constexpr uint16_t    BLE_TARGET_MTU                = 247;
+    constexpr uint8_t     RAW_TELEMETRY_MAX_SAMPLES     = 10;
 
     // Session & Tuning Parameters (Standard Adult Manikin Profile)
     constexpr uint32_t    DEFAULT_PRACTICE_DURATION_SEC       = 120;       // Total trial duration before auto-stop (0 = manual STOP)

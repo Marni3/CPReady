@@ -21,6 +21,9 @@
     <uses-permission
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
+
+    <!-- Raw telemetry upload to Supabase (HTTPS). -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:label="CPReady"
         android:name="${applicationName}"

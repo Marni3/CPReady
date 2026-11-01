@@ -15,4 +15,5 @@ export 'spacing.dart';
 export 'strings.dart';
 export 'sizes.dart';
 export 'targets.dart';
+export 'telemetry.dart';
 export 'typography.dart';

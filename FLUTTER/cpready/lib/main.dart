@@ -10,6 +10,7 @@ import 'src/core/audio/voice_coach.dart';
 import 'src/core/ble/ble_controller.dart';
 import 'src/core/history/session_repository.dart';
 import 'src/core/metrics/cpr_metrics.dart';
+import 'src/core/telemetry/upload_service.dart';
 import 'src/core/navigation.dart';
 import 'src/core/tab_state.dart';
 import 'src/theme/app_theme.dart';
@@ -54,12 +55,14 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
   final BleController _controller = BleController();
   final SessionRepository _repository = SessionRepository();
   final VoiceCoach _voiceCoach = AssetVoiceCoach();
+  final TelemetryUploadService _uploadService = const TelemetryUploadService();
   late final GoRouter _router;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_uploadService.retryPending(_repository));
     _router = buildRouter(
       initialRoute: AppRoutes.splash,
       routeBuilder: {
@@ -75,14 +78,14 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
         AppRoutes.setup: (_) =>
             const FlowConnectionGuard(child: PracticeSetupScreen()),
         AppRoutes.handPlacement: (context) => FlowConnectionGuard(
-          child: HandPlacementScreen(traineeName: _traineeName(context)),
-        ),
+              child: HandPlacementScreen(traineeName: _traineeName(context)),
+            ),
         AppRoutes.calibration: (context) => FlowConnectionGuard(
-          child: CalibrationScreen(traineeName: _traineeName(context)),
-        ),
+              child: CalibrationScreen(traineeName: _traineeName(context)),
+            ),
         AppRoutes.beginCompression: (context) => FlowConnectionGuard(
-          child: BeginCompressionScreen(traineeName: _traineeName(context)),
-        ),
+              child: BeginCompressionScreen(traineeName: _traineeName(context)),
+            ),
         AppRoutes.livePractice: (context) =>
             LivePracticeScreen(traineeName: _traineeName(context)),
         AppRoutes.manikinCalibration: (_) => const ManikinCalibrationScreen(),
@@ -128,11 +131,19 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_uploadService.retryPending(_repository));
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AppScope(
       controller: _controller,
       repository: _repository,
       voiceCoach: _voiceCoach,
+      uploadService: _uploadService,
       child: CpReadyTheme(
         data: appThemeData(),
         child: MaterialApp.router(
@@ -260,9 +271,8 @@ class _BottomNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool compact = AppLayout.isCompact(MediaQuery.sizeOf(context).width);
-    final double gap = compact
-        ? AppSpacing.navItemGapCompact
-        : AppSpacing.navItemGap;
+    final double gap =
+        compact ? AppSpacing.navItemGapCompact : AppSpacing.navItemGap;
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -294,9 +304,8 @@ class _NavButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color color = selected
-        ? AppColors.navSelected
-        : AppColors.navUnselected;
+    final Color color =
+        selected ? AppColors.navSelected : AppColors.navUnselected;
 
     return Semantics(
       button: true,

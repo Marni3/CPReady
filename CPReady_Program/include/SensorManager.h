@@ -4,9 +4,13 @@
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
+#ifdef FAKE_SENSORS
+#include <math.h>
+#endif
 #include "CPRTypes.h"
 #include "CPReadyConfig.h"
 #include "GravityAxis.h"
+#include "TelemetryFrames.h"
 
 class SensorManager {
 private:
@@ -394,6 +398,22 @@ public:
     }
 
     bool begin() {
+#ifdef FAKE_SENSORS
+        hasMultiplexer = false;
+        chestMuxChannel = 0;
+        chestI2CAddr = 0x68;
+        #if USE_DUAL_MPU
+        baseMuxChannel = 0;
+        baseI2CAddr = 0x69;
+        #endif
+        consecutiveReadFailures = 0;
+        identicalSampleCount = 0;
+        sensorFault = false;
+        lastChestZ = -999.0f;
+        lastBaseZ = -999.0f;
+        Serial.println("[FAKE] Sensor init bypassed — no I2C hardware required.");
+        return true;
+#else
         consecutiveReadFailures = 0;
         identicalSampleCount = 0;
         sensorFault = false;
@@ -488,6 +508,7 @@ public:
             return true;
             #endif
         }
+#endif
     }
 
     // Prepare non-blocking calibration state
@@ -651,7 +672,9 @@ public:
     // sample unfiltered, for depth integration. Both are vertical (along the gravity
     // direction learned at calibration), so a tilted pad does not under-read.
     // outDtSeconds provides the actual elapsed time for exact Riemann double integration.
-    bool sample100Hz(float& outNetAccel, float& outRawNetAccel, float& outDtSeconds, uint32_t currentMicros) {
+    // outRaw, when supplied, receives the same I2C read as unfiltered chest/base milli-g.
+    bool sample100Hz(float& outNetAccel, float& outRawNetAccel, float& outDtSeconds,
+                     uint32_t currentMicros, TelemetryFrames::SensorRawSample* outRaw = nullptr) {
         if (!sampleDue(currentMicros)) {
             return false; // Not time yet (non-blocking)
         }
@@ -659,6 +682,16 @@ public:
         Vec3 chest, base;
         if (!readSensors(chest, base)) {
             return false;
+        }
+
+        if (outRaw != nullptr) {
+            outRaw->t_us = currentMicros;
+            outRaw->chest_mg[0] = toMilliG(chest.x);
+            outRaw->chest_mg[1] = toMilliG(chest.y);
+            outRaw->chest_mg[2] = toMilliG(chest.z);
+            outRaw->base_mg[0] = toMilliG(base.x);
+            outRaw->base_mg[1] = toMilliG(base.y);
+            outRaw->base_mg[2] = toMilliG(base.z);
         }
 
         uint32_t dtMicros = (lastSampleSuccessMicros > 0 && currentMicros > lastSampleSuccessMicros)
@@ -690,6 +723,13 @@ public:
     }
 
 private:
+    static int16_t toMilliG(float g) {
+        const float mg = g * 1000.0f;
+        if (mg > 32767.0f) return 32767;
+        if (mg < -32768.0f) return -32768;
+        return (int16_t)lroundf(mg);
+    }
+
     // Fixed-rate scheduler: advances by whole intervals so loop jitter does not lower
     // the sample rate, but never tries to catch up on more than one missed sample.
     bool sampleDue(uint32_t currentMicros) {
@@ -705,6 +745,24 @@ private:
 
     // Reads all three axes of both sensors in g. Returns false on a failed bus read;
     // repeated failures or frozen readings latch sensorFault.
+#ifdef FAKE_SENSORS
+    bool readSensors(Vec3& chest, Vec3& base, bool checkFrozen = true) {
+        const float t = 0.001f * lastSampleMicros;
+        const float gravity = 1.0f;
+        const float rate = 3.14159f * 100.0f / 30.0f;
+        chest.x = 0.02f * sinf(rate * t);
+        chest.y = 0.0f;
+        chest.z = gravity + 0.04f * sinf(rate * t);
+        base.x = 0.0f;
+        base.y = 0.0f;
+        base.z = gravity;
+        consecutiveReadFailures = 0;
+        identicalSampleCount = 0;
+        lastChestZ = chest.z;
+        lastBaseZ = base.z;
+        return true;
+    }
+#else
     bool readSensors(Vec3& chest, Vec3& base, bool checkFrozen = true) {
         selectMuxChannel(chestMuxChannel);
         sensors_event_t aChest, gChest, tempChest;
@@ -756,6 +814,7 @@ private:
         lastBaseZ = baseZ;
         return true;
     }
+#endif
 
 public:
     bool getIsCalibrated() const { return isCalibrated; }

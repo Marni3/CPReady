@@ -11,16 +11,22 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../../config/config.dart';
 import '../metrics/cpr_metrics.dart';
+import '../telemetry/raw_frame.dart';
 import 'device_config.dart';
 
 class EspBle {
   static final Guid serviceUuid = Guid(AppBleConfig.serviceUuid);
   static final Guid notifyUuid = Guid(AppBleConfig.notifyUuid);
   static final Guid commandUuid = Guid(AppBleConfig.commandUuid);
+  static final Guid rawUuid = Guid(AppTelemetry.characteristicUuid);
 
   BluetoothDevice? device;
   BluetoothCharacteristic? telemetryCharacteristic;
   BluetoothCharacteristic? commandCharacteristic;
+  BluetoothCharacteristic? rawTelemetryCharacteristic;
+
+  /// Negotiated ATT MTU, when the platform exposes it (Android).
+  int? negotiatedMtu;
 
   /// Advertised name of the device found by the most recent [scan], kept as
   /// provenance for the History record.
@@ -29,9 +35,11 @@ class EspBle {
   StreamSubscription<List<ScanResult>>? scanSubscription;
   StreamSubscription<BluetoothConnectionState>? _connectionSub;
   StreamSubscription<List<int>>? _notifySub;
+  StreamSubscription<List<int>>? _rawNotifySub;
 
   StreamController<CprMetrics>? _telemetryController;
   StreamController<DeviceConfig>? _configController;
+  StreamController<RawTelemetryFrame>? _rawController;
 
   /// Invoked when the ESP32 disconnects unexpectedly (not via [disconnect]).
   VoidCallback? onDisconnected;
@@ -41,8 +49,16 @@ class EspBle {
   /// Broadcast stream of decoded telemetry packets. Recreated after
   /// [disconnect], so callers should subscribe after each successful connect.
   Stream<CprMetrics> get telemetry {
-    final controller = _telemetryController ??=
-        StreamController<CprMetrics>.broadcast();
+    final controller =
+        _telemetryController ??= StreamController<CprMetrics>.broadcast();
+    return controller.stream;
+  }
+
+  /// Broadcast stream of raw accelerometer frames. Empty when the firmware
+  /// predates the optional characteristic.
+  Stream<RawTelemetryFrame> get rawFrames {
+    final controller =
+        _rawController ??= StreamController<RawTelemetryFrame>.broadcast();
     return controller.stream;
   }
 
@@ -50,8 +66,8 @@ class EspBle {
   /// recreated after [disconnect]; callers should subscribe before sending
   /// GET_CONFIG.
   Stream<DeviceConfig> get configReports {
-    final controller = _configController ??=
-        StreamController<DeviceConfig>.broadcast();
+    final controller =
+        _configController ??= StreamController<DeviceConfig>.broadcast();
     return controller.stream;
   }
 
@@ -106,6 +122,16 @@ class EspBle {
 
     debugPrint('Connected to ESP32');
 
+    // Ask for the large MTU before discovery so a 176-byte raw frame fits in a
+    // single notification. iOS negotiates automatically and rejects the call.
+    negotiatedMtu = null;
+    try {
+      negotiatedMtu = await device.requestMtu(AppTelemetry.targetMtu);
+      debugPrint('Negotiated MTU: $negotiatedMtu');
+    } catch (error) {
+      debugPrint('MTU request unavailable: $error');
+    }
+
     // Watch for the ESP32 dropping the link while the app is using it.
     await _connectionSub?.cancel();
     _connectionSub = device.connectionState.listen((state) {
@@ -135,6 +161,10 @@ class EspBle {
         if (characteristic.uuid == commandUuid) {
           commandCharacteristic = characteristic;
         }
+
+        if (characteristic.uuid == rawUuid) {
+          rawTelemetryCharacteristic = characteristic;
+        }
       }
     }
 
@@ -147,6 +177,11 @@ class EspBle {
     }
 
     debugPrint('ESP32 characteristics found');
+    debugPrint(
+      rawTelemetryCharacteristic == null
+          ? 'Raw telemetry characteristic absent (firmware before raw stream)'
+          : 'Raw telemetry characteristic found',
+    );
   }
 
   /// Start receiving telemetry notifications.
@@ -164,6 +199,30 @@ class EspBle {
     // replays the cached value when first listened to, which can surface a
     // stale packet from a previous connection.
     _notifySub = characteristic.onValueReceived.listen(_onTelemetryChunk);
+
+    // Raw telemetry is optional. Subscribe when present; the firmware still
+    // sends nothing until Live Practice writes TELEM:1.
+    final BluetoothCharacteristic? raw = rawTelemetryCharacteristic;
+    if (raw != null) {
+      try {
+        await raw.setNotifyValue(true);
+        await _rawNotifySub?.cancel();
+        _rawNotifySub = raw.onValueReceived.listen(_onRawChunk);
+      } catch (error) {
+        debugPrint('Raw telemetry subscribe failed: $error');
+      }
+    }
+  }
+
+  void _onRawChunk(List<int> value) {
+    if (value.isEmpty) return;
+    try {
+      final RawTelemetryFrame frame = RawTelemetryFrame.fromBytes(value);
+      _rawController?.add(frame);
+    } catch (error) {
+      debugPrint('Raw telemetry decode failed: $error');
+      debugPrint('Raw bytes: $value');
+    }
   }
 
   void _onTelemetryChunk(List<int> value) {
@@ -211,6 +270,9 @@ class EspBle {
     await _notifySub?.cancel();
     _notifySub = null;
 
+    await _rawNotifySub?.cancel();
+    _rawNotifySub = null;
+
     await device?.disconnect();
 
     await _telemetryController?.close();
@@ -219,8 +281,13 @@ class EspBle {
     await _configController?.close();
     _configController = null;
 
+    await _rawController?.close();
+    _rawController = null;
+
     device = null;
     telemetryCharacteristic = null;
     commandCharacteristic = null;
+    rawTelemetryCharacteristic = null;
+    negotiatedMtu = null;
   }
 }
