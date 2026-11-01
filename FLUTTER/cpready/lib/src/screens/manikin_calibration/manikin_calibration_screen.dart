@@ -123,9 +123,6 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     });
 
     try {
-      // Always reset calibration factor K to default (11.20) before starting 15s trial
-      await controller.sendCommand(AppBleConfig.commandResetK);
-
       await controller.sendCommand(
         AppBleConfig.commandSetTime(AppDurations.manikinTrialSeconds),
       );
