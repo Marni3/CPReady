@@ -44,6 +44,7 @@ constexpr uint8_t ERR_SENSOR_ALIGNMENT    = 4; // Sensor divergence / tilt misal
 constexpr uint8_t ERR_WRONG_STATE         = 5; // Command rejected due to conflicting device state
 constexpr uint8_t ERR_NO_TRIAL_DATA       = 6; // Calibration target requested without completed session
 constexpr uint8_t ERR_I2C_FAULT           = 7; // I2C communication fault or sensor unreadable
+constexpr uint8_t ERR_CALIB_OUT_OF_RANGE  = 8; // Target depth ratio or resulting K outside supported bounds
 
 // Cadence Quality & Engine State Bitmask Flags (Byte 11)
 constexpr uint8_t CADENCE_FLAG_STEADY       = (1 << 0); // Bit 0: 1 = Steady rhythmic cadence, 0 = Erratic/Unsteady

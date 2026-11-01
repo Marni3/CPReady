@@ -208,12 +208,16 @@ void onReceiveMessage_BLE(String message) {
             Serial.println("[FLOW] Stop received from app during active operation.");
             endAndFinalizeSession(now);
         } else if (state == DeviceState::CALIBRATING || state == DeviceState::CALIBRATED_READY) {
-            // No session ran, so there is nothing to summarise.
+            // No session ran, so there is nothing to summarise. Restore duration and saved K.
             Serial.println("[FLOW] Stop received before the session started; calibration cancelled.");
             sensors.resetCalibration();
+            practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+            if (kTrialOverrideActive) restoreSavedK();
             state = DeviceState::STANDBY;
         } else {
             Serial.println("[FLOW] Stop received while idle; ignoring to preserve session summary.");
+            practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+            if (kTrialOverrideActive) restoreSavedK();
         }
     }
     else if (message == "GET_RESULTS") {
@@ -294,28 +298,74 @@ void onReceiveMessage_BLE(String message) {
         prefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         Serial.printf("[NVS] Kinematic profile set to MANIKIN_STANDARD (active K=%.2f)\n", tracker.getDepthK());
     }
+    else if (message.startsWith("SET_SENS:")) {
+        if (rejectConfigChange(message)) return;
+        String mode = message.substring(9);
+        uint8_t preset = 0;
+        if (mode == "HIGH") preset = 1;
+        else if (mode == "STRICT") preset = 2;
+        tracker.applySensitivityPreset(preset);
+        prefs.putFloat("trig_g", tracker.getMinStartThresholdG());
+        prefs.putFloat("arm_frac", tracker.getRecoilArmFraction());
+        prefs.putFloat("min_d_cm", tracker.getMinStrokeDepthCm());
+        Serial.printf("[CONFIG] Sensitivity preset %s applied (trig=%.3fg, arm=%.2f, minD=%.2fcm)\n",
+            mode.c_str(), tracker.getMinStartThresholdG(), tracker.getRecoilArmFraction(), tracker.getMinStrokeDepthCm());
+    }
+    else if (message.startsWith("SET_TRIG:")) {
+        if (rejectConfigChange(message)) return;
+        float g = message.substring(9).toFloat();
+        if (g >= 0.03f && g <= 0.60f) {
+            tracker.setMinStartThresholdG(g);
+            prefs.putFloat("trig_g", tracker.getMinStartThresholdG());
+            Serial.printf("[CONFIG] Min start trigger floor set to %.3fg\n", tracker.getMinStartThresholdG());
+        }
+    }
+    else if (message.startsWith("SET_ARM:")) {
+        if (rejectConfigChange(message)) return;
+        float frac = message.substring(8).toFloat();
+        if (frac >= 0.05f && frac <= 0.50f) {
+            tracker.setRecoilArmFraction(frac);
+            prefs.putFloat("arm_frac", tracker.getRecoilArmFraction());
+            Serial.printf("[CONFIG] Recoil arm fraction set to %.2f (min %.3fg)\n",
+                tracker.getRecoilArmFraction(), tracker.getRecoilArmMinG());
+        }
+    }
+    else if (message.startsWith("SET_MIN_D:")) {
+        if (rejectConfigChange(message)) return;
+        float cm = message.substring(10).toFloat();
+        if (cm >= 0.05f && cm <= 2.50f) {
+            tracker.setMinStrokeDepthCm(cm);
+            prefs.putFloat("min_d_cm", tracker.getMinStrokeDepthCm());
+            Serial.printf("[CONFIG] Min stroke depth gate set to %.2f cm\n", tracker.getMinStrokeDepthCm());
+        }
+    }
     else if (message.startsWith("CALIBRATE_TARGET:")) {
         if (rejectConfigChange(message)) return;
         float targetCm = message.substring(17).toFloat();
         float newK = 0.0f;
-        if (tracker.calibrateFromLastSummary(targetCm, newK)) {
+        uint8_t errReason = ERR_NO_TRIAL_DATA;
+        if (tracker.calibrateFromLastSummary(targetCm, newK, &errReason)) {
             saveDepthK(newK);
             kTrialOverrideActive = false;   // newK is now the saved K
             Serial.printf("[CALIB] Auto-calibrated scalar K to %.2f based on target %.2f cm (persisted to flash)\n", newK, targetCm);
             ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
         } else {
-            Serial.printf("[CALIB ERR] Failed to calibrate target %.2f cm! Check: target>0 (%.2f), trialAvgDepth>0 (%.2f), strokes>=5 (%u)\n", targetCm, targetCm, tracker.getLastSummary().avg_depth_cm, (unsigned)tracker.getLastSummary().total_compressions);
-            sendError(ERR_NO_TRIAL_DATA);
+            Serial.printf("[CALIB ERR] Failed to calibrate target %.2f cm (reason=%u)! trialAvgDepth=%.2f, strokes=%u\n",
+                targetCm, (unsigned)errReason, tracker.getLastSummary().avg_depth_cm, (unsigned)tracker.getLastSummary().total_compressions);
+            sendError(errReason);
         }
     }
     else if (message == "RESET_CONFIG") {
         if (rejectConfigChange(message)) return;
         prefs.clear();
+        prefs.putUChar("depth_model", CPReadyConfig::DEPTH_MODEL_VERSION);
         tracker.setManikinK(CPReadyConfig::DEPTH_CALIBRATION_K);
         tracker.setBenchK(CPReadyConfig::BENCH_DEPTH_CALIBRATION_K);
         tracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
+        tracker.applySensitivityPreset(0);
         practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
-        Serial.println("[NVS] Flash cleared! Restored factory defaults (MANIKIN_STANDARD, K=11.2).");
+        kTrialOverrideActive = false;
+        Serial.printf("[NVS] Flash cleared! Restored factory defaults (MANIKIN_STANDARD, K=%.2f).\n", CPReadyConfig::DEPTH_CALIBRATION_K);
     }
     else if (message == "GET_CONFIG") {
         bool isBench = (tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST);
@@ -394,6 +444,9 @@ void setup() {
 
     loadDepthCalibration(savedProfile);
     tracker.setProfile((CPReadyConfig::KinematicProfile)savedProfile);
+    if (prefs.isKey("trig_g")) tracker.setMinStartThresholdG(prefs.getFloat("trig_g", CPReadyConfig::MIN_START_THRESHOLD_G));
+    if (prefs.isKey("arm_frac")) tracker.setRecoilArmFraction(prefs.getFloat("arm_frac", CPReadyConfig::RECOIL_ARM_FRACTION));
+    if (prefs.isKey("min_d_cm")) tracker.setMinStrokeDepthCm(prefs.getFloat("min_d_cm", CPReadyConfig::MIN_STROKE_DEPTH_CM));
 
     Serial.printf("[NVS] Flash configuration loaded: Profile=%s | Manikin K=%.2f | Bench K=%.2f (Active K=%.2f)\n",
         savedProfile == (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST ? "BENCH_TEST" : "MANIKIN_STANDARD",

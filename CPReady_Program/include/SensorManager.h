@@ -109,7 +109,7 @@ public:
     // Hardware I2C bus recovery routine (NXP UM10204 9-clock cycle sequence)
     // Toggles SCL up to 9 times to force any stuck slave to release SDA,
     // followed by generating a manual STOP condition before restarting Wire.
-    static void recoverI2CBus() {
+    void recoverI2CBus() {
         Wire.end();
         pinMode(CPReadyConfig::I2C_SDA_PIN, INPUT_PULLUP);
         pinMode(CPReadyConfig::I2C_SCL_PIN, OUTPUT);
@@ -139,7 +139,7 @@ public:
         pinMode(CPReadyConfig::I2C_SCL_PIN, INPUT_PULLUP);
 
         Wire.begin(CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN);
-        Wire.setClock(CPReadyConfig::I2C_CLOCK_SPEED_HZ);
+        Wire.setClock(currentI2CSpeedHz);
         Wire.setTimeOut(CPReadyConfig::I2C_TIMEOUT_MS);
     }
 
@@ -190,7 +190,7 @@ public:
                 pinMode(CPReadyConfig::I2C_SCL_PIN, INPUT_PULLUP);
 
                 Wire.begin(CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN);
-                Wire.setClock(CPReadyConfig::I2C_CLOCK_SPEED_HZ);
+                Wire.setClock(currentI2CSpeedHz);
                 Wire.setTimeOut(CPReadyConfig::I2C_TIMEOUT_MS);
             }
         }
@@ -198,9 +198,9 @@ public:
     }
 
     // Automated boot-time I2C bus diagnostic scanner
-    static void scanI2CBus() {
+    void scanI2CBus() const {
         Serial.printf("[I2C SCAN] Probing I2C bus (SDA=GPIO%d, SCL=GPIO%d, Speed=%lu Hz)...\n",
-            CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN, (unsigned long)CPReadyConfig::I2C_CLOCK_SPEED_HZ);
+            CPReadyConfig::I2C_SDA_PIN, CPReadyConfig::I2C_SCL_PIN, (unsigned long)currentI2CSpeedHz);
         uint8_t count = 0;
         for (uint8_t addr = 1; addr < 127; addr++) {
             Wire.beginTransmission(addr);

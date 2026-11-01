@@ -36,6 +36,11 @@ private:
     float benchDepthK;
     float compressionStartThresholdG;
     float recoilThresholdG;
+    float minStartThresholdG;
+    float adaptiveStartFraction;
+    float recoilArmFraction;
+    float recoilArmMinG;
+    float minStrokeDepthCm;
     CPReadyConfig::KinematicProfile currentProfile;
 
     // Cadence Consistency & Jitter Estimator
@@ -80,6 +85,11 @@ public:
           benchDepthK(CPReadyConfig::BENCH_DEPTH_CALIBRATION_K),
           compressionStartThresholdG(CPReadyConfig::COMPRESSION_START_THRESHOLD_G),
           recoilThresholdG(CPReadyConfig::RECOIL_THRESHOLD_G),
+          minStartThresholdG(CPReadyConfig::MIN_START_THRESHOLD_G),
+          adaptiveStartFraction(CPReadyConfig::ADAPTIVE_START_FRACTION),
+          recoilArmFraction(CPReadyConfig::RECOIL_ARM_FRACTION),
+          recoilArmMinG(CPReadyConfig::RECOIL_ARM_MIN_G),
+          minStrokeDepthCm(CPReadyConfig::MIN_STROKE_DEPTH_CM),
           currentProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD),
           validDepthSum(0.0f),
           validStrokeCount(0),
@@ -212,16 +222,19 @@ public:
     }
 
     // Proportional comparative calibration: K_new = K_current * (targetDepth / measuredMeanDepth)
-    bool calibrateFromLastSummary(float targetDepthCm, float& outNewK) {
-        if (summaryAlreadyCalibrated || targetDepthCm <= 0.0f || lastFinalSummary.avg_depth_cm <= 0.0f) {
+    bool calibrateFromLastSummary(float targetDepthCm, float& outNewK, uint8_t* outErrorReason = nullptr) {
+        if (summaryAlreadyCalibrated || lastFinalSummary.avg_depth_cm <= 0.0f || lastFinalSummary.total_compressions < 3) {
+            if (outErrorReason) *outErrorReason = ERR_NO_TRIAL_DATA;
             return false;
         }
-        if (lastFinalSummary.total_compressions < 5) {
+        if (targetDepthCm <= 0.0f) {
+            if (outErrorReason) *outErrorReason = ERR_CALIB_OUT_OF_RANGE;
             return false;
         }
         float ratio = targetDepthCm / lastFinalSummary.avg_depth_cm;
-        // Physically plausible calibration adjustment range (0.40x to 2.50x)
-        if (ratio < 0.40f || ratio > 2.50f) {
+        // Wide calibration adjustment range (0.15x to 8.50x) to accommodate different manikin springs/pad couplings
+        if (ratio < 0.15f || ratio > 8.50f) {
+            if (outErrorReason) *outErrorReason = ERR_CALIB_OUT_OF_RANGE;
             return false;
         }
         float newK = depthCalibrationK * ratio;
@@ -230,8 +243,10 @@ public:
             setDepthK(newK);
             outNewK = newK;
             summaryAlreadyCalibrated = true;
+            if (outErrorReason) *outErrorReason = ERR_NONE;
             return true;
         }
+        if (outErrorReason) *outErrorReason = ERR_CALIB_OUT_OF_RANGE;
         return false;
     }
 
@@ -254,6 +269,57 @@ public:
         if (g <= -0.05f && g >= -1.50f) recoilThresholdG = g;
     }
     float getRecoilThresholdG() const { return recoilThresholdG; }
+
+    void setMinStartThresholdG(float g) {
+        if (g >= 0.03f && g <= 0.60f) minStartThresholdG = g;
+    }
+    float getMinStartThresholdG() const { return minStartThresholdG; }
+
+    void setAdaptiveStartFraction(float frac) {
+        if (frac >= 0.10f && frac <= 0.70f) adaptiveStartFraction = frac;
+    }
+    float getAdaptiveStartFraction() const { return adaptiveStartFraction; }
+
+    void setRecoilArmFraction(float frac) {
+        if (frac >= 0.05f && frac <= 0.50f) {
+            recoilArmFraction = frac;
+            // Keep floor proportional so weak strokes can still arm recoil
+            float floorG = frac * 0.25f;
+            if (floorG < 0.025f) floorG = 0.025f;
+            if (floorG > 0.10f) floorG = 0.10f;
+            recoilArmMinG = floorG;
+        }
+    }
+    float getRecoilArmFraction() const { return recoilArmFraction; }
+    float getRecoilArmMinG() const { return recoilArmMinG; }
+
+    void setMinStrokeDepthCm(float cm) {
+        if (cm >= 0.05f && cm <= 2.50f) minStrokeDepthCm = cm;
+    }
+    float getMinStrokeDepthCm() const { return minStrokeDepthCm; }
+
+    // Presets: 0 = BALANCED (default), 1 = HIGH (maximum sensitivity), 2 = STRICT (high noise rejection)
+    void applySensitivityPreset(uint8_t preset) {
+        if (preset == 1) {
+            minStartThresholdG    = 0.05f;
+            adaptiveStartFraction = 0.22f;
+            recoilArmFraction     = 0.10f;
+            recoilArmMinG         = 0.025f;
+            minStrokeDepthCm      = 0.15f;
+        } else if (preset == 2) {
+            minStartThresholdG    = 0.12f;
+            adaptiveStartFraction = 0.40f;
+            recoilArmFraction     = 0.25f;
+            recoilArmMinG         = 0.07f;
+            minStrokeDepthCm      = 0.50f;
+        } else {
+            minStartThresholdG    = CPReadyConfig::MIN_START_THRESHOLD_G;
+            adaptiveStartFraction = CPReadyConfig::ADAPTIVE_START_FRACTION;
+            recoilArmFraction     = CPReadyConfig::RECOIL_ARM_FRACTION;
+            recoilArmMinG         = CPReadyConfig::RECOIL_ARM_MIN_G;
+            minStrokeDepthCm      = CPReadyConfig::MIN_STROKE_DEPTH_CM;
+        }
+    }
 
     void setProfile(CPReadyConfig::KinematicProfile profile) {
         currentProfile = profile;
@@ -362,7 +428,7 @@ public:
                         depthKnown = depthEstimator.fromRestDepthCm(
                             onsetSampleIndex, strokeEndIndex, physicalDepthCm);
                     }
-                    if (depthKnown && physicalDepthCm < CPReadyConfig::MIN_STROKE_DEPTH_CM) {
+                    if (depthKnown && physicalDepthCm < minStrokeDepthCm) {
                         state = StrokeState::WAITING_FOR_DOWNSLICK;
                         break;
                     }
@@ -464,7 +530,7 @@ public:
                     // Stroke-Qualified Mean accumulation: exclude unmeasured strokes
                     // and physical ceiling clamp artifacts. Valid post-pause strokes are included.
                     if (depthKnown && reading.depth_cm < CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
-                        if (totalStrokeCount > 1 || reading.depth_cm >= CPReadyConfig::MIN_STROKE_DEPTH_CM) {
+                        if (totalStrokeCount > 1 || physicalDepthCm >= minStrokeDepthCm) {
                             validDepthSum += reading.depth_cm;
                             validStrokeCount++;
                         }
@@ -491,12 +557,14 @@ public:
     }
 
 private:
-    // Reported depth = integrated depth x (K / profile default K).
+    // Reported depth = integrated depth x (K / reference integrator K).
+    // For MANIKIN_STANDARD, NOMINAL_INTEGRATOR_K (11.2) is the 1.0x reference denominator,
+    // while DEPTH_CALIBRATION_K (48.2) provides the 4.30x default manikin scaling.
     float depthScale() const {
-        float defaultK = (currentProfile == CPReadyConfig::KinematicProfile::BENCH_TEST)
+        float refK = (currentProfile == CPReadyConfig::KinematicProfile::BENCH_TEST)
             ? CPReadyConfig::BENCH_DEPTH_CALIBRATION_K
-            : CPReadyConfig::DEPTH_CALIBRATION_K;
-        return depthCalibrationK / defaultK;
+            : CPReadyConfig::NOMINAL_INTEGRATOR_K;
+        return depthCalibrationK / refK;
     }
 
     // Median of the last RATE_MEDIAN_STROKES valid periods (mean of two when only two exist).
@@ -521,15 +589,15 @@ private:
     // MIN_START_THRESHOLD_G and never above the profile threshold. A fixed 0.45 g missed
     // smooth and shallow strokes entirely, which are exactly the ones needing feedback.
     float startThreshold() const {
-        float threshold = CPReadyConfig::ADAPTIVE_START_FRACTION * signalEnvelopeG;
-        if (threshold < CPReadyConfig::MIN_START_THRESHOLD_G) threshold = CPReadyConfig::MIN_START_THRESHOLD_G;
+        float threshold = adaptiveStartFraction * signalEnvelopeG;
+        if (threshold < minStartThresholdG) threshold = minStartThresholdG;
         return threshold < compressionStartThresholdG ? threshold : compressionStartThresholdG;
     }
 
     // Level the recoil swing must pass before the stroke may finish.
     float recoilArmLevel() const {
-        float level = CPReadyConfig::RECOIL_ARM_FRACTION * peakAccel;
-        if (level < CPReadyConfig::RECOIL_ARM_MIN_G) level = CPReadyConfig::RECOIL_ARM_MIN_G;
+        float level = recoilArmFraction * peakAccel;
+        if (level < recoilArmMinG) level = recoilArmMinG;
         return -level;
     }
 

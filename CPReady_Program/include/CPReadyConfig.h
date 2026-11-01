@@ -41,12 +41,13 @@ namespace CPReadyConfig {
 
     // Session & Tuning Parameters (Standard Adult Manikin Profile)
     constexpr uint32_t    DEFAULT_PRACTICE_DURATION_SEC       = 120;       // Total trial duration before auto-stop (0 = manual STOP)
-    // Depth is integrated from acceleration (DepthEstimator.h), so it needs no scalar.
-    // K is kept as the user-facing calibration value: reported depth = integrated depth
-    // x (K / profile default K). At the default K the integrated depth is reported as is;
-    // Manikin Calibration and SET_K still scale it proportionally.
-    constexpr float       DEPTH_CALIBRATION_K                 = 11.2f;     // Manikin profile default K (scale 1.0)
-    constexpr float       COMPRESSION_START_THRESHOLD_G       = 0.45f;     // Downstroke acceleration trigger threshold (g)
+    // Depth is integrated from acceleration (DepthEstimator.h). NOMINAL_INTEGRATOR_K (11.2)
+    // is the 1.0x reference denominator for the double integrator, while DEPTH_CALIBRATION_K
+    // (48.2) bakes in the empirical 4.30x manikin-to-vest mechanical coupling ratio (5.6 cm / 1.3 cm)
+    // so the vest reports accurate manikin depth out of the box.
+    constexpr float       NOMINAL_INTEGRATOR_K                = 11.2f;     // Unscaled 1.0x integrator reference denominator
+    constexpr float       DEPTH_CALIBRATION_K                 = 48.2f;     // Manikin profile default K (4.30x empirical manikin coupling)
+    constexpr float       COMPRESSION_START_THRESHOLD_G       = 0.28f;     // Downstroke acceleration trigger threshold (g)
     constexpr float       RECOIL_THRESHOLD_G                  = -0.35f;    // Upward rebound threshold to confirm release (g)
 
     // Bench Testing Sensitivity Parameters (Alternative Relaxed Profile)
@@ -58,14 +59,13 @@ namespace CPReadyConfig {
     constexpr float       DEPTH_K_MIN                         = 1.0f;
     constexpr float       DEPTH_K_MAX                         = 100.0f;
 
-    // Version of the depth model that saved K values belong to. K values saved under the
-    // old K * da * T^2 model would mis-scale the integrated depth, so they are discarded
-    // once when this number changes.
-    constexpr uint8_t     DEPTH_MODEL_VERSION                 = 2;
+    // Version of the depth model that saved K values belong to. Incremented to 3 so stale
+    // unscaled K=11.2 values in NVS are replaced once by the new 48.2f manikin default.
+    constexpr uint8_t     DEPTH_MODEL_VERSION                 = 3;
 
-    // A detection whose integrated motion is smaller than this is a bump (hands
+    // A detection whose raw unscaled integrated motion is smaller than this is a bump (hands
     // repositioned, vest knocked), not a compression, and is not counted.
-    constexpr float       MIN_STROKE_DEPTH_CM                 = 0.8f;
+    constexpr float       MIN_STROKE_DEPTH_CM                 = 0.25f;
 
     // Cadence Consistency
     constexpr float       MAX_CADENCE_JITTER_RATIO      = 0.25f;    // 25% period variance threshold to flag unsteady rhythm
@@ -122,13 +122,13 @@ namespace CPReadyConfig {
     constexpr float       LOWPASS_FILTER_ALPHA          = 0.25f;   // Exponential smoothing factor (~4.5 Hz lowpass cutoff)
     constexpr uint32_t    REFRACTORY_LOCKOUT_MS         = 300;     // Minimum onset-to-onset interval (200 cpm ceiling); timed from stroke START
     constexpr uint32_t    MIN_END_TO_ONSET_MS           = 80;      // Quiet time after a stroke ends before the next onset may start
-    constexpr float       STROKE_FINISH_THRESHOLD_G     = -0.05f;  // Upward zero-crossing threshold to mark stroke completion
-    constexpr float       RECOIL_ARM_FRACTION           = 0.30f;   // Recoil phase must swing below -(fraction x stroke peak) before it can finish
-    constexpr float       RECOIL_ARM_MIN_G              = 0.08f;   // ...and at least this far below zero. Must stay well
+    constexpr float       STROKE_FINISH_THRESHOLD_G     = -0.02f;  // Upward zero-crossing threshold to mark stroke completion
+    constexpr float       RECOIL_ARM_FRACTION           = 0.15f;   // Recoil phase must swing below -(fraction x stroke peak) before it can finish
+    constexpr float       RECOIL_ARM_MIN_G              = 0.04f;   // ...and at least this far below zero. Must stay well
                                                                    // below STROKE_FINISH_THRESHOLD_G, or a weak stroke arms
                                                                    // and finishes in the same sample on its way down.
-    constexpr float       MIN_START_THRESHOLD_G         = 0.12f;   // Floor of the adaptive downstroke threshold (filtered g)
-    constexpr float       ADAPTIVE_START_FRACTION       = 0.40f;   // Adaptive threshold = fraction x recent signal envelope, capped at the profile threshold
+    constexpr float       MIN_START_THRESHOLD_G         = 0.08f;   // Floor of the adaptive downstroke threshold (filtered g)
+    constexpr float       ADAPTIVE_START_FRACTION       = 0.30f;   // Adaptive threshold = fraction x recent signal envelope, capped at the profile threshold
     constexpr float       ENVELOPE_DECAY_PER_SAMPLE     = 0.993f;  // Signal-envelope decay at 100 Hz (half-life ~1 s)
     constexpr uint32_t    MIN_VALID_PERIOD_MS           = 300;     // Shortest stroke period accepted as a cadence (200 cpm)
     constexpr uint32_t    PAUSE_DETECTION_TIMEOUT_MS    = 1500;    // A gap longer than this is a pause: no CCF credit, no rate, cue streaks reset
