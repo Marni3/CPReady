@@ -9,18 +9,21 @@ import 'package:flutter/material.dart';
 import 'audio/voice_coach.dart';
 import 'ble/ble_controller.dart';
 import 'history/session_repository.dart';
+import 'telemetry/upload_service.dart';
 
 /// AppScope exposes the shared app services to descendants.
 class AppScope extends InheritedWidget {
   final BleController controller;
   final SessionRepository repository;
   final VoiceCoach voiceCoach;
+  final TelemetryUploadService uploadService;
 
   const AppScope({
     super.key,
     required this.controller,
     required this.repository,
     required this.voiceCoach,
+    this.uploadService = const TelemetryUploadService(),
     required super.child,
   });
 
@@ -37,9 +40,14 @@ class AppScope extends InheritedWidget {
   /// The coach that speaks the firmware's cue codes.
   static VoiceCoach voice(BuildContext context) => _scopeOf(context).voiceCoach;
 
+  /// Uploads finished raw recordings and retries the queue.
+  static TelemetryUploadService uploads(BuildContext context) =>
+      _scopeOf(context).uploadService;
+
   @override
   bool updateShouldNotify(AppScope oldWidget) =>
       controller != oldWidget.controller ||
       repository != oldWidget.repository ||
-      voiceCoach != oldWidget.voiceCoach;
+      voiceCoach != oldWidget.voiceCoach ||
+      uploadService != oldWidget.uploadService;
 }

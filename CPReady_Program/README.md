@@ -73,6 +73,9 @@ and packet reference is `docs/SOFTWARE_DEVELOPER_GUIDE.md` §3 and §4.5.
   measured correctly and fires every coaching cue.
 - `pio run -e simulation`: firmware that feeds synthetic strokes through the production
   tracker over BLE, so the app can be exercised without sensors.
+- `pio run -e fake_sensors`: the production firmware with synthetic accelerometer input
+  (`-D FAKE_SENSORS`), so the real session/command/BLE path can be exercised with no I2C
+  hardware.
 
 ---
 

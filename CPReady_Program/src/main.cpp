@@ -6,11 +6,13 @@
 #include "SensorManager.h"
 #include "CompressionTracker.h"
 #include "BleManager.h"
+#include "TelemetryStream.h"
 
 // Subsystem Instances
 SensorManager      sensors;
 CompressionTracker tracker;
 BleManager         ble;
+TelemetryStream    telemetry;
 Preferences        prefs;
 
 // System State Machine
@@ -71,6 +73,7 @@ void startCalibration(uint32_t now) {
     // later GET_RESULTS can never return another trainee's results.
     tracker.reset();
     sensors.resetCalibration();
+    telemetry.resetCounters();
     calibrationStartMillis = now;
     lastCalibProgressNotifyMillis = now;
     state = DeviceState::CALIBRATING;
@@ -80,6 +83,8 @@ void startCalibration(uint32_t now) {
 // Helper: Finalizes the active session and broadcasts final summary packet
 void endAndFinalizeSession(uint32_t now) {
     Serial.println("[FLOW] Finalizing CPR practice session...");
+    telemetry.flush();
+    telemetry.setEnabled(false);
     state = DeviceState::STANDBY;
     sensors.resetCalibration();
     practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
@@ -115,6 +120,8 @@ void endAndFinalizeSession(uint32_t now) {
 // and wait in FAULT_ERROR until a CALIBRATE succeeds in re-initialising the sensors.
 void enterSensorFault() {
     Serial.println("[FAULT] Sensor communication failed. Session abandoned; send CALIBRATE to retry.");
+    telemetry.flush();
+    telemetry.setEnabled(false);
     tracker.reset();
     sensors.resetCalibration();
     practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
@@ -188,6 +195,7 @@ void onReceiveMessage_BLE(String message) {
             }
             Serial.println("[FLOW] Device is calibrated and ready. Starting active CPR session!");
             tracker.startSession(now);
+            telemetry.resetCounters();
             demoSessionStartMillis = now;
             lastBleNotifyMillis = now;
             state = DeviceState::ACTIVE_SESSION;
@@ -224,6 +232,12 @@ void onReceiveMessage_BLE(String message) {
         Serial.println("[FLOW] Retransmission requested via GET_RESULTS.");
         CPRMetricsPacket finalPacket = tracker.getLastSummary().toPacket(PKT_TYPE_FINAL_SUMMARY);
         ble.sendPacket(finalPacket);
+    }
+    else if (message == "TELEM:1") {
+        telemetry.setEnabled(true);
+    }
+    else if (message == "TELEM:0") {
+        telemetry.setEnabled(false);
     }
     else if (message == "PAUSE") {
         if (state == DeviceState::ACTIVE_SESSION) {
@@ -489,6 +503,7 @@ void setup() {
     #endif
 
     ble.begin(CPReadyConfig::BLE_DEVICE_NAME);
+    telemetry.begin(&ble);
     Serial.printf("[OK] BLE GATT Server Advertising as '%s'. Ready for app connection.\n", CPReadyConfig::BLE_DEVICE_NAME);
 }
 
@@ -498,6 +513,7 @@ void loop() {
 
     // 1. Check for Bluetooth Disconnection during active operation
     if (ble.checkAndClearDisconnectionEvent()) {
+        telemetry.setEnabled(false);
         practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
         if (kTrialOverrideActive) restoreSavedK();
         if (state == DeviceState::CALIBRATING || state == DeviceState::ACTIVE_SESSION ||
@@ -592,7 +608,8 @@ void loop() {
         float netAccel = 0.0f;
         float rawNetAccel = 0.0f;
         float dtSeconds = 0.01f;
-        bool sampled = sensors.sample100Hz(netAccel, rawNetAccel, dtSeconds, nowMicros);
+        TelemetryFrames::SensorRawSample rawSample;
+        bool sampled = sensors.sample100Hz(netAccel, rawNetAccel, dtSeconds, nowMicros, &rawSample);
         if (sensors.hasFault()) {
             enterSensorFault();
             return;
@@ -600,6 +617,8 @@ void loop() {
         if (sampled) {
             // Filtered sample detects strokes; the raw sample is integrated with true dt for depth
             bool strokeCompleted = tracker.processSample(netAccel, rawNetAccel, now, dtSeconds);
+
+            telemetry.addSample(rawSample, tracker.getReading().stroke_count, state);
 
             // Transmit immediately upon stroke completion, or throttle at configured interval
             if (strokeCompleted || (now - lastBleNotifyMillis >= CPReadyConfig::BLE_NOTIFY_INTERVAL_MS)) {

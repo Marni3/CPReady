@@ -15,6 +15,8 @@ import 'package:go_router/go_router.dart';
 import '../../config/config.dart';
 import '../../core/feedback/metric_feedback.dart';
 import '../../core/metrics/cpr_metrics.dart';
+import '../../core/telemetry/telemetry_recorder.dart';
+import '../../core/telemetry/upload_service.dart';
 import '../../core/tab_state.dart';
 import '../../widgets/widgets.dart';
 
@@ -73,6 +75,12 @@ class SessionCompleteScreen extends StatefulWidget {
   /// Optional GET_RESULTS retry used by the results-unavailable state.
   final Future<SessionResultData?> Function()? onRetryRetrieval;
 
+  /// Raw recording summary when the session recorded sensor data.
+  final TelemetryRecording? telemetryRecording;
+
+  /// Upload result future; null when raw recording was off or unavailable.
+  final Future<TelemetryUploadResult>? telemetryUpload;
+
   /// True when viewing a previously saved session from History.
   final bool fromHistory;
 
@@ -84,6 +92,8 @@ class SessionCompleteScreen extends StatefulWidget {
     required this.durationSeconds,
     this.historySaved = true,
     this.onRetryRetrieval,
+    this.telemetryRecording,
+    this.telemetryUpload,
     this.fromHistory = false,
   });
 
@@ -153,8 +163,7 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bool showRetry =
-        _reason == SessionEndReason.resultsUnavailable &&
+    final bool showRetry = _reason == SessionEndReason.resultsUnavailable &&
         widget.onRetryRetrieval != null;
 
     return PopScope(
@@ -243,7 +252,6 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
                       historySaved: _historySaved,
                     ),
                   ),
-
                   if (_retryFailed) ...<Widget>[
                     SizedBox(height: AppSpacing.small),
                     Text(
@@ -254,6 +262,13 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
                         weight: FontWeight.normal,
                         color: AppColors.summaryFailedText,
                       ),
+                    ),
+                  ],
+                  if (widget.telemetryRecording != null) ...<Widget>[
+                    SizedBox(height: AppSpacing.small),
+                    _TelemetryStatus(
+                      recording: widget.telemetryRecording!,
+                      upload: widget.telemetryUpload,
                     ),
                   ],
                 ],
@@ -280,9 +295,7 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
                     SizedBox(height: AppSpacing.small),
                     const Center(child: BenchBadge()),
                   ],
-
                   SizedBox(height: AppSpacing.summaryPanelGap),
-
                   Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: AppSpacing.summaryPanelInsetH,
@@ -317,7 +330,6 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
                       ),
                       SizedBox(height: AppSpacing.flowActionStackGap),
                     ],
-
                     FlatActionButton(
                       label: AppStrings.sessionReturnToHome,
                       onPressed: () => _returnToHome(context),
@@ -328,6 +340,101 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Raw-recording status under the session banner.
+class _TelemetryStatus extends StatelessWidget {
+  final TelemetryRecording recording;
+  final Future<TelemetryUploadResult>? upload;
+
+  const _TelemetryStatus({required this.recording, required this.upload});
+
+  @override
+  Widget build(BuildContext context) {
+    final String counts =
+        '${recording.sampleCount} samples · ${recording.frameCount} frames'
+        '${recording.interrupted ? AppStrings.telemetryInterruptedSuffix : ''}';
+    final TextStyle style = AppTypography.style(
+      size: AppTypography.bodySmallSize,
+      weight: FontWeight.normal,
+      color: AppColors.summaryHeadingText,
+    );
+
+    Widget line(String text, IconData icon, Color color) {
+      return Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: AppSpacing.summaryTitleInsetH,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Icon(icon, size: AppSizes.guideBackIconSize, color: color),
+            SizedBox(width: AppSpacing.small),
+            Flexible(
+                child: Text(text, style: style, textAlign: TextAlign.center)),
+          ],
+        ),
+      );
+    }
+
+    final Future<TelemetryUploadResult>? future = upload;
+    if (recording.sampleCount == 0) {
+      return line(
+        AppStrings.telemetryNoSamples,
+        Icons.warning_amber,
+        AppColors.summaryFailedText,
+      );
+    }
+    if (future == null) {
+      return line(
+        '${AppStrings.telemetrySavedLocal} · $counts',
+        Icons.save_alt,
+        AppColors.summarySavedText,
+      );
+    }
+
+    return FutureBuilder<TelemetryUploadResult>(
+      future: future,
+      builder:
+          (BuildContext context, AsyncSnapshot<TelemetryUploadResult> snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return line(
+            '${AppStrings.telemetryUploading} · $counts',
+            Icons.cloud_upload,
+            AppColors.summaryHeadingText,
+          );
+        }
+        final TelemetryUploadResult? result = snap.data;
+        if (result == null || snap.hasError) {
+          return line(
+            '${AppStrings.telemetryUploadFailed} · $counts',
+            Icons.cloud_off,
+            AppColors.summaryFailedText,
+          );
+        }
+        switch (result.outcome) {
+          case TelemetryUploadOutcome.uploaded:
+            return line(
+              '${AppStrings.telemetryUploaded} · $counts',
+              Icons.cloud_done,
+              AppColors.summarySavedText,
+            );
+          case TelemetryUploadOutcome.notConfigured:
+            return line(
+              '${AppStrings.telemetryUploadNotConfigured} · $counts',
+              Icons.save_alt,
+              AppColors.summarySavedText,
+            );
+          case TelemetryUploadOutcome.failed:
+            return line(
+              '${AppStrings.telemetryUploadFailed} · $counts',
+              Icons.cloud_off,
+              AppColors.summaryFailedText,
+            );
+        }
+      },
     );
   }
 }
@@ -350,9 +457,8 @@ class _SavedBanner extends StatelessWidget {
         ? AppColors.summarySavedBackground
         : AppColors.summaryFailedBackground;
 
-    final Color foreground = saved
-        ? AppColors.summarySavedText
-        : AppColors.summaryFailedText;
+    final Color foreground =
+        saved ? AppColors.summarySavedText : AppColors.summaryFailedText;
 
     final bool compact = AppLayout.isCompact(
       MediaQuery.sizeOf(context).width,
@@ -406,7 +512,6 @@ class _SavedBanner extends StatelessWidget {
                   color: foreground,
                 ),
               ),
-
               if (!saved) ...<Widget>[
                 SizedBox(height: AppSpacing.small),
                 Text(
@@ -422,7 +527,6 @@ class _SavedBanner extends StatelessWidget {
             ],
           ),
         ),
-
         if (saved && !historySaved) ...<Widget>[
           SizedBox(height: AppSpacing.small),
           Row(
@@ -515,9 +619,7 @@ class _MetricsPanel extends StatelessWidget {
               ),
             ),
           ),
-
           SizedBox(height: AppSpacing.summaryRowGap),
-
           _MetricRow(
             label: AppStrings.sessionRate,
             capsule: _gradedCapsule(
@@ -525,9 +627,7 @@ class _MetricsPanel extends StatelessWidget {
               rateRating(metrics.rateCpm),
             ),
           ),
-
           SizedBox(height: AppSpacing.summaryRowGap),
-
           _MetricRow(
             label: AppStrings.sessionDepth,
             capsule: _gradedCapsule(
@@ -535,9 +635,7 @@ class _MetricsPanel extends StatelessWidget {
               depthRating(metrics.depthCm),
             ),
           ),
-
           SizedBox(height: AppSpacing.summaryRowGap),
-
           _MetricRow(
             label: AppStrings.sessionCcf,
             capsule: _gradedCapsule(
@@ -545,18 +643,14 @@ class _MetricsPanel extends StatelessWidget {
               ccfRating(metrics.ccfPercent),
             ),
           ),
-
           SizedBox(height: AppSpacing.summaryRowGap),
-
           _MetricRow(
             label: AppStrings.sessionCompressions,
             capsule: _valueCapsule(
               '${metrics.totalCompressions}',
             ),
           ),
-
           SizedBox(height: AppSpacing.summaryDurationGap),
-
           Padding(
             padding: EdgeInsets.symmetric(
               horizontal: AppSpacing.summaryRowPaddingH,
@@ -574,9 +668,7 @@ class _MetricsPanel extends StatelessWidget {
                     ),
                   ),
                 ),
-
                 SizedBox(width: AppSpacing.summaryRowGap),
-
                 Text(
                   durationText(durationSeconds),
                   style: AppTypography.style(
@@ -588,7 +680,6 @@ class _MetricsPanel extends StatelessWidget {
               ],
             ),
           ),
-
           SizedBox(height: AppSpacing.summaryDurationBottomPadding),
         ],
       ),
@@ -639,9 +730,7 @@ class _MetricRow extends StatelessWidget {
               ),
             ),
           ),
-
           SizedBox(width: AppSpacing.summaryRowGap),
-
           capsule,
         ],
       ),

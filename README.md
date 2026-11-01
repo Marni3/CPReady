@@ -496,7 +496,8 @@ CPReady/
 **Firmware.** Requires [PlatformIO](https://platformio.org/). From `CPReady_Program/`:
 
 ```bash
-pio run -e esp32dev -t upload     # sensor firmware
+pio run -e esp32dev -t upload     # sensor firmware (real I2C)
+pio run -e fake_sensors -t upload # bench testing: synthetic sensors, no hardware
 pio run -e simulation -t upload   # simulation firmware: realistic synthetic compressions, no sensors
 pio device monitor -b 115200      # serial log
 ```
@@ -506,15 +507,28 @@ pio device monitor -b 115200      # serial log
 ```bash
 flutter pub get
 flutter run                       # on a connected Android phone
+
+# With Supabase upload enabled (replace with your project URL & anon key):
+flutter build apk --debug \
+  --dart-define=SUPABASE_URL=https://YOUR_PROJECT.supabase.co \
+  --dart-define=SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 flutter build apk --release
 ```
+
+**Supabase setup** (one-time, before building with upload):
+1. Create project at supabase.com
+2. Run `supabase/telemetry_schema.sql` in SQL Editor
+3. Copy Project URL + anon/publishable key
+
+See **`BUILD_AND_RUN.md`** for step-by-step with troubleshooting.
+See **`supabase/DATA_FORMAT.md`** for CSV/JSON schema.
+See **`ARCHITECTURE.md`** for full pipeline design.
 
 **Tests:**
 
 ```bash
 # Algorithm tests (any C++17 compiler), from CPReady_Program/test_native/
-g++ -std=c++17 -O2 -I shim -I ../include tracker_regression.cpp -o tracker_regression && ./tracker_regression
-g++ -std=c++17 -O2 -I shim -I ../include simulation_scenario.cpp -o simulation_scenario && ./simulation_scenario
+g++ -std=c++17 -O2 -I ../include telemetry_frames.cpp -o telemetry_frames && ./telemetry_frames
 
 # App tests, from FLUTTER/cpready/
 flutter test

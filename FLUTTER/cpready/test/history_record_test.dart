@@ -1,4 +1,4 @@
-/// History schema v4 and quality-flag / packet-loss provenance.
+/// History schema v5 and quality-flag / packet-loss provenance.
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,8 +6,8 @@ import 'package:cpready/src/config/config.dart';
 import 'package:cpready/src/core/history/session_record.dart';
 
 void main() {
-  test('schema v4 keeps quality_flags and settings and adds packets_lost', () {
-    expect(AppHistory.schemaVersion, 4);
+  test('schema v5 keeps v4 fields and adds the telemetry queue', () {
+    expect(AppHistory.schemaVersion, 5);
     expect(AppHistory.columnQualityFlags, 'quality_flags');
     expect(AppHistory.createSessionsV2, contains('quality_flags'));
     expect(
@@ -19,6 +19,11 @@ void main() {
     expect(
       AppHistory.migrateSessionsV3ToV4,
       'ALTER TABLE sessions ADD COLUMN packets_lost INTEGER',
+    );
+    expect(AppHistory.createTelemetryV5, contains(AppHistory.tableTelemetry));
+    expect(
+      AppHistory.createTelemetryV5,
+      contains(AppHistory.columnTelemetryLocalPath),
     );
     expect(AppDeviceSettings.createTable, contains(AppDeviceSettings.table));
     expect(

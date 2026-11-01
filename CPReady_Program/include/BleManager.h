@@ -17,6 +17,7 @@ private:
     BLEServer* pServer;
     BLECharacteristic* pNotifyChar;
     BLECharacteristic* pCommandChar;
+    BLECharacteristic* pTelemetryChar;
     bool isClientConnected;
     
     // Thread-safe FIFO queue for string commands
@@ -71,14 +72,15 @@ private:
 public:
     BleManager()
         : pServer(nullptr), pNotifyChar(nullptr), pCommandChar(nullptr),
-          isClientConnected(false), commandQueue(nullptr), hasDisconnectedFlag(false),
-          droppedCommandCount(0), notifySequence(0) {}
+          pTelemetryChar(nullptr), isClientConnected(false), commandQueue(nullptr),
+          hasDisconnectedFlag(false), droppedCommandCount(0), notifySequence(0) {}
 
     void begin(const char* deviceName = CPReadyConfig::BLE_DEVICE_NAME) {
         if (commandQueue == nullptr) {
             commandQueue = xQueueCreate(8, 64);
         }
         BLEDevice::init(deviceName);
+        BLEDevice::setMTU(CPReadyConfig::BLE_TARGET_MTU);
         pServer = BLEDevice::createServer();
         pServer->setCallbacks(this);
 
@@ -97,6 +99,13 @@ public:
             BLECharacteristic::PROPERTY_WRITE
         );
         pCommandChar->setCallbacks(this);
+
+        // Raw telemetry Characteristic: opt-in 100 Hz accelerometer frames.
+        pTelemetryChar = pService->createCharacteristic(
+            CPReadyConfig::BLE_CHAR_RAW_UUID,
+            BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+        );
+        pTelemetryChar->addDescriptor(new BLE2902());
 
         pService->start();
         BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
@@ -125,6 +134,27 @@ public:
         pNotifyChar->setValue((uint8_t*)&packet, sizeof(CPRConfigPacket));
         pNotifyChar->notify();
         return true;
+    }
+
+    // Transmits one raw telemetry frame on the separate characteristic.
+    // notify() returns void in this BLE library, so this only reports whether a
+    // connected peer existed; per-frame gaps are detected by the app counters.
+    bool sendTelemetryFrame(const uint8_t* data, size_t length) {
+        if (!isClientConnected || pTelemetryChar == nullptr || pServer == nullptr) return false;
+        if (data == nullptr || length == 0) return false;
+        if (pServer->getConnectedCount() == 0) return false;
+        pTelemetryChar->setValue((uint8_t*)data, length);
+        pTelemetryChar->notify();
+        return true;
+    }
+
+    // Negotiated ATT MTU for the current peer. 23 is the BLE default.
+    uint16_t getMtu() {
+        if (!isClientConnected || pServer == nullptr || pServer->getConnectedCount() == 0) {
+            return 23;
+        }
+        const uint16_t mtu = pServer->getPeerMTU(pServer->getConnId());
+        return mtu >= 23 ? mtu : 23;
     }
 
     // Backwards-compatible alias for existing code

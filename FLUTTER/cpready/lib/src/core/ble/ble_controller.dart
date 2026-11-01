@@ -6,6 +6,7 @@ import '../../config/config.dart';
 import 'ble.dart';
 import 'device_config.dart';
 import '../metrics/cpr_metrics.dart';
+import '../telemetry/raw_frame.dart';
 
 /// High-level connection status surfaced to the UI.
 enum BleStatus { disconnected, scanning, connecting, connected, error }
@@ -96,6 +97,23 @@ class BleController extends ChangeNotifier {
 
   /// Wall-clock end of the current session, stamped by [stopRecording].
   DateTime? sessionEndedAt;
+
+  // -----------------------------------------------------------------------
+  // Raw telemetry settings chosen on Practice Setup
+  // -----------------------------------------------------------------------
+
+  /// Opt-in; false keeps the normal practice path untouched.
+  bool telemetryEnabled = false;
+  String telemetryParticipantCode = '';
+  String telemetryExperiment = '';
+  String telemetryNotes = '';
+
+  bool get supportsRawTelemetry => ble.rawTelemetryCharacteristic != null;
+  int? get negotiatedMtu => ble.negotiatedMtu;
+
+  /// Raw accelerometer frames, when the firmware and phone negotiate a large
+  /// enough MTU. The firmware sends nothing until TELEM:1 is written.
+  Stream<RawTelemetryFrame> get rawFrames => ble.rawFrames;
 
   BleController() {
     ble.onDisconnected = _handleUnexpectedDisconnect;

@@ -25,6 +25,11 @@ import '../../core/history/history_revision.dart';
 import '../../core/history/session_record.dart';
 import '../../core/history/session_repository.dart';
 import '../../core/metrics/cpr_metrics.dart';
+import '../../core/telemetry/raw_frame.dart';
+import '../../core/telemetry/session_metadata.dart';
+import '../../core/telemetry/telemetry_recorder.dart';
+import '../../core/telemetry/telemetry_session_record.dart';
+import '../../core/telemetry/upload_service.dart';
 import '../../widgets/widgets.dart';
 import '../session_complete/session_complete_screen.dart';
 
@@ -55,6 +60,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   bool _initialized = false;
 
   StreamSubscription<CprMetrics>? _packetSub;
+  StreamSubscription<RawTelemetryFrame>? _rawSub;
+  TelemetryRecorder? _telemetryRecorder;
   Timer? _tick;
   Timer? _startWatchdog;
 
@@ -100,6 +107,9 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     controller.startRecording();
     controller.addListener(_onControllerChanged);
     _packetSub = controller.packets.listen(_onPacket);
+    if (controller.telemetryEnabled) {
+      unawaited(_startTelemetry(controller));
+    }
 
     // START is accepted only after calibration. If the device rejects it or the
     // first notification never arrives, surface the failure instead of showing
@@ -114,13 +124,158 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     });
   }
 
+  Future<void> _startTelemetry(BleController controller) async {
+    if (!controller.supportsRawTelemetry) {
+      debugPrint('Raw telemetry requested but the characteristic is absent');
+      return;
+    }
+
+    final SessionMetadata metadata = SessionMetadata(
+      sessionId: newSessionId(),
+      participantCode: controller.telemetryParticipantCode.isEmpty
+          ? 'P001'
+          : controller.telemetryParticipantCode,
+      experiment: controller.telemetryExperiment.isEmpty
+          ? 'practice'
+          : controller.telemetryExperiment,
+      notes: controller.telemetryNotes,
+      deviceName: controller.deviceName ?? '',
+      deviceId: controller.ble.device?.remoteId.toString() ?? '',
+      appVersion: AppIdentity.version,
+      startedAt: controller.sessionStartedAt ?? DateTime.now(),
+    );
+
+    final TelemetryRecorder recorder = TelemetryRecorder();
+    TelemetryRecording recording;
+    try {
+      recording = await recorder.start(metadata);
+    } catch (error) {
+      debugPrint('Raw telemetry start failed: $error');
+      await recorder.abort(delete: true);
+      return;
+    }
+
+    if (!mounted || _finished) {
+      await recorder.abort(delete: true);
+      return;
+    }
+
+    _telemetryRecorder = recorder;
+    _rawSub = controller.rawFrames.listen(_onRawFrame);
+    try {
+      await _repository?.saveTelemetrySession(
+        TelemetrySessionRecord.fromRecording(
+          recording,
+          status: AppHistory.telemetryRecording,
+        ),
+      );
+    } catch (error) {
+      debugPrint('Telemetry queue insert failed: $error');
+    }
+
+    if (_finished) {
+      await _abortTelemetry(delete: true);
+      return;
+    }
+
+    try {
+      await controller.sendCommand(AppTelemetry.commandOn);
+    } catch (error) {
+      debugPrint('TELEM:1 failed; raw recording aborted: $error');
+      await _abortTelemetry(delete: true);
+      return;
+    }
+
+    // The start watchdog can fire while the command is in flight. If so, turn
+    // the firmware stream off again and discard anything that was recorded.
+    if (_finished) {
+      await _sendTelemetryOff(controller);
+      await _abortTelemetry(delete: true);
+    }
+  }
+
+  void _onRawFrame(RawTelemetryFrame frame) {
+    if (!mounted) return;
+    _telemetryRecorder?.addFrame(frame);
+  }
+
+  Future<void> _abortTelemetry({bool delete = false}) async {
+    await _rawSub?.cancel();
+    _rawSub = null;
+    final TelemetryRecorder? recorder = _telemetryRecorder;
+    _telemetryRecorder = null;
+    if (recorder == null) return;
+    final String? id = recorder.sessionId;
+    await recorder.abort(delete: delete);
+    if (delete && id != null) {
+      try {
+        await _repository?.deleteTelemetrySession(id);
+      } catch (error) {
+        debugPrint('Telemetry queue cleanup failed: $error');
+      }
+    }
+  }
+
+  Future<(TelemetryRecording?, Future<TelemetryUploadResult>?)> _stopTelemetry(
+      bool interrupted) async {
+    final TelemetryRecorder? recorder = _telemetryRecorder;
+    if (recorder == null) return (null, null);
+    _telemetryRecorder = null;
+
+    TelemetryRecording recording;
+    try {
+      recording = await recorder.stop(interrupted: interrupted);
+    } catch (error) {
+      debugPrint('Raw telemetry finalize failed: $error');
+      await recorder.abort();
+      return (null, null);
+    }
+
+    final String status = interrupted
+        ? AppHistory.telemetryInterrupted
+        : AppHistory.telemetryComplete;
+    final TelemetrySessionRecord row = TelemetrySessionRecord.fromRecording(
+      recording,
+      status: status,
+    );
+
+    final SessionRepository? repository = _repository;
+    if (repository != null) {
+      try {
+        await repository.saveTelemetrySession(row);
+      } catch (error) {
+        debugPrint('Telemetry queue finalize failed: $error');
+      }
+    }
+
+    if (!mounted) return (recording, null);
+    final Future<TelemetryUploadResult>? upload = repository == null
+        ? null
+        : AppScope.uploads(context).uploadAndRecord(row, repository);
+    return (recording, upload);
+  }
+
   void _onStartTimeout() {
     if (!mounted || _finished || _latest != null) return;
+    // Set this before the asynchronous cleanup so an in-flight telemetry start
+    // cannot turn the stream on after it has been aborted.
+    _finished = true;
     _stopSessionInternals();
     _controller?.stopRecording();
     _controller?.resetSessionData();
-    _finished = true;
+    if (_telemetryRecorder != null) {
+      unawaited(_sendTelemetryOff(_controller));
+    }
+    unawaited(_abortTelemetry(delete: true));
     unawaited(_showStartFailure());
+  }
+
+  Future<void> _sendTelemetryOff(BleController? controller) async {
+    try {
+      await controller?.sendCommand(AppTelemetry.commandOff);
+    } catch (error) {
+      debugPrint('TELEM:0 failed: $error');
+    }
   }
 
   Future<void> _showStartFailure() async {
@@ -153,6 +308,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   void _stopSessionInternals() {
     _packetSub?.cancel();
     _packetSub = null;
+    unawaited(_rawSub?.cancel());
+    _rawSub = null;
     _tick?.cancel();
     _tick = null;
     _startWatchdog?.cancel();
@@ -191,6 +348,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
   void _onPacket(CprMetrics metrics) {
     if (!mounted) return;
+    _telemetryRecorder?.addMetrics(metrics);
     final int count = metrics.totalCompressions;
 
     if (metrics.packetType == AppBleConfig.packetError) {
@@ -249,11 +407,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       final int cue = metrics.audioPromptCode;
       final bool newCue = cue != _previousCueCode;
       _previousCueCode = cue;
-      if (newCue &&
-          !_muted &&
-          !_ending &&
-          !_finished &&
-          _cueGate.allows(cue)) {
+      if (newCue && !_muted && !_ending && !_finished && _cueGate.allows(cue)) {
         unawaited(_coach?.play(cue));
       }
     }
@@ -350,9 +504,13 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         (summary == null || summary.totalCompressions <= 0)) {
       finalReason = SessionEndReason.resultsUnavailable;
     }
-    final CprMetrics? finalSummary = finalReason == SessionEndReason.completed
-        ? summary
-        : null;
+    final CprMetrics? finalSummary =
+        finalReason == SessionEndReason.completed ? summary : null;
+
+    final (
+      TelemetryRecording? telemetryRecording,
+      Future<TelemetryUploadResult>? telemetryUpload,
+    ) = await _stopTelemetry(finalReason != SessionEndReason.completed);
 
     // Firmware duration when a summary exists, else the app-measured span.
     final int durationSeconds = finalSummary != null
@@ -381,6 +539,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
           summary: finalSummary,
           durationSeconds: durationSeconds,
           historySaved: historySaved,
+          telemetryRecording: telemetryRecording,
+          telemetryUpload: telemetryUpload,
           onRetryRetrieval: finalReason == SessionEndReason.resultsUnavailable
               ? _retryRetrieval
               : null,
@@ -466,6 +626,10 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   @override
   void dispose() {
     _stopSessionInternals();
+    if (_telemetryRecorder != null) {
+      unawaited(_sendTelemetryOff(_controller));
+    }
+    unawaited(_abortTelemetry());
     super.dispose();
   }
 
@@ -531,52 +695,50 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                           LayoutBuilder(
                             builder:
                                 (BuildContext context, BoxConstraints bounds) {
-                                  final Widget rate = _MetricSection(
-                                    label: AppStrings.liveRateLabel,
-                                    capsule: _capsule(
-                                      rateText(latest?.rateCpm),
-                                      rateRating(latest?.rateCpm),
-                                    ),
-                                  );
-                                  final Widget recoil = _MetricSection(
-                                    label: AppStrings.liveRecoilLabel,
-                                    capsule: _capsule(
-                                      recoilText(latest?.recoilPercentage),
-                                      recoilRating(
-                                        latest?.recoilPercentage,
-                                        estimated:
-                                            latest?.isRecoilEstimated ?? false,
-                                      ),
-                                    ),
-                                  );
-                                  final double each =
-                                      (bounds.maxWidth -
-                                          AppSpacing.liveSectionGap) /
-                                      2;
+                              final Widget rate = _MetricSection(
+                                label: AppStrings.liveRateLabel,
+                                capsule: _capsule(
+                                  rateText(latest?.rateCpm),
+                                  rateRating(latest?.rateCpm),
+                                ),
+                              );
+                              final Widget recoil = _MetricSection(
+                                label: AppStrings.liveRecoilLabel,
+                                capsule: _capsule(
+                                  recoilText(latest?.recoilPercentage),
+                                  recoilRating(
+                                    latest?.recoilPercentage,
+                                    estimated:
+                                        latest?.isRecoilEstimated ?? false,
+                                  ),
+                                ),
+                              );
+                              final double each = (bounds.maxWidth -
+                                      AppSpacing.liveSectionGap) /
+                                  2;
 
-                                  if (each < AppLayout.minSectionWidth) {
-                                    return Column(
-                                      children: <Widget>[
-                                        rate,
-                                        SizedBox(
-                                          height:
-                                              AppSpacing.liveSectionStackGap,
-                                        ),
-                                        recoil,
-                                      ],
-                                    );
-                                  }
+                              if (each < AppLayout.minSectionWidth) {
+                                return Column(
+                                  children: <Widget>[
+                                    rate,
+                                    SizedBox(
+                                      height: AppSpacing.liveSectionStackGap,
+                                    ),
+                                    recoil,
+                                  ],
+                                );
+                              }
 
-                                  return Row(
-                                    children: <Widget>[
-                                      Expanded(child: rate),
-                                      SizedBox(
-                                        width: AppSpacing.liveSectionGap,
-                                      ),
-                                      Expanded(child: recoil),
-                                    ],
-                                  );
-                                },
+                              return Row(
+                                children: <Widget>[
+                                  Expanded(child: rate),
+                                  SizedBox(
+                                    width: AppSpacing.liveSectionGap,
+                                  ),
+                                  Expanded(child: recoil),
+                                ],
+                              );
+                            },
                           ),
                           SizedBox(height: AppSpacing.liveSectionStackGap),
                           _MetricSection(
@@ -648,9 +810,8 @@ class _StatusHeader extends StatelessWidget {
               ),
               Semantics(
                 button: true,
-                label: muted
-                    ? AppStrings.liveUnmuteCues
-                    : AppStrings.liveMuteCues,
+                label:
+                    muted ? AppStrings.liveUnmuteCues : AppStrings.liveMuteCues,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: onToggleMute,
@@ -693,30 +854,30 @@ class _StatusLine extends StatelessWidget {
           bool up,
         ) = switch (controller.status) {
           BleStatus.connected => (
-            AppStrings.statusConnected,
-            AppColors.liveStatusConnected,
-            true,
-          ),
+              AppStrings.statusConnected,
+              AppColors.liveStatusConnected,
+              true,
+            ),
           BleStatus.scanning => (
-            AppStrings.statusScanning,
-            AppColors.statusScanning,
-            true,
-          ),
+              AppStrings.statusScanning,
+              AppColors.statusScanning,
+              true,
+            ),
           BleStatus.connecting => (
-            AppStrings.statusConnecting,
-            AppColors.statusConnecting,
-            true,
-          ),
+              AppStrings.statusConnecting,
+              AppColors.statusConnecting,
+              true,
+            ),
           BleStatus.disconnected => (
-            AppStrings.statusDisconnected,
-            AppColors.liveStatusLost,
-            false,
-          ),
+              AppStrings.statusDisconnected,
+              AppColors.liveStatusLost,
+              false,
+            ),
           BleStatus.error => (
-            '${AppStrings.statusErrorPrefix}${controller.lastError}',
-            AppColors.liveStatusLost,
-            false,
-          ),
+              '${AppStrings.statusErrorPrefix}${controller.lastError}',
+              AppColors.liveStatusLost,
+              false,
+            ),
         };
 
         return Row(
@@ -786,9 +947,8 @@ class _TimerBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final int raw = startedAt == null
-        ? 0
-        : DateTime.now().difference(startedAt!).inSeconds;
+    final int raw =
+        startedAt == null ? 0 : DateTime.now().difference(startedAt!).inSeconds;
     final int seconds = raw < 0 ? 0 : raw;
 
     return Column(
@@ -894,7 +1054,7 @@ class _CompressionCounter extends StatelessWidget {
         );
         final double textHeight =
             measureTextHeight(context, countText, countStyle) +
-            measureTextHeight(context, labelText, labelStyle);
+                measureTextHeight(context, labelText, labelStyle);
         final double diameter = math.min(
           math.max(
             AppSizes.liveCounterCircleSize,
