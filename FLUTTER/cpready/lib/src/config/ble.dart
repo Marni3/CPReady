@@ -63,11 +63,26 @@ class AppBleConfig {
   static String commandSetK(double depthK) =>
       'SET_K:${depthK.toStringAsFixed(2)}';
 
-  /// Resets the calibration factor K to default (11.20).
+  /// Resets the calibration factor K to default (48.20).
   static const String commandResetK = 'RESET_K';
 
   /// Sets the I2C bus speed (100 kHz standard or 400 kHz fast) and resets the ESP32.
   static String commandSetI2C(int khz) => 'SET_I2C:$khz';
+
+  /// Applies a stroke detection sensitivity preset ('HIGH', 'BALANCED', 'STRICT').
+  static String commandSetSensitivity(String mode) => 'SET_SENS:$mode';
+
+  /// Sets the minimum downstroke trigger floor in g (0.03 to 0.60).
+  static String commandSetTriggerG(double g) =>
+      'SET_TRIG:${g.toStringAsFixed(3)}';
+
+  /// Sets the recoil arming fraction of peak acceleration (0.05 to 0.50).
+  static String commandSetRecoilArm(double frac) =>
+      'SET_ARM:${frac.toStringAsFixed(2)}';
+
+  /// Sets the minimum unscaled stroke depth gate in cm (0.05 to 2.50).
+  static String commandSetMinDepth(double cm) =>
+      'SET_MIN_D:${cm.toStringAsFixed(2)}';
 
   /// Clears the firmware's flash configuration and restores factory defaults.
   static const String commandResetConfig = 'RESET_CONFIG';
@@ -191,4 +206,5 @@ class AppBleConfig {
   static const int errWrongState = 5;
   static const int errNoTrialData = 6;
   static const int errI2cFault = 7;
+  static const int errCalibOutOfRange = 8;
 }

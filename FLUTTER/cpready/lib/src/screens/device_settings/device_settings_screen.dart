@@ -33,6 +33,9 @@ class DeviceSettingsScreen extends StatefulWidget {
 
 class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
   final TextEditingController _kController = TextEditingController();
+  final TextEditingController _trigController = TextEditingController(text: '0.08');
+  final TextEditingController _armController = TextEditingController(text: '0.15');
+  final TextEditingController _minDepthController = TextEditingController(text: '0.25');
 
   late BleController _controller;
   late SessionRepository _repository;
@@ -45,6 +48,16 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
   bool _kSaving = false;
   bool _resetting = false;
   bool _i2cSaving = false;
+  bool _sensSaving = false;
+
+  bool get _busy =>
+      _loading ||
+      _refreshing ||
+      _profileSaving ||
+      _kSaving ||
+      _resetting ||
+      _i2cSaving ||
+      _sensSaving;
 
   /// True only after a Type 6 report populated the current values.
   bool _readBackSupported = false;
@@ -52,6 +65,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
   String? _status;
   bool _statusIsError = false;
   String? _kError;
+  String? _sensError;
 
   /// Reminder shown after a successful profile switch (K was reset).
   bool _profileResetNotice = false;
@@ -76,6 +90,9 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
   void dispose() {
     _controller.removeListener(_onConnectionChanged);
     _kController.dispose();
+    _trigController.dispose();
+    _armController.dispose();
+    _minDepthController.dispose();
     super.dispose();
   }
 
@@ -125,12 +142,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
 
   /// Sends GET_CONFIG and waits for Type 6, then persists the read-back.
   Future<void> _refresh() async {
-    if (!mounted ||
-        _refreshing ||
-        _loading ||
-        _profileSaving ||
-        _kSaving ||
-        _resetting) {
+    if (!mounted || _busy) {
       return;
     }
 
@@ -207,7 +219,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
 
   /// Sends SET_K after validating the same 1.00–30.00 range as the firmware.
   Future<void> _setK() async {
-    if (_kSaving || _refreshing || !_controller.isConnected) return;
+    if (_busy || !_controller.isConnected) return;
 
     final String raw = _kController.text.trim().replaceAll(',', '.');
     final double? value = double.tryParse(raw);
@@ -265,7 +277,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
   /// Sets the I2C bus speed (100 kHz standard or 400 kHz fast) after confirmation.
   /// The firmware writes to NVS, acknowledges, delays 300 ms, and resets the ESP32.
   Future<void> _setI2CSpeed(int khz) async {
-    if (_i2cSaving || _refreshing || !_controller.isConnected) return;
+    if (_busy || !_controller.isConnected) return;
 
     final bool? confirmed = await showDialog<bool>(
       context: context,
@@ -316,10 +328,113 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
     });
   }
 
+  /// Sends a sensitivity preset ('HIGH', 'BALANCED', 'STRICT') and updates the
+  /// fine-tuning text fields to match the preset's values.
+  Future<void> _applySensitivityPreset(String mode) async {
+    if (_busy || !_controller.isConnected) return;
+
+    setState(() {
+      _sensSaving = true;
+      _sensError = null;
+      _status = AppStrings.deviceSettingsSensSending;
+      _statusIsError = false;
+    });
+
+    try {
+      await _controller.sendCommand(AppBleConfig.commandSetSensitivity(mode));
+    } catch (error) {
+      debugPrint('SET_SENS failed: $error');
+      if (!mounted) return;
+      setState(() {
+        _sensSaving = false;
+        _status = AppStrings.deviceSettingsSensFailed;
+        _statusIsError = true;
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _sensSaving = false;
+      if (mode == 'HIGH') {
+        _trigController.text = '0.05';
+        _armController.text = '0.10';
+        _minDepthController.text = '0.15';
+      } else if (mode == 'STRICT') {
+        _trigController.text = '0.12';
+        _armController.text = '0.25';
+        _minDepthController.text = '0.50';
+      } else {
+        _trigController.text = '0.08';
+        _armController.text = '0.15';
+        _minDepthController.text = '0.25';
+      }
+      _status = AppStrings.deviceSettingsSensSent;
+      _statusIsError = false;
+    });
+  }
+
+  /// Sends custom fine-tuned sensitivity parameters (SET_TRIG, SET_ARM, SET_MIN_D).
+  Future<void> _applyFineSensitivity() async {
+    if (_busy || !_controller.isConnected) return;
+
+    final double? trig = double.tryParse(
+      _trigController.text.trim().replaceAll(',', '.'),
+    );
+    final double? arm = double.tryParse(
+      _armController.text.trim().replaceAll(',', '.'),
+    );
+    final double? minD = double.tryParse(
+      _minDepthController.text.trim().replaceAll(',', '.'),
+    );
+
+    if (trig == null ||
+        trig < 0.03 ||
+        trig > 0.60 ||
+        arm == null ||
+        arm < 0.05 ||
+        arm > 0.50 ||
+        minD == null ||
+        minD < 0.05 ||
+        minD > 2.50) {
+      setState(() => _sensError = AppStrings.deviceSettingsSensInvalid);
+      return;
+    }
+
+    setState(() {
+      _sensSaving = true;
+      _sensError = null;
+      _status = AppStrings.deviceSettingsSensSending;
+      _statusIsError = false;
+    });
+
+    try {
+      await _controller.sendCommand(AppBleConfig.commandSetTriggerG(trig));
+      await _controller.sendCommand(AppBleConfig.commandSetRecoilArm(arm));
+      await _controller.sendCommand(AppBleConfig.commandSetMinDepth(minD));
+    } catch (error) {
+      debugPrint('Fine sensitivity update failed: $error');
+      if (!mounted) return;
+      setState(() {
+        _sensSaving = false;
+        _status = AppStrings.deviceSettingsSensFailed;
+        _statusIsError = true;
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _sensSaving = false;
+      _status = AppStrings.deviceSettingsSensSent;
+      _statusIsError = false;
+    });
+  }
+
   /// Sends SET_PROFILE only after confirmation, then reads the device back so
   /// the K shown is the new profile's own K.
   Future<void> _selectProfile(KinematicProfile profile) async {
-    if (_profileSaving || _refreshing || !_controller.isConnected) return;
+    if (_busy || !_controller.isConnected) return;
     if (profile == _settings?.profile) return;
 
     final bool confirmed = await confirmProfileChange(context);
@@ -373,7 +488,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
 
   /// RESET_CONFIG is destructive, so the button is press-and-hold only.
   Future<void> _resetConfig() async {
-    if (_resetting || _refreshing || !_controller.isConnected) return;
+    if (_busy || !_controller.isConnected) return;
 
     setState(() {
       _resetting = true;
@@ -540,11 +655,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
                 _ProfilePanel(
                   profile: settings.profile,
                   saving: _profileSaving,
-                  enabled:
-                      connected &&
-                      !_refreshing &&
-                      !_profileSaving &&
-                      !_resetting,
+                  enabled: connected && !_busy,
                   resetNotice: _profileResetNotice,
                   sectionStyle: _sectionStyle(),
                   bodyStyle: _bodyStyle(),
@@ -554,7 +665,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
                 _KPanel(
                   controller: _kController,
                   saving: _kSaving,
-                  enabled: connected && !_refreshing && !_kSaving,
+                  enabled: connected && !_busy,
                   error: _kError,
                   sectionStyle: _sectionStyle(),
                   bodyStyle: _bodyStyle(),
@@ -565,15 +676,26 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
                   onSetK: _setK,
                 ),
                 SizedBox(height: AppSpacing.section),
+                _SensitivityTuningPanel(
+                  trigController: _trigController,
+                  armController: _armController,
+                  minDepthController: _minDepthController,
+                  saving: _sensSaving,
+                  enabled: connected && !_busy,
+                  error: _sensError,
+                  sectionStyle: _sectionStyle(),
+                  bodyStyle: _bodyStyle(),
+                  fieldBorder: _fieldBorder(),
+                  onPresetSelected: _applySensitivityPreset,
+                  onChanged: () {
+                    if (_sensError != null) setState(() => _sensError = null);
+                  },
+                  onApplyFine: _applyFineSensitivity,
+                ),
+                SizedBox(height: AppSpacing.section),
                 _I2CSpeedPanel(
                   saving: _i2cSaving,
-                  enabled:
-                      connected &&
-                      !_refreshing &&
-                      !_profileSaving &&
-                      !_kSaving &&
-                      !_resetting &&
-                      !_i2cSaving,
+                  enabled: connected && !_busy,
                   sectionStyle: _sectionStyle(),
                   bodyStyle: _bodyStyle(),
                   onSpeedSelected: _setI2CSpeed,
@@ -581,7 +703,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
                 SizedBox(height: AppSpacing.section),
                 _ResetPanel(
                   resetting: _resetting,
-                  enabled: connected && !_refreshing && !_resetting,
+                  enabled: connected && !_busy,
                   sectionStyle: _sectionStyle(),
                   bodyStyle: _bodyStyle(),
                   onComplete: _resetConfig,
@@ -591,14 +713,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
                   label: _refreshing
                       ? AppStrings.deviceSettingsRefreshing
                       : AppStrings.deviceSettingsRefresh,
-                  onPressed:
-                      connected &&
-                          !_refreshing &&
-                          !_profileSaving &&
-                          !_kSaving &&
-                          !_resetting
-                      ? _refresh
-                      : null,
+                  onPressed: connected && !_busy ? _refresh : null,
                 ),
               ],
             ],
@@ -986,6 +1101,172 @@ class _I2CSpeedPanel extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SensitivityTuningPanel extends StatelessWidget {
+  const _SensitivityTuningPanel({
+    required this.trigController,
+    required this.armController,
+    required this.minDepthController,
+    required this.saving,
+    required this.enabled,
+    required this.error,
+    required this.sectionStyle,
+    required this.bodyStyle,
+    required this.fieldBorder,
+    required this.onPresetSelected,
+    required this.onChanged,
+    required this.onApplyFine,
+  });
+
+  final TextEditingController trigController;
+  final TextEditingController armController;
+  final TextEditingController minDepthController;
+  final bool saving;
+  final bool enabled;
+  final String? error;
+  final TextStyle sectionStyle;
+  final TextStyle bodyStyle;
+  final OutlineInputBorder fieldBorder;
+  final ValueChanged<String> onPresetSelected;
+  final VoidCallback onChanged;
+  final Future<void> Function() onApplyFine;
+
+  Widget _buildMiniField(
+    String label,
+    TextEditingController controller,
+  ) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(label, style: bodyStyle),
+          const SizedBox(height: 4),
+          TextField(
+            controller: controller,
+            enabled: enabled,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            onChanged: (_) => onChanged(),
+            style: AppTypography.style(
+              size: AppTypography.flowHelperSize,
+              weight: FontWeight.normal,
+              color: AppColors.flowFieldText,
+            ),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: AppColors.flowPanelBackground,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 10,
+              ),
+              border: fieldBorder,
+              enabledBorder: fieldBorder,
+              focusedBorder: fieldBorder,
+              disabledBorder: fieldBorder,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FlowPanel(
+      padding: EdgeInsets.all(AppSpacing.card),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(AppStrings.deviceSettingsSensSection, style: sectionStyle),
+          SizedBox(height: AppSpacing.small),
+          Text(AppStrings.deviceSettingsSensHelper, style: bodyStyle),
+          SizedBox(height: AppSpacing.item),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: enabled && !saving
+                      ? () => onPresetSelected('HIGH')
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 10,
+                      horizontal: 6,
+                    ),
+                  ),
+                  child: const Text(
+                    AppStrings.deviceSettingsSensHigh,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: enabled && !saving
+                      ? () => onPresetSelected('BALANCED')
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 10,
+                      horizontal: 6,
+                    ),
+                  ),
+                  child: const Text(
+                    AppStrings.deviceSettingsSensBalanced,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: enabled && !saving
+                      ? () => onPresetSelected('STRICT')
+                      : null,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 10,
+                      horizontal: 6,
+                    ),
+                  ),
+                  child: const Text(
+                    AppStrings.deviceSettingsSensStrict,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: AppSpacing.item),
+          Row(
+            children: <Widget>[
+              _buildMiniField('Trigger (g)', trigController),
+              const SizedBox(width: 8),
+              _buildMiniField('Recoil Arm', armController),
+              const SizedBox(width: 8),
+              _buildMiniField('Min Depth (cm)', minDepthController),
+            ],
+          ),
+          if (error != null) ...<Widget>[
+            SizedBox(height: AppSpacing.small),
+            Text(
+              error!,
+              style: bodyStyle.copyWith(color: AppColors.statusError),
+            ),
+          ],
+          SizedBox(height: AppSpacing.item),
+          FlatActionButton(
+            label: saving
+                ? AppStrings.deviceSettingsSensSending
+                : AppStrings.deviceSettingsSensApplyFine,
+            onPressed: enabled ? () => unawaited(onApplyFine()) : null,
+          ),
         ],
       ),
     );

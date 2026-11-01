@@ -61,6 +61,10 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   /// True between START and the summary; leaving then aborts the trial.
   bool _trialActive = false;
 
+  /// True only once CALIBRATE has been dispatched, preventing a stale Type 3
+  /// packet from advancing zeroing prematurely.
+  bool _calibrateCommandSent = false;
+
   String? _error;
 
   @override
@@ -113,6 +117,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
 
     setState(() {
       _stage = _Stage.zeroing;
+      _calibrateCommandSent = false;
       _error = null;
       _meanDepth = null;
       _latest = null;
@@ -128,6 +133,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       );
       _durationChanged = true;
 
+      _calibrateCommandSent = true;
       await controller.sendCommand(AppBleConfig.commandCalibrate);
     } catch (error) {
       debugPrint('Manikin zeroing start failed: ');
@@ -187,28 +193,34 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     }
   }
 
+  String _messageForErrorCode(int errorCode) {
+    return switch (errorCode) {
+      AppBleConfig.errMotionUnstable => AppStrings.calibrationErrorUnstable,
+      AppBleConfig.errLowSampleCount => AppStrings.calibrationErrorLowSamples,
+      AppBleConfig.errGravityImplausible => AppStrings.calibrationErrorGravity,
+      AppBleConfig.errSensorAlignment => AppStrings.calibrationErrorAlignment,
+      AppBleConfig.errWrongState => AppStrings.calibrationErrorBusy,
+      AppBleConfig.errNoTrialData => AppStrings.calibrationErrorNoTrialData,
+      AppBleConfig.errI2cFault => AppStrings.calibrationErrorI2cFault,
+      AppBleConfig.errCalibOutOfRange => AppStrings.manikinTargetRejected,
+      _ => AppStrings.manikinError,
+    };
+  }
+
   void _onPacket(CprMetrics metrics) {
     if (!mounted) return;
 
     switch (_stage) {
       case _Stage.zeroing:
         if (metrics.packetType == AppBleConfig.packetCalibrationDone) {
+          if (!_calibrateCommandSent) return;
           _calibrationTimeout?.cancel();
           _calibrationTimeout = null;
           setState(() {
             _stage = _Stage.ready;
           });
         } else if (metrics.packetType == AppBleConfig.packetError) {
-          final String msg = switch (metrics.errorCode) {
-            AppBleConfig.errMotionUnstable => AppStrings.calibrationErrorUnstable,
-            AppBleConfig.errLowSampleCount => AppStrings.calibrationErrorLowSamples,
-            AppBleConfig.errGravityImplausible => AppStrings.calibrationErrorGravity,
-            AppBleConfig.errSensorAlignment => AppStrings.calibrationErrorAlignment,
-            AppBleConfig.errWrongState => AppStrings.calibrationErrorBusy,
-            AppBleConfig.errI2cFault => AppStrings.calibrationErrorI2cFault,
-            _ => AppStrings.manikinError,
-          };
-          _fail(msg);
+          _fail(_messageForErrorCode(metrics.errorCode));
         }
       case _Stage.running:
         if (metrics.packetType == AppBleConfig.packetRealtime) {
@@ -216,7 +228,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
         } else if (metrics.packetType == AppBleConfig.packetFinalSummary) {
           _complete(metrics);
         } else if (metrics.packetType == AppBleConfig.packetError) {
-          _fail();
+          _fail(_messageForErrorCode(metrics.errorCode));
         }
       default:
         break;

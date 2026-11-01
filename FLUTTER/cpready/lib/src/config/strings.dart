@@ -252,7 +252,7 @@ class AppStrings {
   static const String deviceSettingsKHelper =
       'Enter a value from 1.00 to 100.00. SET_K writes and persists it on the '
       'device.';
-  static const String deviceSettingsKHint = 'e.g. 11.20';
+  static const String deviceSettingsKHint = 'e.g. 48.20';
   static const String deviceSettingsKSet = 'Set K on Device';
   static const String deviceSettingsKSending = 'Sending K…';
   static const String deviceSettingsKInvalid =
@@ -281,6 +281,21 @@ class AppStrings {
   static const String deviceSettingsI2C100 = '100 kHz (Standard)';
   static const String deviceSettingsI2C400 = '400 kHz (Fast Mode)';
   static const String deviceSettingsI2CSending = 'Applying I2C speed and resetting device...';
+
+  static const String deviceSettingsSensSection = 'Detection Sensitivity';
+  static const String deviceSettingsSensHelper =
+      'Adjust stroke detection sensitivity if compressions are undercounted on a damped manikin, or fine-tune trigger thresholds.';
+  static const String deviceSettingsSensHigh = 'High\n(Sensitive)';
+  static const String deviceSettingsSensBalanced = 'Balanced\n(Default)';
+  static const String deviceSettingsSensStrict = 'Strict\n(Low Noise)';
+  static const String deviceSettingsSensApplyFine = 'Apply Custom Thresholds';
+  static const String deviceSettingsSensSending = 'Updating sensitivity…';
+  static const String deviceSettingsSensSent =
+      'Detection sensitivity updated on the device.';
+  static const String deviceSettingsSensFailed =
+      'Could not update detection sensitivity on the device.';
+  static const String deviceSettingsSensInvalid =
+      'Enter valid thresholds: Trigger 0.03–0.60 g, Recoil Arm 0.05–0.50, Min Depth 0.05–2.50 cm.';
 
   static const String deviceSettingsResetFailed =
       'Could not reset the device configuration.';
@@ -333,7 +348,7 @@ class AppStrings {
   static const String calibrationErrorBusy =
       'Device is busy with another session or calibration. Please wait or restart the session.';
   static const String calibrationErrorNoTrialData =
-      'At least 5 compressions are required during the 15 s trial before target depth calibration can be saved.';
+      'At least 3 compressions are required during the 15 s trial before target depth calibration can be saved.';
   static const String calibrationErrorI2cFault =
       'Hardware sensor communication error. Please power cycle the CPReady vest.';
   static const String calibrationErrorDisconnected =
