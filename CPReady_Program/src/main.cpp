@@ -127,6 +127,26 @@ void saveDepthK(float k) {
     prefs.putFloat(isBench ? "k_bench" : "k_manikin", k);
 }
 
+void loadDepthCalibration(uint8_t savedProfile);
+
+// True while the running K is the temporary default used by a 15 s calibration trial
+// and differs from the K saved in flash.
+bool kTrialOverrideActive = false;
+
+void beginKTrialOverride() {
+    tracker.resetCalibrationToDefault();   // RAM only, nothing is written to flash
+    kTrialOverrideActive = true;
+    Serial.printf("[CALIB] Trial K override: using default %.2f (saved K kept in flash)\n", tracker.getDepthK());
+}
+
+// Puts the K saved in flash back into use.
+void restoreSavedK() {
+    loadDepthCalibration((uint8_t)tracker.getProfile());
+    tracker.setProfile(tracker.getProfile());   // re-selects the active K from the per-profile values
+    kTrialOverrideActive = false;
+    Serial.printf("[CALIB] Saved K restored: %.2f\n", tracker.getDepthK());
+}
+
 /**
  * Standardized BLE Message / Command Dispatcher
  *
@@ -161,6 +181,11 @@ void onReceiveMessage_BLE(String message) {
     }
     else if (message == "START") {
         if (state == DeviceState::CALIBRATED_READY) {
+            // A normal session must use the saved K again, even if the last trial was
+            // abandoned before CALIBRATE_TARGET.
+            if (kTrialOverrideActive && practiceDurationSec != CPReadyConfig::CALIBRATION_RUN_DURATION_SEC) {
+                restoreSavedK();
+            }
             Serial.println("[FLOW] Device is calibrated and ready. Starting active CPR session!");
             tracker.startSession(now);
             demoSessionStartMillis = now;
@@ -221,10 +246,10 @@ void onReceiveMessage_BLE(String message) {
             practiceDurationSec = sec;
             Serial.printf("[CONFIG] Session duration set to %u seconds (0 = manual stop).\n", (unsigned)practiceDurationSec);
             if (sec == CPReadyConfig::CALIBRATION_RUN_DURATION_SEC) {
-                // When 15s calibration duration is configured, always ensure default baseline K is restored
-                tracker.resetCalibrationToDefault();
-                saveDepthK(tracker.getDepthK());
-                Serial.printf("[CALIB] 15s calibration selected: depth K reset to factory baseline %.2f\n", tracker.getDepthK());
+                // A 15 s calibration trial must measure with the default K, not the already
+                // calibrated one. RAM only: the saved K stays in flash until CALIBRATE_TARGET
+                // replaces it, so an aborted trial cannot wipe a good calibration.
+                beginKTrialOverride();
             }
         } else {
             Serial.println("[CONFIG] Invalid SET_TIME value ignored.");
@@ -241,10 +266,9 @@ void onReceiveMessage_BLE(String message) {
     }
     else if (message == "RESET_K" || message == "CALIBRATE_RESET") {
         if (rejectConfigChange(message)) return;
-        tracker.resetCalibrationToDefault();
-        saveDepthK(tracker.getDepthK());
-        Serial.printf("[CALIB] Depth K reset to profile default: %.2f (persisted to flash)\n", tracker.getDepthK());
-        ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
+        // Same RAM-only reset as SET_TIME:15. No packet is sent: Type 3 means "baseline
+        // calibration finished" to the app and would be misread as such.
+        beginKTrialOverride();
     }
     else if (message.startsWith("SET_I2C:")) {
         if (rejectConfigChange(message)) return;
@@ -252,9 +276,10 @@ void onReceiveMessage_BLE(String message) {
         uint32_t hz = (speed >= 400) ? 400000 : 100000;
         prefs.putUInt("i2c_speed", hz);
         sensors.setI2CSpeed(hz);
-        Serial.printf("[CONFIG] I2C speed set to %lu Hz in flash. Acknowledging and restarting ESP32...\n", (unsigned long)hz);
-        ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
-        delay(300); // Allow BLE packet to be flushed before rebooting
+        Serial.printf("[CONFIG] I2C speed set to %lu Hz in flash. Restarting ESP32...\n", (unsigned long)hz);
+        // No Type 3 ack: it means "baseline calibration finished" to the app. The link
+        // drop on restart is the app's confirmation.
+        delay(300); // Let pending BLE traffic drain before rebooting
         ESP.restart();
     }
     else if (message == "SET_PROFILE:BENCH") {
@@ -275,6 +300,7 @@ void onReceiveMessage_BLE(String message) {
         float newK = 0.0f;
         if (tracker.calibrateFromLastSummary(targetCm, newK)) {
             saveDepthK(newK);
+            kTrialOverrideActive = false;   // newK is now the saved K
             Serial.printf("[CALIB] Auto-calibrated scalar K to %.2f based on target %.2f cm (persisted to flash)\n", newK, targetCm);
             ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
         } else {
@@ -420,6 +446,7 @@ void loop() {
     // 1. Check for Bluetooth Disconnection during active operation
     if (ble.checkAndClearDisconnectionEvent()) {
         practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+        if (kTrialOverrideActive) restoreSavedK();
         if (state == DeviceState::CALIBRATING || state == DeviceState::ACTIVE_SESSION ||
             state == DeviceState::SESSION_PAUSED || state == DeviceState::CALIBRATED_READY) {
             Serial.println("[BLE WARN] Disconnected during active session! Immediately aborting.");

@@ -65,6 +65,25 @@ static uint8_t     simLastLoggedCue  = PROMPT_NONE;
 static int8_t      simLastPhase      = -1;
 static String      simSerialLine     = "";
 
+// True while the running K is the temporary default of a 15 s calibration trial.
+static bool        simKTrialOverride = false;
+
+static void simBeginKTrialOverride() {
+    simTracker.resetCalibrationToDefault();   // RAM only
+    simKTrialOverride = true;
+    Serial.printf("[CALIB] Trial K override: using default %.2f (saved K kept)\n", simTracker.getDepthK());
+}
+
+static void simRestoreSavedK() {
+    const float km = simPrefs.getFloat("k_manikin", CPReadyConfig::DEPTH_CALIBRATION_K);
+    const float kb = simPrefs.getFloat("k_bench", CPReadyConfig::BENCH_DEPTH_CALIBRATION_K);
+    if (km >= CPReadyConfig::DEPTH_K_MIN && km <= CPReadyConfig::DEPTH_K_MAX) simTracker.setManikinK(km);
+    if (kb >= CPReadyConfig::DEPTH_K_MIN && kb <= CPReadyConfig::DEPTH_K_MAX) simTracker.setBenchK(kb);
+    simTracker.setProfile(simTracker.getProfile());
+    simKTrialOverride = false;
+    Serial.printf("[CALIB] Saved K restored: %.2f\n", simTracker.getDepthK());
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -182,6 +201,9 @@ static void startSimSession(uint32_t now) {
         simPracticeDurationSec > 0 &&
         simPracticeDurationSec <= SimConfig::STEADY_TRIAL_MAX_SEC;
 
+    if (simKTrialOverride && simPracticeDurationSec != CPReadyConfig::CALIBRATION_RUN_DURATION_SEC) {
+        simRestoreSavedK();
+    }
     simTracker.startSession(now);
     simVest.begin(now, steadyTrial);
 
@@ -307,20 +329,14 @@ static void handleBleCommand(String message) {
         const long seconds = numeric ? digits.toInt() : -1;
         if (seconds >= 0 && seconds <= 3600) {
             simPracticeDurationSec = (uint32_t)seconds;
-            if (simPracticeDurationSec == 15) {
-                simTracker.resetCalibrationToDefault();
-                simTracker.resetSummaryCalibrated();
-                Serial.printf("[CALIB] 15s session armed: K reset to default (%.2f)\n", simTracker.getDepthK());
+            if (simPracticeDurationSec == CPReadyConfig::CALIBRATION_RUN_DURATION_SEC) {
+                simBeginKTrialOverride();
             }
             Serial.printf("[CONFIG] Session duration set to %u s (0 = manual stop).\n", (unsigned)simPracticeDurationSec);
         }
     }
     else if (message == "RESET_K" || message == "CALIBRATE_RESET") {
-        simTracker.resetCalibrationToDefault();
-        simPrefs.remove("k_manikin");
-        simPrefs.remove("k_bench");
-        Serial.printf("[CALIB] Depth K reset to default (%.2f)\n", simTracker.getDepthK());
-        simBle.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
+        simBeginKTrialOverride();   // RAM only; no Type 3 packet (see main.cpp)
     }
     else if (message.startsWith("SET_K:")) {
         if (simRejectConfigChange(message)) return;
@@ -356,6 +372,7 @@ static void handleBleCommand(String message) {
             } else {
                 simPrefs.putFloat("k_manikin", newK);
             }
+            simKTrialOverride = false;
             Serial.printf("[CALIB] Target %.2f cm scales K %.2f -> %.2f.\n",
                           targetCm, previousK, newK);
             simBle.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_SUCCESS, 0));
@@ -653,6 +670,7 @@ void loop() {
     // A dropped link aborts an in-flight session, as in the sensor build.
     if (simBle.checkAndClearDisconnectionEvent()) {
         simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+        if (simKTrialOverride) simRestoreSavedK();
         if (simState == DeviceState::CALIBRATING ||
             simState == DeviceState::ACTIVE_SESSION ||
             simState == DeviceState::SESSION_PAUSED ||
