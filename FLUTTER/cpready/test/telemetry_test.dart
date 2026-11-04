@@ -17,6 +17,7 @@ Uint8List _frame({
   required int firstIndex,
   required List<List<int>> samples,
   int flags = AppTelemetry.flagStreaming,
+  int unclampedDepthMm = 58,
 }) {
   final int count = samples.length;
   final Uint8List bytes = Uint8List(
@@ -32,6 +33,7 @@ Uint8List _frame({
   data.setUint32(8, firstIndex, Endian.little);
   data.setUint16(12, 0, Endian.little);
   data.setUint8(14, 2);
+  data.setUint8(15, unclampedDepthMm);
   for (int i = 0; i < count; i++) {
     final int base = AppTelemetry.headerBytes + i * AppTelemetry.sampleBytes;
     data.setUint32(base, 1000000 + i * 10000, Endian.little);
@@ -72,6 +74,7 @@ void main() {
     expect(frame.samples[0].baseYMg, 5);
     expect(frame.samples[0].baseZMg, -6);
     expect(frame.samples[1].chestZMg, 9);
+    expect(frame.unclampedDepthMm, 58);
   });
 
   test('rejects type, version, count and length mismatches', () {
@@ -184,16 +187,24 @@ void main() {
     final List<String> raw = await File(stopped.rawPath).readAsLines();
     expect(raw, hasLength(5));
     expect(raw.first, AppTelemetry.rawHeader);
-    expect(raw[1], contains('1000000,0,1,7,2,1,1,2,3,4,5,6'));
+    expect(raw[1], contains('1000000,0,1,7,2,1,1,2,3,4,5,6,58'));
 
     final List<String> metrics = await File(stopped.metricsPath).readAsLines();
     expect(metrics, hasLength(2));
     expect(metrics.first, AppTelemetry.metricsHeader);
-    expect(metrics[1], contains('110,550,90'));
+    expect(metrics[1], contains('1,110,550,90'));
+
+    final List<String> events = await File(stopped.eventsPath).readAsLines();
+    expect(events.any((String line) => line.contains(',stroke,8')), isTrue);
+    expect(
+      events.any((String line) => line.contains(',recording_stopped,')),
+      isTrue,
+    );
 
     final Map<String, Object?> json =
         jsonDecode(await File(stopped.metadataPath).readAsString())
             as Map<String, Object?>;
+    expect(json['schema_version'], 2);
     expect(json['session_id'], '11111111-1111-4111-8111-111111111111');
     expect(json['participant_code'], 'P001');
     expect(json['status'], 'complete');

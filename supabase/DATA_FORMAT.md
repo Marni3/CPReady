@@ -21,7 +21,7 @@ The same four files exist locally on the device under the app's documents direct
 
 **Rate:** 100 Hz (one row per sample). Firmware batches up to 10 samples per BLE notification depending on negotiated MTU.
 
-**Columns:**
+**Columns (schema v2):**
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -29,20 +29,20 @@ The same four files exist locally on the device under the app's documents direct
 | `sample_index` | uint32 | Monotonic per session (0, 1, 2...). Gaps = dropped samples. |
 | `frame_sequence` | uint16 | BLE notification sequence number (wraps at 65535). |
 | `stroke_count` | uint16 | Firmware's stroke counter at this frame. |
-| `device_state` | uint8 | Firmware state machine state (idle/calibrating/active/fault). |
+| `device_state` | uint8 | `0`=STANDBY, `1`=CALIBRATING, `2`=ACTIVE_SESSION, `3`=SESSION_PAUSED, `4`=FAULT_ERROR, `5`=CALIBRATED_READY. |
 | `flags` | uint8 | Bitmask: `1`=streaming, `2`=sensor fault, `4`=overrun, `8`=calibrating. |
 | `chest_x_mg` | int16 | Chest sensor X axis, milli-g (±32767 = ±32.767g). |
 | `chest_y_mg` | int16 | Chest sensor Y axis. |
 | `chest_z_mg` | int16 | Chest sensor Z axis (gravity + compression). |
-| `base_x_mg` | int16 | Base/spine sensor X axis. |
-| `base_y_mg` | int16 | Base sensor Y axis. |
-| `base_z_mg` | int16 | Base sensor Z axis (gravity). |
+| `base_x_mg` | int16 | Base/spine sensor X axis (`0` when only 1 MPU is connected). |
+| `base_y_mg` | int16 | Base sensor Y axis (`0` when only 1 MPU is connected). |
+| `base_z_mg` | int16 | Base sensor Z axis (`0` when only 1 MPU is connected). |
+| `unclamped_depth_mm` | uint8 | Latest stroke depth in mm before the 10.0 cm display ceiling clamp (`0..255`). |
 
 **Important:**
-- This is **pure sensor data** — no filtering, no depth computation, no stroke detection.
-- Chest Z carries gravity (~+1000 mg when z points down) plus compression signal.
-- Base Z is ~+1000 mg static (base sensor sits on floor/backboard).
-- Net acceleration (compression) = `-(chest_z - base_z)` in g, after removing gravity.
+- `chest_*_mg` and `base_*_mg` are **unfiltered raw sensor readings**.
+- When two MPUs are physically connected, `base_*_mg` is still recorded in `raw.csv` even when the runtime algorithm is in **1-MPU (Chest Only)** mode (`SET_MPU:1`), enabling offline differential vs single-sensor comparisons.
+- In 1-MPU mode (`DEFAULT_USE_DUAL_MPU = false`), net compression acceleration is `-aChestG` along the learned 3-axis resting gravity vector. In 2-MPU mode (`SET_MPU:2`), net compression acceleration is `-(aChestG - aBaseG)`.
 - All values are **little-endian** on the wire; CSV is human-readable decimal.
 
 **Gap detection:**
@@ -54,26 +54,25 @@ The same four files exist locally on the device under the app's documents direct
 
 ## 2. `packets.csv` — Firmware Metrics Packets
 
-**Source:** Original BLE metrics characteristic (`6e400003-b5a3-f393-e0a9-e50e24dcca9e`), notify-only. **Unchanged by this PR.**
+**Source:** BLE metrics characteristic (`6e400002-b5a3-f393-e0a9-e50e24dcca9e`), notify-only (`6e400003-b5a3-f393-e0a9-e50e24dcca9e` is the write-only command characteristic).
 
-**Rate:** ~5–10 Hz during compressions; one packet per stroke + periodic realtime updates.
+**Rate:** ~5–10 Hz during compressions; one packet per stroke + 5 Hz periodic realtime updates.
 
-**Columns:**
+**Columns (schema v2):**
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `received_at` | ISO8601 UTC | Phone receipt timestamp. |
-| `packet_type` | uint8 | `1`=realtime, `2`=final_summary, `3`=error, `4`=calibration_progress, `5`=calibration_ready. |
-| `rate_cpm` | uint16 | Compressions per minute (firmware computed). |
-| `depth_tenths_mm` | uint16 | **Mean depth per stroke** in tenths of mm (e.g., `530` = 53.0 mm). Firmware computes this per stroke from double integration of net acceleration. |
-| `ccf_percent` | uint8 | Chest compression fraction (0–100). |
-| `audio_prompt_code` | uint8 | Voice cue code (0=none, 1=push_faster, 2=push_slower, etc.). |
-| `total_compressions` | uint16 | Cumulative stroke count this session. |
+| `packet_type` | uint8 | `1`=realtime, `2`=calib_progress, `3`=calib_success, `4`=final_summary, `5`=error, `6`=config_report. |
+| `recoil_status` | uint8 | Live (`packet_type=1`): `1`=full recoil, `0`=leaning. Summary (`packet_type=4`): recoil compliance % (`0..100`). |
+| `rate_cpm` | uint16 | Compressions per minute (live median of recent periods, or session mean on `packet_type=4`). |
+| `depth_tenths_mm` | uint16 | Compression depth in 0.1 mm (`540` = 54.0 mm = 5.40 cm). Live = latest stroke; `packet_type=4` = session mean depth. |
+| `ccf_percent` | uint8 | Chest compression fraction (`0..100%`). |
+| `audio_prompt_code` | uint8 | For `packet_type=1`: `0`=none, `1`=push_harder, `2`=push_shallower, `3`=release_fully, `4`=speed_up, `5`=slow_down, `6`=good_job. For `packet_type=5`: error reason code (`1..8`). |
+| `total_compressions` | uint16 | Cumulative stroke count this session (from protocol v2 16-bit `stroke_count`). |
 | `elapsed_sec` | uint16 | Session elapsed seconds (firmware clock). |
-| `quality_flags` | uint16 | Bitmask: `1`=steady_cadence, `2`=first_stroke, `4`=bench_mode, `8`=recoil_estimated. |
-| `sequence` | uint16 | Packet sequence (protocol v2+). Null for older firmware. |
-
-**This is where "mean depth" lives** — `depth_tenths_mm` is the firmware's per-stroke calculation. The raw CSV has no depth; you compute it offline from `raw.csv` if you want to verify or re-derive.
+| `quality_flags` | uint8 | Bitmask: `1`=steady_cadence, `2`=first_stroke, `4`=bench_mode, `8`=recoil_estimated. |
+| `sequence` | uint16 | BLE notification sequence number (protocol v2+). |
 
 ---
 
@@ -84,8 +83,8 @@ The same four files exist locally on the device under the app's documents direct
 | Column | Type | Description |
 |--------|------|-------------|
 | `received_at` | ISO8601 UTC | Phone timestamp. |
-| `event` | string | `recording_started`, `stroke`, `recording_stopped`, `interrupted`, `aborted`. |
-| `detail` | string | Session UUID for `recording_started`; stroke count for `stroke`; reason for stop. |
+| `event` | string | `recording_started`, `device_config`, `stroke`, `device_error`, `final_summary`, `recording_stopped`, `interrupted`. |
+| `detail` | string | Session UUID for `recording_started`; JSON config for `device_config`; stroke count for `stroke`; JSON summary for `final_summary`; sample/frame counts for stop. |
 
 ---
 
@@ -95,7 +94,7 @@ The same four files exist locally on the device under the app's documents direct
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "session_id": "550e8400-e29b-41d4-a716-446655440000",
   "participant_code": "P001",
   "experiment": "practice",
@@ -108,11 +107,25 @@ The same four files exist locally on the device under the app's documents direct
   "status": "complete",
   "sample_count": 15000,
   "frame_count": 1500,
-  "missing_samples": 2,
-  "missing_frames": 1,
+  "missing_samples": 0,
+  "missing_frames": 0,
   "firmware_dropped_frames": 0,
   "first_sample_index": 0,
   "last_sample_index": 14999,
+  "device_config": {
+    "profile": "manikin",
+    "depth_k": 11.2,
+    "practice_duration_sec": 120
+  },
+  "final_summary": {
+    "rate_cpm": 110,
+    "depth_tenths_mm": 560,
+    "recoil_percent": 100,
+    "ccf_percent": 92,
+    "total_compressions": 180,
+    "elapsed_sec": 120,
+    "quality_flags": 9
+  },
   "files": ["raw.csv", "packets.csv", "events.csv"]
 }
 ```
@@ -123,22 +136,14 @@ The same four files exist locally on the device under the app's documents direct
 
 ## Offline Replay / Re-computation
 
-To re-derive depth from `raw.csv` (matches firmware algorithm conceptually):
+Firmware depth is computed per stroke by `DepthEstimator.h` (`closedCycleDepthCm` for continuous strokes and `fromRestDepthCm` after pauses), not by an unbounded cumulative sum over the whole file:
 
-```python
-import pandas as pd
-import numpy as np
-
-df = pd.read_csv('raw.csv')
-# Net acceleration in g (remove gravity)
-net_g = -(df['chest_z_mg'] - df['base_z_mg']) / 1000.0
-# Double integrate with Riemann sum (dt = 0.01s)
-velocity = np.cumsum(net_g) * 9.80665 * 0.01  # m/s
-depth = np.cumsum(velocity) * 0.01            # m
-# Peak depth per stroke = max depth between zero-crossings of velocity
-```
-
-The firmware uses a low-pass filter (α ≈ 0.1) + zero-velocity update at each stroke; the raw double-integration above will drift without those corrections.
+1. Learn the resting 3-axis gravity unit vector $\hat{u}$ from the motionless baseline (`GravityAxis.h`) and project each sample: $a_{	ext{chest}}(t) = ec{a}(t)\cdot\hat{u} - \|ec{g}_0\|$, with downward compression positive (`rawNet = -aChestG` in 1-MPU mode).
+2. Detect stroke boundaries on the 1-pole IIR low-pass filtered signal (`LOWPASS_FILTER_ALPHA = 0.25`, $f_c pprox 4.5	ext{ Hz}$).
+3. Over each closed cycle $[i_{	ext{start}}, i_{	ext{end}}]$ of duration $T = \sum \Delta t_k$:
+   - Remove cycle mean acceleration $ar{a} = rac{1}{T}\sum a_k \Delta t_k$ so $v(T) = v(0) = 0$.
+   - Integrate velocity $v_j = \sum_{k \le j}(a_k - ar{a})\Delta t_k$ and remove cycle mean velocity $ar{v} = rac{1}{T}\sum v_j \Delta t_j$ so $x(T) = x(0) = 0$.
+   - Integrate displacement $x_j = \sum_{k \le j}(v_k - ar{v})\Delta t_k$ and take $\max_j x_j 	imes (K / 11.20)$.
 
 ---
 

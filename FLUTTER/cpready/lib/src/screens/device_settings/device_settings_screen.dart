@@ -49,6 +49,8 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
   bool _resetting = false;
   bool _i2cSaving = false;
   bool _sensSaving = false;
+  bool _mpuSaving = false;
+  bool _useDualMpu = false;
 
   bool get _busy =>
       _loading ||
@@ -57,7 +59,8 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
       _kSaving ||
       _resetting ||
       _i2cSaving ||
-      _sensSaving;
+      _sensSaving ||
+      _mpuSaving;
 
   /// True only after a Type 6 report populated the current values.
   bool _readBackSupported = false;
@@ -199,9 +202,12 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
     setState(() {
       _refreshing = false;
       _readBackSupported = true;
+      _useDualMpu = config!.useDualMpu;
       _settings = readBack;
       _hasStoredSettings = true;
       _kController.text = _formatK(readBack.depthK);
+      _trigController.text = config.minStartThresholdG.toStringAsFixed(2);
+      _armController.text = config.recoilArmFraction.toStringAsFixed(2);
       _kError = null;
       _profileResetNotice = false;
       _status = AppStrings.deviceSettingsReadBack;
@@ -324,6 +330,40 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
     setState(() {
       _i2cSaving = false;
       _status = 'I2C speed command sent. ESP32 is resetting... Reconnect when ready.';
+      _statusIsError = false;
+    });
+  }
+
+  /// Selects 1-MPU (Chest Only) or 2-MPU (Differential) mode on the device.
+  Future<void> _setSensorMode(int mpuCount) async {
+    if (_busy || !_controller.isConnected) return;
+
+    setState(() {
+      _mpuSaving = true;
+      _status = AppStrings.deviceSettingsSensorModeSending;
+      _statusIsError = false;
+    });
+
+    try {
+      await _controller.sendCommand(AppBleConfig.commandSetMpu(mpuCount));
+    } catch (error) {
+      debugPrint('SET_MPU failed: $error');
+      if (!mounted) return;
+      setState(() {
+        _mpuSaving = false;
+        _status = AppStrings.deviceSettingsSensorModeFailed;
+        _statusIsError = true;
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _mpuSaving = false;
+      _useDualMpu = mpuCount >= 2;
+      _status = mpuCount >= 2
+          ? AppStrings.deviceSettingsSensorModeSent2
+          : AppStrings.deviceSettingsSensorModeSent1;
       _statusIsError = false;
     });
   }
@@ -674,6 +714,15 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
                     if (_kError != null) setState(() => _kError = null);
                   },
                   onSetK: _setK,
+                ),
+                SizedBox(height: AppSpacing.section),
+                _SensorModePanel(
+                  useDualMpu: _useDualMpu,
+                  saving: _mpuSaving,
+                  enabled: connected && !_busy,
+                  sectionStyle: _sectionStyle(),
+                  bodyStyle: _bodyStyle(),
+                  onModeSelected: _setSensorMode,
                 ),
                 SizedBox(height: AppSpacing.section),
                 _SensitivityTuningPanel(
@@ -1032,6 +1081,83 @@ class _SettingRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _SensorModePanel extends StatelessWidget {
+  const _SensorModePanel({
+    required this.useDualMpu,
+    required this.saving,
+    required this.enabled,
+    required this.sectionStyle,
+    required this.bodyStyle,
+    required this.onModeSelected,
+  });
+
+  final bool useDualMpu;
+  final bool saving;
+  final bool enabled;
+  final TextStyle sectionStyle;
+  final TextStyle bodyStyle;
+  final ValueChanged<int> onModeSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return FlowPanel(
+      padding: EdgeInsets.all(AppSpacing.card),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(AppStrings.deviceSettingsSensorModeSection, style: sectionStyle),
+          SizedBox(height: AppSpacing.small),
+          Text(AppStrings.deviceSettingsSensorModeHelper, style: bodyStyle),
+          SizedBox(height: AppSpacing.item),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: OutlinedButton(
+                  onPressed:
+                      enabled && !saving ? () => onModeSelected(1) : null,
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: !useDualMpu
+                        ? AppColors.flowPanelBorder.withValues(alpha: 0.12)
+                        : null,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: 8,
+                    ),
+                  ),
+                  child: const Text(
+                    AppStrings.deviceSettingsSensorMode1Mpu,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed:
+                      enabled && !saving ? () => onModeSelected(2) : null,
+                  style: OutlinedButton.styleFrom(
+                    backgroundColor: useDualMpu
+                        ? AppColors.flowPanelBorder.withValues(alpha: 0.12)
+                        : null,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: 8,
+                    ),
+                  ),
+                  child: const Text(
+                    AppStrings.deviceSettingsSensorMode2Mpu,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

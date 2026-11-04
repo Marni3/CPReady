@@ -99,11 +99,11 @@ struct CPRConfigPacket {
     uint8_t  packet_type;            // Byte 0: 6 (PKT_TYPE_CONFIG_REPORT)
     uint8_t  profile;                // Byte 1: 0 = MANIKIN, 1 = BENCH
     uint16_t depth_k_x100;           // Byte 2..3: Scaled K (e.g. 11.20 -> 1120)
-    uint8_t  config_flags;           // Byte 4: Bit 0 = isBench, Bit 1 = hasCustomK
+    uint8_t  config_flags;           // Byte 4: Bit 0 = isBench, Bit 1 = hasCustomK, Bit 2 = useDualMpu, Bits 3..4 = sensPreset
     uint16_t practice_duration_sec;  // Byte 5..6: Active configured practice duration
     uint16_t default_duration_sec;   // Byte 7..8: Factory default duration (120s)
     uint8_t  protocol_version;       // Byte 9: Protocol version (1)
-    uint16_t reserved;               // Byte 10..11: Reserved (0)
+    uint16_t reserved;               // Byte 10: minStartThresholdG*1000, Byte 11: recoilArmFraction*100
 };
 #pragma pack(pop)
 

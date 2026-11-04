@@ -24,6 +24,7 @@
 namespace CPReadyConfig {
     // Hardware Sensor Mode
     constexpr bool        USE_DUAL_MPU_MODE             = USE_DUAL_MPU;
+    constexpr bool        DEFAULT_USE_DUAL_MPU          = false;    // Default to 1-MPU (chest only) at runtime; selectable via SET_MPU:1/2
 
     // Kinematic Sensitivity Profiles
     enum class KinematicProfile : uint8_t {
@@ -48,11 +49,10 @@ namespace CPReadyConfig {
     // Session & Tuning Parameters (Standard Adult Manikin Profile)
     constexpr uint32_t    DEFAULT_PRACTICE_DURATION_SEC       = 120;       // Total trial duration before auto-stop (0 = manual STOP)
     // Depth is integrated from acceleration (DepthEstimator.h). NOMINAL_INTEGRATOR_K (11.2)
-    // is the 1.0x reference denominator for the double integrator, while DEPTH_CALIBRATION_K
-    // (48.2) bakes in the empirical 4.30x manikin-to-vest mechanical coupling ratio (5.6 cm / 1.3 cm)
-    // so the vest reports accurate manikin depth out of the box.
+    // is the 1.0x reference denominator for the double integrator, and DEPTH_CALIBRATION_K
+    // (11.2) is the 1.0x default for 1-MPU chest-only mode (field data median 5.2-6.5 cm).
     constexpr float       NOMINAL_INTEGRATOR_K                = 11.2f;     // Unscaled 1.0x integrator reference denominator
-    constexpr float       DEPTH_CALIBRATION_K                 = 48.2f;     // Manikin profile default K (4.30x empirical manikin coupling)
+    constexpr float       DEPTH_CALIBRATION_K                 = 11.2f;     // Manikin profile default K (1.0x unscaled for 1-MPU chest mode)
     constexpr float       COMPRESSION_START_THRESHOLD_G       = 0.28f;     // Downstroke acceleration trigger threshold (g)
     constexpr float       RECOIL_THRESHOLD_G                  = -0.35f;    // Upward rebound threshold to confirm release (g)
 
@@ -65,9 +65,9 @@ namespace CPReadyConfig {
     constexpr float       DEPTH_K_MIN                         = 1.0f;
     constexpr float       DEPTH_K_MAX                         = 100.0f;
 
-    // Version of the depth model that saved K values belong to. Incremented to 3 so stale
-    // unscaled K=11.2 values in NVS are replaced once by the new 48.2f manikin default.
-    constexpr uint8_t     DEPTH_MODEL_VERSION                 = 3;
+    // Version of the depth model that saved K values belong to. Incremented to 4 so stale
+    // 48.2f values in NVS are replaced once by the unscaled 11.2f 1-MPU default.
+    constexpr uint8_t     DEPTH_MODEL_VERSION                 = 4;
 
     // A detection whose raw unscaled integrated motion is smaller than this is a bump (hands
     // repositioned, vest knocked), not a compression, and is not counted.

@@ -27,6 +27,8 @@ class DeviceConfig {
     required this.practiceDurationSeconds,
     required this.defaultDurationSeconds,
     required this.protocolVersion,
+    this.minStartThresholdG = 0.08,
+    this.recoilArmFraction = 0.15,
   });
 
   final KinematicProfile profile;
@@ -35,6 +37,8 @@ class DeviceConfig {
   final int practiceDurationSeconds;
   final int defaultDurationSeconds;
   final int protocolVersion;
+  final double minStartThresholdG;
+  final double recoilArmFraction;
 
   /// Firmware reports that the relaxed bench profile is active.
   bool get isBenchActive =>
@@ -42,6 +46,32 @@ class DeviceConfig {
 
   /// Firmware reports that K differs from the profile's factory default.
   bool get hasCustomK => configFlags & AppBleConfig.configFlagCustomK != 0;
+
+  /// Firmware reports that 2-MPU differential mode is active (false = 1-MPU chest only).
+  bool get useDualMpu => configFlags & AppBleConfig.configFlagDualMpu != 0;
+
+  /// Sensitivity preset code: 0 = BALANCED, 1 = HIGH, 2 = STRICT, 3 = CUSTOM.
+  int get sensitivityPreset =>
+      (configFlags & AppBleConfig.configSensitivityMask) >>
+      AppBleConfig.configSensitivityShift;
+
+  String get sensitivityLabel => switch (sensitivityPreset) {
+        1 => 'HIGH',
+        2 => 'STRICT',
+        3 => 'CUSTOM',
+        _ => 'BALANCED',
+      };
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'profile': profile.name,
+        'depth_k': depthK,
+        'has_custom_k': hasCustomK,
+        'sensor_mode': useDualMpu ? '2_mpu_differential' : '1_mpu_chest',
+        'sensitivity_preset': sensitivityLabel,
+        'min_start_threshold_g': minStartThresholdG,
+        'recoil_arm_fraction': recoilArmFraction,
+        'practice_duration_sec': practiceDurationSeconds,
+      };
 
   static DeviceConfig fromBytes(List<int> bytes) {
     if (bytes.length != AppBleConfig.configReportLength) {
@@ -83,6 +113,9 @@ class DeviceConfig {
       throw ArgumentError('Unsupported config protocol: $protocolVersion');
     }
 
+    final int trigRaw = data.getUint8(10);
+    final int armRaw = data.getUint8(11);
+
     return DeviceConfig(
       profile: profile,
       depthK: depthK,
@@ -90,6 +123,8 @@ class DeviceConfig {
       practiceDurationSeconds: practiceDuration,
       defaultDurationSeconds: defaultDuration,
       protocolVersion: protocolVersion,
+      minStartThresholdG: trigRaw > 0 ? trigRaw / 1000.0 : 0.08,
+      recoilArmFraction: armRaw > 0 ? armRaw / 100.0 : 0.15,
     );
   }
 }

@@ -162,6 +162,19 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
     _telemetryRecorder = recorder;
     _rawSub = controller.rawFrames.listen(_onRawFrame);
+
+    try {
+      final stored = await _repository?.loadDeviceSettings();
+      if (stored != null) {
+        recorder.setDeviceConfig(<String, Object?>{
+          'profile': stored.profile.name,
+          'depth_k': stored.depthK,
+          'practice_duration_sec': stored.practiceDurationSec,
+        });
+      }
+    } catch (error) {
+      debugPrint('Telemetry device config snapshot skipped: $error');
+    }
     try {
       await _repository?.saveTelemetrySession(
         TelemetrySessionRecord.fromRecording(

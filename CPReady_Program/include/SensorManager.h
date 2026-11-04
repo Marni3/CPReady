@@ -57,6 +57,8 @@ private:
     bool     sensorFault;
     uint32_t lastSampleSuccessMicros;
     uint32_t currentI2CSpeedHz;
+    bool     useDualMpu;
+    bool     baseSensorOnline;
 
 public:
     SensorManager() 
@@ -79,7 +81,9 @@ public:
           consecutiveReadFailures(0), identicalSampleCount(0),
           lastChestZ(0.0f), lastBaseZ(0.0f), sensorFault(false),
           lastSampleSuccessMicros(0),
-          currentI2CSpeedHz(CPReadyConfig::I2C_CLOCK_SPEED_HZ) {
+          currentI2CSpeedHz(CPReadyConfig::I2C_CLOCK_SPEED_HZ),
+          useDualMpu(CPReadyConfig::DEFAULT_USE_DUAL_MPU),
+          baseSensorOnline(false) {
         chestAxis.reset();
         baseAxis.reset();
         calChestVecSum = {0.0f, 0.0f, 0.0f};
@@ -92,6 +96,14 @@ public:
         Serial.printf("[I2C] Bus clock speed set to %lu Hz\n", (unsigned long)currentI2CSpeedHz);
     }
     uint32_t getI2CSpeed() const { return currentI2CSpeedHz; }
+
+    void setUseDualMpu(bool dual) {
+        useDualMpu = dual;
+        Serial.printf("[SENSOR] Runtime sensor mode set to %s\n",
+                      useDualMpu ? "2-MPU (Differential)" : "1-MPU (Chest Only)");
+    }
+    bool getUseDualMpu() const { return useDualMpu; }
+    bool isBaseSensorOnline() const { return baseSensorOnline; }
 
     // Multiplexer Channel Switching Helpers (with capacitive settling delay)
     void selectMuxChannel(uint8_t channel) {
@@ -364,8 +376,13 @@ public:
 
         #if USE_DUAL_MPU
         if (detectedCount < 2) {
-            Serial.printf("[I2C MUX WARN] Dual MPU mode enabled, but only %d MPU sensor detected!\n", detectedCount);
-            return false;
+            baseSensorOnline = false;
+            if (useDualMpu) {
+                Serial.printf("[I2C MUX WARN] Dual MPU mode requested, but only %d MPU sensor detected!\n", detectedCount);
+                return false;
+            }
+            Serial.println("[I2C MUX] Single MPU detected; running in 1-MPU (Chest Only) mode.");
+            return true;
         }
 
         // 2. Assign base sensor channel (prefers default SD2 if detected and not chest)
@@ -392,6 +409,7 @@ public:
         } else {
             Serial.printf("[I2C MUX] Base sensor mapped to SD%d (0x%02X).\n", baseMuxChannel, baseI2CAddr);
         }
+        baseSensorOnline = true;
         #endif
 
         return true;
@@ -449,16 +467,24 @@ public:
             chestSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
 
             #if USE_DUAL_MPU
-            // Initialize base sensor behind its multiplexer channel
-            selectMuxChannel(baseMuxChannel);
-            if (!baseSensor.begin(baseI2CAddr, &Wire)) {
-                Serial.printf("[ERROR] Failed to initialize Base MPU6050 on Mux SD%d (address 0x%02X)!\n", 
-                    baseMuxChannel, baseI2CAddr);
-                disableMux();
-                return false;
+            if (baseSensorOnline) {
+                // Initialize base sensor behind its multiplexer channel
+                selectMuxChannel(baseMuxChannel);
+                if (!baseSensor.begin(baseI2CAddr, &Wire)) {
+                    baseSensorOnline = false;
+                    if (useDualMpu) {
+                        Serial.printf("[ERROR] Failed to initialize Base MPU6050 on Mux SD%d (address 0x%02X)!\n", 
+                            baseMuxChannel, baseI2CAddr);
+                        disableMux();
+                        return false;
+                    }
+                    Serial.printf("[WARN] Base MPU6050 on Mux SD%d unavailable; continuing in 1-MPU (Chest Only) mode.\n",
+                        baseMuxChannel);
+                } else {
+                    baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+                    baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+                }
             }
-            baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
-            baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
             #endif
 
             disableMux();
@@ -472,21 +498,37 @@ public:
             bool chestPresent = (Wire.endTransmission() == 0);
             Wire.beginTransmission(0x69);
             bool basePresent = (Wire.endTransmission() == 0);
-            if (!chestPresent || !basePresent) {
+            if (!chestPresent && !basePresent) {
+                Serial.println("[ERROR] No MPU6050 found on the main bus at 0x68 or 0x69.");
+                return false;
+            }
+            if (useDualMpu && (!chestPresent || !basePresent)) {
                 Serial.println("[ERROR] Dual MPU mode needs either a PCA9548A at 0x70 or two MPUs on the main bus at 0x68 (chest) and 0x69 (base).");
                 return false;
             }
-            chestI2CAddr = 0x68;
-            baseI2CAddr = 0x69;
-            Serial.println("[I2C] Direct bus dual mode: chest 0x68, base 0x69.");
-            if (!chestSensor.begin(chestI2CAddr, &Wire) || !baseSensor.begin(baseI2CAddr, &Wire)) {
-                Serial.println("[ERROR] Failed to initialize the MPUs on the main bus!");
+            chestI2CAddr = chestPresent ? 0x68 : 0x69;
+            if (!chestSensor.begin(chestI2CAddr, &Wire)) {
+                Serial.println("[ERROR] Failed to initialize the chest MPU on the main bus!");
                 return false;
             }
             chestSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
             chestSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
-            baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
-            baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+
+            baseSensorOnline = false;
+            if (chestPresent && basePresent) {
+                baseI2CAddr = 0x69;
+                if (baseSensor.begin(baseI2CAddr, &Wire)) {
+                    baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+                    baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+                    baseSensorOnline = true;
+                    Serial.println("[I2C] Direct bus dual sensors initialized: chest 0x68, base 0x69.");
+                } else if (useDualMpu) {
+                    Serial.println("[ERROR] Failed to initialize the base MPU at 0x69!");
+                    return false;
+                }
+            } else {
+                Serial.printf("[I2C] Direct bus 1-MPU mode: chest initialized at 0x%02X.\n", chestI2CAddr);
+            }
             return true;
             #else
             uint8_t directAddr = CPReadyConfig::CHEST_MPU_I2C_ADDR;
@@ -577,15 +619,17 @@ public:
         if (a1 > calChestMax) calChestMax = a1;
 
         #if USE_DUAL_MPU
-        calBaseSum  += a2;
-        calBaseVecSum.x += base.x;
-        calBaseVecSum.y += base.y;
-        calBaseVecSum.z += base.z;
+        if (baseSensorOnline) {
+            calBaseSum  += a2;
+            calBaseVecSum.x += base.x;
+            calBaseVecSum.y += base.y;
+            calBaseVecSum.z += base.z;
 
-        if (a2 < calBaseMin) calBaseMin = a2;
-        if (a2 > calBaseMax) calBaseMax = a2;
+            if (a2 < calBaseMin) calBaseMin = a2;
+            if (a2 > calBaseMax) calBaseMax = a2;
+        }
 
-        float netSample = -(a1 - a2);
+        float netSample = (useDualMpu && baseSensorOnline) ? -(a1 - a2) : -a1;
         #else
         float netSample = -a1;
         #endif
@@ -603,10 +647,18 @@ public:
             chestGravityOffset = calChestSum / n;
             chestAxis.setFromRest({calChestVecSum.x / n, calChestVecSum.y / n, calChestVecSum.z / n});
             #if USE_DUAL_MPU
-            baseGravityOffset  = calBaseSum  / n;
-            baseAxis.setFromRest({calBaseVecSum.x / n, calBaseVecSum.y / n, calBaseVecSum.z / n});
-            Serial.printf("[CALIB] Sensor tilt from vertical: chest %.1f deg, base %.1f deg\n",
-                          chestAxis.tiltDegrees(), baseAxis.tiltDegrees());
+            if (baseSensorOnline) {
+                baseGravityOffset  = calBaseSum  / n;
+                baseAxis.setFromRest({calBaseVecSum.x / n, calBaseVecSum.y / n, calBaseVecSum.z / n});
+                Serial.printf("[CALIB] Sensor tilt from vertical: chest %.1f deg, base %.1f deg (mode=%s)\n",
+                              chestAxis.tiltDegrees(), baseAxis.tiltDegrees(),
+                              useDualMpu ? "2-MPU" : "1-MPU");
+            } else {
+                baseGravityOffset = 0.0f;
+                baseAxis.reset();
+                Serial.printf("[CALIB] Chest sensor tilt from vertical: %.1f deg (1-MPU)\n",
+                              chestAxis.tiltDegrees());
+            }
             #else
             baseGravityOffset  = 0.0f;
             Serial.printf("[CALIB] Chest sensor tilt from vertical: %.1f deg\n", chestAxis.tiltDegrees());
@@ -635,28 +687,32 @@ public:
             Serial.printf("[CALIB FAIL] Chest motion spread: %.2fg > %.2fg\n", (calChestMax - calChestMin), CPReadyConfig::CALIBRATION_MAX_CHEST_SPREAD_G);
             return false;
         }
-        if (chestGravityOffset < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || chestGravityOffset > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
+        const float chestMagG = chestAxis.magnitude() > 0.0f ? chestAxis.magnitude() : fabsf(chestGravityOffset);
+        if (chestMagG < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || chestMagG > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
             lastCalibrationFailureReason = ERR_GRAVITY_IMPLAUSIBLE;
-            Serial.printf("[CALIB FAIL] Chest gravity implausible: %.2fg\n", chestGravityOffset);
+            Serial.printf("[CALIB FAIL] Chest gravity magnitude implausible: %.2fg (z=%.2fg)\n", chestMagG, chestGravityOffset);
             return false;
         }
 
         #if USE_DUAL_MPU
-        if ((calBaseMax - calBaseMin) > CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G) {
-            lastCalibrationFailureReason = ERR_MOTION_UNSTABLE;
-            Serial.printf("[CALIB FAIL] Base motion spread: %.2fg > %.2fg\n", (calBaseMax - calBaseMin), CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G);
-            return false;
-        }
-        if (baseGravityOffset < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || baseGravityOffset > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
-            lastCalibrationFailureReason = ERR_GRAVITY_IMPLAUSIBLE;
-            Serial.printf("[CALIB FAIL] Base gravity implausible: %.2fg\n", baseGravityOffset);
-            return false;
-        }
-        if (fabsf(chestGravityOffset - baseGravityOffset) > CPReadyConfig::CALIBRATION_MAX_ALIGNMENT_DIFF_G) {
-            lastCalibrationFailureReason = ERR_SENSOR_ALIGNMENT;
-            Serial.printf("[CALIB FAIL] Tilt/pre-pressure divergence: %.2fg > %.2fg\n", 
-                fabsf(chestGravityOffset - baseGravityOffset), CPReadyConfig::CALIBRATION_MAX_ALIGNMENT_DIFF_G);
-            return false;
+        if (useDualMpu && baseSensorOnline) {
+            if ((calBaseMax - calBaseMin) > CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G) {
+                lastCalibrationFailureReason = ERR_MOTION_UNSTABLE;
+                Serial.printf("[CALIB FAIL] Base motion spread: %.2fg > %.2fg\n", (calBaseMax - calBaseMin), CPReadyConfig::CALIBRATION_MAX_BASE_SPREAD_G);
+                return false;
+            }
+            const float baseMagG = baseAxis.magnitude() > 0.0f ? baseAxis.magnitude() : fabsf(baseGravityOffset);
+            if (baseMagG < CPReadyConfig::CALIBRATION_GRAVITY_MIN_G || baseMagG > CPReadyConfig::CALIBRATION_GRAVITY_MAX_G) {
+                lastCalibrationFailureReason = ERR_GRAVITY_IMPLAUSIBLE;
+                Serial.printf("[CALIB FAIL] Base gravity magnitude implausible: %.2fg (z=%.2fg)\n", baseMagG, baseGravityOffset);
+                return false;
+            }
+            if (fabsf(chestGravityOffset - baseGravityOffset) > CPReadyConfig::CALIBRATION_MAX_ALIGNMENT_DIFF_G) {
+                lastCalibrationFailureReason = ERR_SENSOR_ALIGNMENT;
+                Serial.printf("[CALIB FAIL] Tilt/pre-pressure divergence: %.2fg > %.2fg\n", 
+                    fabsf(chestGravityOffset - baseGravityOffset), CPReadyConfig::CALIBRATION_MAX_ALIGNMENT_DIFF_G);
+                return false;
+            }
         }
         #endif
 
@@ -703,8 +759,8 @@ public:
         float aChestG = chestAxis.dynamicG(chest);
 
         #if USE_DUAL_MPU
-        float aBaseG  = baseAxis.dynamicG(base);
-        float rawNet  = -(aChestG - aBaseG);
+        float aBaseG  = baseSensorOnline ? baseAxis.dynamicG(base) : 0.0f;
+        float rawNet  = (useDualMpu && baseSensorOnline) ? -(aChestG - aBaseG) : -aChestG;
         #else
         float rawNet  = -aChestG;
         #endif
@@ -772,12 +828,26 @@ private:
         chest.z = aChest.acceleration.z / SENSORS_GRAVITY_STANDARD;
 
         #if USE_DUAL_MPU
-        selectMuxChannel(baseMuxChannel);
-        sensors_event_t aBase, gBase, tempBase;
-        ok = baseSensor.getEvent(&aBase, &gBase, &tempBase) && ok;
-        base.x = aBase.acceleration.x / SENSORS_GRAVITY_STANDARD;
-        base.y = aBase.acceleration.y / SENSORS_GRAVITY_STANDARD;
-        base.z = aBase.acceleration.z / SENSORS_GRAVITY_STANDARD;
+        if (baseSensorOnline) {
+            selectMuxChannel(baseMuxChannel);
+            sensors_event_t aBase, gBase, tempBase;
+            bool baseOk = baseSensor.getEvent(&aBase, &gBase, &tempBase);
+            if (baseOk) {
+                base.x = aBase.acceleration.x / SENSORS_GRAVITY_STANDARD;
+                base.y = aBase.acceleration.y / SENSORS_GRAVITY_STANDARD;
+                base.z = aBase.acceleration.z / SENSORS_GRAVITY_STANDARD;
+            } else {
+                base = {0.0f, 0.0f, 0.0f};
+                if (useDualMpu) {
+                    ok = false;
+                }
+            }
+        } else {
+            base = {0.0f, 0.0f, 0.0f};
+            if (useDualMpu) {
+                ok = false;
+            }
+        }
         #else
         base = {0.0f, 0.0f, 0.0f};
         #endif
@@ -798,7 +868,10 @@ private:
         // register contents forever. Real readings always carry a few LSB of noise.
         // During stationary baseline calibration, identical readings on a still surface are normal and checked by gravity limits.
         if (checkFrozen) {
-            if (chestZ == lastChestZ && baseZ == lastBaseZ) {
+            const bool frozen = (useDualMpu && baseSensorOnline)
+                ? (chestZ == lastChestZ && baseZ == lastBaseZ)
+                : (chestZ == lastChestZ);
+            if (frozen) {
                 if (identicalSampleCount < 0xFFFF) identicalSampleCount++;
                 if (identicalSampleCount >= CPReadyConfig::SENSOR_STUCK_SAMPLE_LIMIT && !sensorFault) {
                     sensorFault = true;

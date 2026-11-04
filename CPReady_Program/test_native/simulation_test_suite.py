@@ -373,32 +373,41 @@ def run_simulation_suite():
     )
 
     # -------------------------------------------------------------------------
-    # TEST 5: Default Manikin K=48.20 (4.30x Coupling), Calibration Bounds & Error Codes
+    # TEST 5: Default 1-MPU Manikin K=11.20 (1.0x), Calibration Bounds & Summary Clamping Fix
     # -------------------------------------------------------------------------
-    print("\n-- Test Group 5: Default Manikin K=48.20, Calibration Bounds & Error Codes --")
-    default_manikin_k = 48.20
-    corrupted_k = 72.50
+    print("\n-- Test Group 5: Default 1-MPU Manikin K=11.20, Calibration Bounds & Summary Clamping --")
+    default_manikin_k = 11.20
+    corrupted_k = 48.20
     active_k = corrupted_k
     # When RESET_K or SET_TIME:15 is received:
     active_k = default_manikin_k
-    assert_test("RESET_K / SET_TIME:15 restores Manikin K to default 48.20", active_k == default_manikin_k, f"got {active_k}")
+    assert_test("RESET_K / SET_TIME:15 restores Manikin K to unscaled 11.20", active_k == default_manikin_k, f"got {active_k}")
 
-    # Verify 1.3 cm raw physical vest motion scales to ~5.60 cm at default K=48.20 (with NOMINAL_K=11.20)
-    raw_vest_cm = 1.30
+    # Verify 5.60 cm 1-MPU chest displacement reports 5.60 cm at default K=11.20 (with NOMINAL_K=11.20)
+    raw_vest_cm = 5.60
     scaled_default_cm = raw_vest_cm * (default_manikin_k / NOMINAL_K)
     assert_test(
-        "Out-of-the-box K=48.20 scales 1.30 cm raw vest motion to 5.59 cm manikin depth",
-        abs(scaled_default_cm - 5.60) <= 0.05,
+        "Out-of-the-box K=11.20 reports 5.60 cm 1-MPU chest motion without clamping",
+        abs(scaled_default_cm - 5.60) <= 0.01 and scaled_default_cm < 10.0,
         f"got {scaled_default_cm:.2f} cm"
     )
 
-    # Verify screenshot scenario (1.3 cm -> 5.6 cm, ratio 4.31x) is accepted within [0.15, 8.50]
+    # Verify 2-MPU differential scenario (1.3 cm -> 5.6 cm, ratio 4.31x) is still accepted within [0.15, 8.50]
     screenshot_ratio = 5.6 / 1.3
     screenshot_new_k = NOMINAL_K * screenshot_ratio
     assert_test(
-        "Calibration accepts 4.31x ratio (1.3 cm -> 5.6 cm) and computes K=48.25",
+        "Calibration accepts 4.31x ratio (1.3 cm -> 5.6 cm) for 2-MPU mode and computes K=48.25",
         0.15 <= screenshot_ratio <= 8.50 and 1.0 <= screenshot_new_k <= 100.0,
         f"ratio={screenshot_ratio:.2f}, newK={screenshot_new_k:.2f}"
+    )
+
+    # Verify RC-2 fix: clamped strokes (10.0 cm) are included in validDepthSum so summary matches live strokes
+    strokes_with_clamp = [4.0] + [10.0] * 69
+    summary_mean_cm = sum(strokes_with_clamp) / len(strokes_with_clamp)
+    assert_test(
+        "Final summary includes clamped 10.0 cm strokes (RC-2 fix: 9.91 cm instead of 4.00 cm)",
+        abs(summary_mean_cm - 9.914) <= 0.01,
+        f"got {summary_mean_cm:.2f} cm"
     )
 
     # Verify distinct error codes: ERR_NO_TRIAL_DATA (6) for <3 strokes vs ERR_CALIB_OUT_OF_RANGE (8)

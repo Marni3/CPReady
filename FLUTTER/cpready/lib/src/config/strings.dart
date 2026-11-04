@@ -273,7 +273,7 @@ class AppStrings {
   static const String deviceSettingsKHelper =
       'Enter a value from 1.00 to 100.00. SET_K writes and persists it on the '
       'device.';
-  static const String deviceSettingsKHint = 'e.g. 48.20';
+  static const String deviceSettingsKHint = 'e.g. 11.20';
   static const String deviceSettingsKSet = 'Set K on Device';
   static const String deviceSettingsKSending = 'Sending K…';
   static const String deviceSettingsKInvalid =
@@ -304,6 +304,22 @@ class AppStrings {
   static const String deviceSettingsI2C400 = '400 kHz (Fast Mode)';
   static const String deviceSettingsI2CSending =
       'Applying I2C speed and resetting device...';
+
+  static const String deviceSettingsSensorModeSection = 'Sensor Mode';
+  static const String deviceSettingsSensorModeHelper =
+      '1-MPU (Chest Only) uses the chest accelerometer alone and avoids common-mode cancellation when the manikin moves with compressions. 2-MPU (Differential) subtracts the base accelerometer.';
+  static const String deviceSettingsSensorMode1Mpu =
+      '1-MPU (Chest Only)\n(Recommended)';
+  static const String deviceSettingsSensorMode2Mpu =
+      '2-MPU\n(Differential)';
+  static const String deviceSettingsSensorModeSending =
+      'Updating sensor mode…';
+  static const String deviceSettingsSensorModeSent1 =
+      'Sensor mode set to 1-MPU (Chest Only). Default Manikin K is 11.20.';
+  static const String deviceSettingsSensorModeSent2 =
+      'Sensor mode set to 2-MPU (Differential). Run Manikin Calibration if needed.';
+  static const String deviceSettingsSensorModeFailed =
+      'Could not update sensor mode on the device.';
 
   static const String deviceSettingsSensSection = 'Detection Sensitivity';
   static const String deviceSettingsSensHelper =

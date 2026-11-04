@@ -49,6 +49,7 @@ static uint32_t simLastSampleMicros = 0;
 static float    simFilteredNetG     = 0.0f;   // Same low-pass as SensorManager, for detection
 
 static uint32_t simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
+static bool     simUseDualMpu          = CPReadyConfig::DEFAULT_USE_DUAL_MPU;
 
 // --- Calibration window -----------------------------------------------------
 
@@ -149,6 +150,11 @@ static CPRConfigPacket makeConfigPacket(uint8_t profile, float depthK, uint32_t 
     uint8_t flags = 0;
     if (isBench) flags |= 0x01;
     if (hasCustomK) flags |= 0x02;
+    if (simUseDualMpu) flags |= 0x04;
+    flags |= (uint8_t)((simTracker.getSensitivityPresetCode() & 0x03) << 3);
+
+    uint8_t trigByte = (uint8_t)lroundf(simTracker.getMinStartThresholdG() * 1000.0f);
+    uint8_t armByte  = (uint8_t)lroundf(simTracker.getRecoilArmFraction() * 100.0f);
 
     CPRConfigPacket cfgPkt{};
     cfgPkt.packet_type           = PKT_TYPE_CONFIG_REPORT;
@@ -158,7 +164,7 @@ static CPRConfigPacket makeConfigPacket(uint8_t profile, float depthK, uint32_t 
     cfgPkt.practice_duration_sec = (uint16_t)autoStopDurationSec;
     cfgPkt.default_duration_sec  = (uint16_t)CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
     cfgPkt.protocol_version      = 1;
-    cfgPkt.reserved              = 0;
+    cfgPkt.reserved              = (uint16_t)trigByte | ((uint16_t)armByte << 8);
     return cfgPkt;
 }
 
@@ -354,6 +360,14 @@ static void handleBleCommand(String message) {
         if (simRejectConfigChange(message)) return;
         simBeginKTrialOverride();   // RAM only; no Type 3 packet (see main.cpp)
     }
+    else if (message.startsWith("SET_MPU:")) {
+        if (simRejectConfigChange(message)) return;
+        int mpuCount = message.substring(8).toInt();
+        simUseDualMpu = (mpuCount >= 2);
+        simPrefs.putBool("dual_mpu", simUseDualMpu);
+        Serial.printf("[CONFIG] Simulated sensor mode set to %s.\n",
+                      simUseDualMpu ? "2-MPU (Differential)" : "1-MPU (Chest Only)");
+    }
     else if (message.startsWith("SET_I2C:")) {
         if (simRejectConfigChange(message)) return;
         uint32_t speed = message.substring(8).toInt();
@@ -453,6 +467,7 @@ static void handleBleCommand(String message) {
         simTracker.setBenchK(CPReadyConfig::BENCH_DEPTH_CALIBRATION_K);
         simTracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         simTracker.applySensitivityPreset(0);
+        simUseDualMpu = CPReadyConfig::DEFAULT_USE_DUAL_MPU;
         simPracticeDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
         simKTrialOverride = false;
         Serial.println("[NVS] Simulation configuration cleared.");
@@ -643,12 +658,7 @@ static void updateActiveSession(uint32_t now, uint32_t nowMicros) {
     const float rawNetG = simVest.netAccelAt(now);
     const float alpha = CPReadyConfig::LOWPASS_FILTER_ALPHA;
     simFilteredNetG = alpha * rawNetG + (1.0f - alpha) * simFilteredNetG;
-    // Scale the integrated acceleration by NOMINAL_INTEGRATOR_K / DEPTH_CALIBRATION_K in Manikin mode
-    // so the simulated vest exhibits the same ~1.3 cm raw / ~5.5 cm scaled coupling as physical hardware.
-    const float rawForDepthG = (simTracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST)
-        ? rawNetG
-        : rawNetG * (CPReadyConfig::NOMINAL_INTEGRATOR_K / CPReadyConfig::DEPTH_CALIBRATION_K);
-    const bool strokeCompleted = simTracker.processSample(simFilteredNetG, rawForDepthG, now);
+    const bool strokeCompleted = simTracker.processSample(simFilteredNetG, rawNetG, now);
 
     // Synthetic raw frame: chest Z carries the inverse of the net signal and the
     // base stays at zero, so an offline replay computes the same net value with
@@ -656,7 +666,8 @@ static void updateActiveSession(uint32_t now, uint32_t nowMicros) {
     TelemetryFrames::SensorRawSample raw{};
     raw.t_us = nowMicros;
     raw.chest_mg[2] = (int16_t)lroundf(-rawNetG * 1000.0f);
-    simTelemetry.addSample(raw, simTracker.getReading().stroke_count, simState);
+    simTelemetry.addSample(raw, simTracker.getReading().stroke_count, simState,
+                           simTracker.getLastUnclampedDepthMm());
 
     if (!strokeCompleted && (now - simLastNotifyMs < CPReadyConfig::BLE_NOTIFY_INTERVAL_MS)) {
         return;
@@ -731,6 +742,7 @@ void setup() {
     if (simPrefs.isKey("trig_g")) simTracker.setMinStartThresholdG(simPrefs.getFloat("trig_g", CPReadyConfig::MIN_START_THRESHOLD_G));
     if (simPrefs.isKey("arm_frac")) simTracker.setRecoilArmFraction(simPrefs.getFloat("arm_frac", CPReadyConfig::RECOIL_ARM_FRACTION));
     if (simPrefs.isKey("min_d_cm")) simTracker.setMinStrokeDepthCm(simPrefs.getFloat("min_d_cm", CPReadyConfig::MIN_STROKE_DEPTH_CM));
+    simUseDualMpu = simPrefs.getBool("dual_mpu", CPReadyConfig::DEFAULT_USE_DUAL_MPU);
 
     Serial.printf("[NVS] Profile %s | Depth K %.2f\n",
                   profileName(simTracker.getProfile()),

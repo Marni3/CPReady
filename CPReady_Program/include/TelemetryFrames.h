@@ -46,7 +46,7 @@ struct Header {
     uint32_t first_sample_index;// 32-bit monotonic sample index
     uint16_t dropped_frames;    // cumulative send failures this session
     uint8_t  device_state;      // DeviceState value
-    uint8_t  reserved;          // 0
+    uint8_t  reserved;          // Latest stroke unclamped depth in mm (0..255)
 };
 
 #pragma pack(pop)

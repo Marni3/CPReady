@@ -40,6 +40,7 @@ class RawTelemetryFrame {
   final int firstSampleIndex;
   final int droppedFrames;
   final int deviceState;
+  final int unclampedDepthMm;
   final List<RawTelemetrySample> samples;
 
   const RawTelemetryFrame({
@@ -49,6 +50,7 @@ class RawTelemetryFrame {
     required this.firstSampleIndex,
     required this.droppedFrames,
     required this.deviceState,
+    this.unclampedDepthMm = 0,
     required this.samples,
   });
 
@@ -111,6 +113,7 @@ class RawTelemetryFrame {
       firstSampleIndex: firstSampleIndex,
       droppedFrames: data.getUint16(12, Endian.little),
       deviceState: data.getUint8(14),
+      unclampedDepthMm: data.getUint8(15),
       samples: samples,
     );
   }

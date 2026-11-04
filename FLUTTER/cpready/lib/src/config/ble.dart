@@ -63,8 +63,11 @@ class AppBleConfig {
   static String commandSetK(double depthK) =>
       'SET_K:${depthK.toStringAsFixed(2)}';
 
-  /// Resets the calibration factor K to default (48.20).
+  /// Resets the calibration factor K to default (11.20).
   static const String commandResetK = 'RESET_K';
+
+  /// Selects 1-MPU (Chest Only) or 2-MPU (Differential) sensor mode.
+  static String commandSetMpu(int count) => 'SET_MPU:${count >= 2 ? 2 : 1}';
 
   /// Sets the I2C bus speed (100 kHz standard or 400 kHz fast) and resets the ESP32.
   static String commandSetI2C(int khz) => 'SET_I2C:$khz';
@@ -131,6 +134,9 @@ class AppBleConfig {
   /// Type 6 config_flags bits (byte 4).
   static const int configFlagBenchActive = 0x01;
   static const int configFlagCustomK = 0x02;
+  static const int configFlagDualMpu = 0x04;
+  static const int configSensitivityMask = 0x18;
+  static const int configSensitivityShift = 3;
 
   /// Protocol version the app expects in byte 9.
   static const int configProtocolVersion = 1;

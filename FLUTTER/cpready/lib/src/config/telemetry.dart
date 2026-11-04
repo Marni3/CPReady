@@ -53,14 +53,15 @@ class AppTelemetry {
   static const String metadataFileName = 'session.json';
 
   /// Bump when a CSV column or the session.json shape changes.
-  static const int schemaVersion = 1;
+  static const int schemaVersion = 2;
 
   static const String rawHeader =
       't_us,sample_index,frame_sequence,stroke_count,device_state,flags,'
-      'chest_x_mg,chest_y_mg,chest_z_mg,base_x_mg,base_y_mg,base_z_mg';
+      'chest_x_mg,chest_y_mg,chest_z_mg,base_x_mg,base_y_mg,base_z_mg,'
+      'unclamped_depth_mm';
 
   static const String metricsHeader =
-      'received_at,packet_type,rate_cpm,depth_tenths_mm,ccf_percent,'
+      'received_at,packet_type,recoil_status,rate_cpm,depth_tenths_mm,ccf_percent,'
       'audio_prompt_code,total_compressions,elapsed_sec,quality_flags,sequence';
 
   static const String eventsHeader = 'received_at,event,detail';

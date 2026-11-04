@@ -288,6 +288,21 @@ void onReceiveMessage_BLE(String message) {
         // calibration finished" to the app and would be misread as such.
         beginKTrialOverride();
     }
+    else if (message.startsWith("SET_MPU:")) {
+        if (rejectConfigChange(message)) return;
+        int mpuCount = message.substring(8).toInt();
+        bool wantDual = (mpuCount >= 2);
+        #if !ENABLE_DEMO_MODE
+        if (wantDual && !sensors.isBaseSensorOnline()) {
+            Serial.println("[CONFIG WARN] SET_MPU:2 requested, but base sensor is not detected on I2C!");
+            sendError(ERR_I2C_FAULT);
+            return;
+        }
+        #endif
+        sensors.setUseDualMpu(wantDual);
+        prefs.putBool("dual_mpu", wantDual);
+        Serial.printf("[NVS] Sensor mode saved: %s\n", wantDual ? "2-MPU (Differential)" : "1-MPU (Chest Only)");
+    }
     else if (message.startsWith("SET_I2C:")) {
         if (rejectConfigChange(message)) return;
         uint32_t speed = message.substring(8).toInt();
@@ -377,9 +392,10 @@ void onReceiveMessage_BLE(String message) {
         tracker.setBenchK(CPReadyConfig::BENCH_DEPTH_CALIBRATION_K);
         tracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         tracker.applySensitivityPreset(0);
+        sensors.setUseDualMpu(CPReadyConfig::DEFAULT_USE_DUAL_MPU);
         practiceDurationSec = CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
         kTrialOverrideActive = false;
-        Serial.printf("[NVS] Flash cleared! Restored factory defaults (MANIKIN_STANDARD, K=%.2f).\n", CPReadyConfig::DEPTH_CALIBRATION_K);
+        Serial.printf("[NVS] Flash cleared! Restored factory defaults (MANIKIN_STANDARD, K=%.2f, 1-MPU).\n", CPReadyConfig::DEPTH_CALIBRATION_K);
     }
     else if (message == "GET_CONFIG") {
         bool isBench = (tracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST);
@@ -388,6 +404,11 @@ void onReceiveMessage_BLE(String message) {
         uint8_t flags = 0;
         if (isBench) flags |= 0x01;
         if (hasCustomK) flags |= 0x02;
+        if (sensors.getUseDualMpu()) flags |= 0x04;
+        flags |= (uint8_t)((tracker.getSensitivityPresetCode() & 0x03) << 3);
+
+        uint8_t trigByte = (uint8_t)lroundf(tracker.getMinStartThresholdG() * 1000.0f);
+        uint8_t armByte  = (uint8_t)lroundf(tracker.getRecoilArmFraction() * 100.0f);
 
         CPRConfigPacket cfgPkt{};
         cfgPkt.packet_type           = PKT_TYPE_CONFIG_REPORT;
@@ -397,7 +418,7 @@ void onReceiveMessage_BLE(String message) {
         cfgPkt.practice_duration_sec = (uint16_t)practiceDurationSec;
         cfgPkt.default_duration_sec  = (uint16_t)CPReadyConfig::DEFAULT_PRACTICE_DURATION_SEC;
         cfgPkt.protocol_version      = 1;
-        cfgPkt.reserved              = 0;
+        cfgPkt.reserved              = (uint16_t)trigByte | ((uint16_t)armByte << 8);
 
         ble.sendPacket(cfgPkt);
 
@@ -461,6 +482,8 @@ void setup() {
     if (prefs.isKey("trig_g")) tracker.setMinStartThresholdG(prefs.getFloat("trig_g", CPReadyConfig::MIN_START_THRESHOLD_G));
     if (prefs.isKey("arm_frac")) tracker.setRecoilArmFraction(prefs.getFloat("arm_frac", CPReadyConfig::RECOIL_ARM_FRACTION));
     if (prefs.isKey("min_d_cm")) tracker.setMinStrokeDepthCm(prefs.getFloat("min_d_cm", CPReadyConfig::MIN_STROKE_DEPTH_CM));
+    bool savedDualMpu = prefs.getBool("dual_mpu", CPReadyConfig::DEFAULT_USE_DUAL_MPU);
+    sensors.setUseDualMpu(savedDualMpu);
 
     Serial.printf("[NVS] Flash configuration loaded: Profile=%s | Manikin K=%.2f | Bench K=%.2f (Active K=%.2f)\n",
         savedProfile == (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST ? "BENCH_TEST" : "MANIKIN_STANDARD",
@@ -618,7 +641,8 @@ void loop() {
             // Filtered sample detects strokes; the raw sample is integrated with true dt for depth
             bool strokeCompleted = tracker.processSample(netAccel, rawNetAccel, now, dtSeconds);
 
-            telemetry.addSample(rawSample, tracker.getReading().stroke_count, state);
+            telemetry.addSample(rawSample, tracker.getReading().stroke_count, state,
+                                tracker.getLastUnclampedDepthMm());
 
             // Transmit immediately upon stroke completion, or throttle at configured interval
             if (strokeCompleted || (now - lastBleNotifyMillis >= CPReadyConfig::BLE_NOTIFY_INTERVAL_MS)) {

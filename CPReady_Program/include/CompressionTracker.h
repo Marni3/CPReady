@@ -60,6 +60,8 @@ private:
     uint32_t validPeriodSumMs;     // Periods of strokes with a real cadence (not first / post-pause)
     uint32_t validRateCount;
     bool     summaryAlreadyCalibrated;
+    float    lastUnclampedDepthCm;
+    uint16_t clampedStrokeCount;
     CPRSessionSummary lastFinalSummary;
 
     // Audio Coaching Tracking & Hysteresis
@@ -129,6 +131,8 @@ public:
         validPeriodSumMs = 0;
         validRateCount = 0;
         summaryAlreadyCalibrated = false;
+        lastUnclampedDepthCm = 0.0f;
+        clampedStrokeCount = 0;
 
         lastAudioPromptMillis = 0;
         lastTargetPraiseMillis = 0;
@@ -297,6 +301,35 @@ public:
         if (cm >= 0.05f && cm <= 2.50f) minStrokeDepthCm = cm;
     }
     float getMinStrokeDepthCm() const { return minStrokeDepthCm; }
+
+    // Returns 0 = BALANCED, 1 = HIGH, 2 = STRICT, 3 = CUSTOM
+    uint8_t getSensitivityPresetCode() const {
+        if (fabsf(minStartThresholdG - 0.05f) < 0.005f &&
+            fabsf(recoilArmFraction - 0.10f) < 0.01f &&
+            fabsf(minStrokeDepthCm - 0.15f) < 0.02f) {
+            return 1;
+        }
+        if (fabsf(minStartThresholdG - 0.12f) < 0.005f &&
+            fabsf(recoilArmFraction - 0.25f) < 0.01f &&
+            fabsf(minStrokeDepthCm - 0.50f) < 0.02f) {
+            return 2;
+        }
+        if (fabsf(minStartThresholdG - CPReadyConfig::MIN_START_THRESHOLD_G) < 0.005f &&
+            fabsf(recoilArmFraction - CPReadyConfig::RECOIL_ARM_FRACTION) < 0.01f &&
+            fabsf(minStrokeDepthCm - CPReadyConfig::MIN_STROKE_DEPTH_CM) < 0.02f) {
+            return 0;
+        }
+        return 3;
+    }
+
+    uint8_t getLastUnclampedDepthMm() const {
+        float mm = lastUnclampedDepthCm * 10.0f;
+        if (mm <= 0.0f) return 0;
+        if (mm >= 255.0f) return 255;
+        return (uint8_t)lroundf(mm);
+    }
+
+    uint16_t getClampedStrokeCount() const { return clampedStrokeCount; }
 
     // Presets: 0 = BALANCED (default), 1 = HIGH (maximum sensitivity), 2 = STRICT (high noise rejection)
     void applySensitivityPreset(uint8_t preset) {
@@ -490,16 +523,22 @@ public:
                     }
 
                     // 3. Depth: the integrated chest motion, scaled by the calibration K
-                    // (1.0 at the profile default). A first stroke that did not start
-                    // from rest has no measurable depth; the previous value stays.
+                    // (1.0 at the profile default). When a post-pause stroke could not be
+                    // measured from rest, report 0.0 cm instead of repeating the previous
+                    // stroke's depth across the pause (RC-4).
                     if (depthKnown) {
-                        reading.depth_cm = physicalDepthCm * depthScale();
+                        lastUnclampedDepthCm = physicalDepthCm * depthScale();
+                        reading.depth_cm = lastUnclampedDepthCm;
                         if (reading.depth_cm < CPReadyConfig::DEPTH_MIN_LIMIT_CM) {
                             reading.depth_cm = CPReadyConfig::DEPTH_MIN_LIMIT_CM;
                         }
-                        if (reading.depth_cm > CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
+                        if (reading.depth_cm >= CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
                             reading.depth_cm = CPReadyConfig::DEPTH_MAX_LIMIT_CM;
+                            if (clampedStrokeCount < 0xFFFF) clampedStrokeCount++;
                         }
+                    } else {
+                        lastUnclampedDepthCm = 0.0f;
+                        reading.depth_cm = 0.0f;
                     }
 
                     // 4. Evaluate Recoil
@@ -527,9 +566,9 @@ public:
                         validRateCount++;
                     }
 
-                    // Stroke-Qualified Mean accumulation: exclude unmeasured strokes
-                    // and physical ceiling clamp artifacts. Valid post-pause strokes are included.
-                    if (depthKnown && reading.depth_cm < CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
+                    // Stroke-Qualified Mean accumulation: include all measured strokes
+                    // (including ceiling-clamped strokes so summary depth matches live depth, RC-2).
+                    if (depthKnown) {
                         if (totalStrokeCount > 1 || physicalDepthCm >= minStrokeDepthCm) {
                             validDepthSum += reading.depth_cm;
                             validStrokeCount++;

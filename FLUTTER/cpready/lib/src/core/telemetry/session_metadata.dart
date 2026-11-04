@@ -27,7 +27,7 @@ class SessionMetadata {
   });
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'schema_version': 1,
+        'schema_version': 2,
         'session_id': sessionId,
         'participant_code': participantCode,
         'experiment': experiment,

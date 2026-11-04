@@ -76,13 +76,14 @@ public:
 
     // Adds one sample. Returns true when a frame was emitted by this call.
     bool addSample(const TelemetryFrames::SensorRawSample& sample, uint16_t strokes,
-                   DeviceState deviceState) {
+                   DeviceState deviceState, uint8_t unclampedDepthMm = 0) {
         if (!enabled) return false;
         updateMtu();
         if (samplesPerFrame == 0) return false;
 
         strokeCount = strokes;
         state = deviceState;
+        latestUnclampedDepthMm = unclampedDepthMm;
         buffer[count++] = sample;
         if (count >= samplesPerFrame) {
             return sendFrame();
@@ -115,7 +116,7 @@ private:
         header.first_sample_index = nextSampleIndex;
         header.dropped_frames = droppedFrames;
         header.device_state = (uint8_t)state;
-        header.reserved = 0;
+        header.reserved = latestUnclampedDepthMm;
 
         uint8_t frame[TelemetryFrames::HEADER_BYTES +
                       TelemetryFrames::MAX_SAMPLES_PER_FRAME *
@@ -143,6 +144,7 @@ private:
     uint32_t nextSampleIndex = 0;
     uint16_t droppedFrames = 0;
     uint16_t strokeCount = 0;
+    uint8_t latestUnclampedDepthMm = 0;
     DeviceState state = DeviceState::STANDBY;
     TelemetryFrames::SensorRawSample buffer[TelemetryFrames::MAX_SAMPLES_PER_FRAME] = {};
 };

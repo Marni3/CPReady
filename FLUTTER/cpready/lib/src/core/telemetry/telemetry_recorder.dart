@@ -66,10 +66,10 @@ class TelemetryRecording {
 
 /// Append-only writer for one raw telemetry session.
 ///
-/// The three CSVs are flushed at most once a second, so a crash loses at most
-/// the last second. `session.json` is written at start (status `recording`) and
-/// rewritten atomically at stop. All writes happen on the UI isolate; callers
-/// must not call this from a background isolate.
+/// Sinks are buffered during active 100 Hz streaming and flushed once at
+/// [start] and once at [stop] so `IOSink.writeln()` never races an in-flight
+/// `IOSink.flush()` StreamSink binding. `session.json` is written at start
+/// (status `recording`) and rewritten atomically at stop.
 class TelemetryRecorder {
   TelemetryRecorder({Directory? rootDirectory}) : _rootOverride = rootDirectory;
 
@@ -78,7 +78,6 @@ class TelemetryRecorder {
   Directory? _directory;
   SessionMetadata? _metadata;
   DateTime? _startedAt;
-  DateTime? _lastFlush;
 
   IOSink? _raw;
   IOSink? _metrics;
@@ -96,6 +95,9 @@ class TelemetryRecorder {
   int _missingSamples = 0;
   int _missingFrames = 0;
   int _firmwareDroppedFrames = 0;
+  int _lastLoggedStrokeCount = 0;
+  Map<String, Object?>? _deviceConfigSnapshot;
+  Map<String, Object?>? _finalSummarySnapshot;
 
   bool get isRecording => _started && !_closed;
   String? get sessionId => _metadata?.sessionId;
@@ -113,6 +115,9 @@ class TelemetryRecorder {
     _missingSamples = 0;
     _missingFrames = 0;
     _firmwareDroppedFrames = 0;
+    _lastLoggedStrokeCount = 0;
+    _deviceConfigSnapshot = null;
+    _finalSummarySnapshot = null;
 
     final Directory root = _rootOverride ?? await _defaultRoot();
     final Directory directory = Directory('${root.path}/${metadata.sessionId}');
@@ -130,7 +135,6 @@ class TelemetryRecorder {
     _events!.writeln(AppTelemetry.eventsHeader);
     _started = true;
     _closed = false;
-    _lastFlush = DateTime.now();
     addEvent('recording_started', metadata.sessionId);
     await _writeJson(status: 'recording', endedAt: null);
     await _flushSinks();
@@ -173,42 +177,57 @@ class TelemetryRecorder {
         '${sample.timeUs},${sample.sampleIndex},${frame.frameSequence},'
         '${frame.strokeCount},${frame.deviceState},${frame.flags},'
         '${sample.chestXMg},${sample.chestYMg},${sample.chestZMg},'
-        '${sample.baseXMg},${sample.baseYMg},${sample.baseZMg}',
+        '${sample.baseXMg},${sample.baseYMg},${sample.baseZMg},'
+        '${frame.unclampedDepthMm}',
       );
     }
-    _maybeFlush();
+  }
+
+  void setDeviceConfig(Map<String, Object?> config) {
+    _deviceConfigSnapshot = config;
+    addEvent('device_config', jsonEncode(config));
   }
 
   void addMetrics(CprMetrics metrics, {DateTime? receivedAt}) {
     if (!isRecording || _metrics == null) return;
     final DateTime at = receivedAt ?? DateTime.now();
+    final int recoilStatus = metrics.packetType == AppBleConfig.packetFinalSummary
+        ? metrics.recoilPercentage
+        : (metrics.recoilComplete ? 1 : 0);
     _metrics!.writeln(
       '${at.toUtc().toIso8601String()},${metrics.packetType},'
-      '${metrics.rateCpm},${(metrics.depthCm * 100).round()},'
+      '$recoilStatus,${metrics.rateCpm},${(metrics.depthCm * 100).round()},'
       '${metrics.ccfPercent},${metrics.audioPromptCode},'
       '${metrics.totalCompressions},${metrics.elapsedSeconds},'
       '${metrics.qualityFlags},${metrics.sequence ?? ''}',
     );
-    _maybeFlush();
+
+    if (metrics.packetType == AppBleConfig.packetRealtime &&
+        metrics.totalCompressions > _lastLoggedStrokeCount) {
+      _lastLoggedStrokeCount = metrics.totalCompressions;
+      addEvent('stroke', '${metrics.totalCompressions}');
+    } else if (metrics.packetType == AppBleConfig.packetFinalSummary) {
+      _finalSummarySnapshot = <String, Object?>{
+        'rate_cpm': metrics.rateCpm,
+        'depth_tenths_mm': (metrics.depthCm * 100).round(),
+        'recoil_percent': metrics.recoilPercentage,
+        'ccf_percent': metrics.ccfPercent,
+        'total_compressions': metrics.totalCompressions,
+        'elapsed_sec': metrics.elapsedSeconds,
+        'quality_flags': metrics.qualityFlags,
+      };
+      addEvent('final_summary', jsonEncode(_finalSummarySnapshot));
+    } else if (metrics.packetType == AppBleConfig.packetError) {
+      addEvent('device_error', '${metrics.errorCode}');
+    }
   }
 
   void addEvent(String event, [String detail = '']) {
-    if (_events == null) return;
+    if (_events == null || _closed) return;
     _events!.writeln(
       '${DateTime.now().toUtc().toIso8601String()},'
       '${_csv(event)},${_csv(detail)}',
     );
-    _maybeFlush();
-  }
-
-  void _maybeFlush() {
-    final DateTime? last = _lastFlush;
-    if (last == null ||
-        DateTime.now().difference(last) < const Duration(seconds: 1)) {
-      return;
-    }
-    _lastFlush = DateTime.now();
-    unawaited(_flushSinks());
   }
 
   Future<void> _flushSinks() async {
@@ -232,6 +251,10 @@ class TelemetryRecorder {
     if (!_started || _closed) {
       throw StateError('Telemetry recording is not active');
     }
+    addEvent(
+      interrupted ? 'interrupted' : 'recording_stopped',
+      'samples=$_samplesReceived,frames=$_framesReceived',
+    );
     _closed = true;
     _started = false;
     await _flushSinks();
@@ -287,6 +310,8 @@ class TelemetryRecorder {
       'firmware_dropped_frames': _firmwareDroppedFrames,
       'first_sample_index': _firstSampleIndex,
       'last_sample_index': _lastSampleIndex,
+      if (_deviceConfigSnapshot != null) 'device_config': _deviceConfigSnapshot,
+      if (_finalSummarySnapshot != null) 'final_summary': _finalSummarySnapshot,
       'files': <String>[
         AppTelemetry.rawFileName,
         AppTelemetry.metricsFileName,
