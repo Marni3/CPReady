@@ -63,7 +63,7 @@ class AppBleConfig {
   static String commandSetK(double depthK) =>
       'SET_K:${depthK.toStringAsFixed(2)}';
 
-  /// Resets the calibration factor K to default (11.20).
+  /// Resets the calibration factor K to default (10.85).
   static const String commandResetK = 'RESET_K';
 
   /// Selects 1-MPU (Chest Only) or 2-MPU (Differential) sensor mode.

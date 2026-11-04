@@ -304,9 +304,9 @@ public:
 
     // Returns 0 = BALANCED, 1 = HIGH, 2 = STRICT, 3 = CUSTOM
     uint8_t getSensitivityPresetCode() const {
-        if (fabsf(minStartThresholdG - 0.05f) < 0.005f &&
+        if (fabsf(minStartThresholdG - 0.06f) < 0.005f &&
             fabsf(recoilArmFraction - 0.20f) < 0.01f &&
-            fabsf(minStrokeDepthCm - 0.15f) < 0.02f) {
+            fabsf(minStrokeDepthCm - 0.25f) < 0.02f) {
             return 1;
         }
         if (fabsf(minStartThresholdG - 0.12f) < 0.005f &&
@@ -334,11 +334,11 @@ public:
     // Presets: 0 = BALANCED (default), 1 = HIGH (maximum sensitivity), 2 = STRICT (high noise rejection)
     void applySensitivityPreset(uint8_t preset) {
         if (preset == 1) {
-            minStartThresholdG    = 0.05f;
-            adaptiveStartFraction = 0.22f;
+            minStartThresholdG    = 0.06f;
+            adaptiveStartFraction = 0.25f;
             recoilArmFraction     = 0.20f;
             recoilArmMinG         = 0.030f;
-            minStrokeDepthCm      = 0.15f;
+            minStrokeDepthCm      = 0.25f;
         } else if (preset == 2) {
             minStartThresholdG    = 0.12f;
             adaptiveStartFraction = 0.40f;

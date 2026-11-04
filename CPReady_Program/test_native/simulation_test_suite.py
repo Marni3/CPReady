@@ -73,17 +73,20 @@ class DepthEstimator:
 
         v_bar = v_weighted_sum / total_t
 
-        # 3. Integrate displacement and track peak downward excursion
+        # 3. Integrate displacement and track peak-to-trough excursion (hi - lo, matching DepthEstimator.h)
         curr_x = 0.0
+        min_x = 0.0
         max_x = 0.0
         for j in range(m):
             _, dt = self.buffer[onset_idx + j]
             v_corr = v[j] - v_bar
             curr_x += v_corr * dt
+            if curr_x < min_x:
+                min_x = curr_x
             if curr_x > max_x:
                 max_x = curr_x
 
-        return max_x * (k / NOMINAL_K)
+        return (max_x - min_x) * (k / NOMINAL_K)
 
     def from_rest_depth_cm(self, onset_idx, recoil_end_idx, k=NOMINAL_K):
         n = len(self.buffer)
@@ -373,23 +376,23 @@ def run_simulation_suite():
     )
 
     # -------------------------------------------------------------------------
-    # TEST 5: Default 1-MPU Manikin K=11.20 (1.0x), Calibration Bounds & Summary Clamping Fix
+    # TEST 5: Default 1-MPU Manikin K=10.85, Calibration Bounds & Summary Clamping Fix
     # -------------------------------------------------------------------------
-    print("\n-- Test Group 5: Default 1-MPU Manikin K=11.20, Calibration Bounds & Summary Clamping --")
-    default_manikin_k = 11.20
+    print("\n-- Test Group 5: Default 1-MPU Manikin K=10.85, Calibration Bounds & Summary Clamping --")
+    default_manikin_k = 10.85
     corrupted_k = 48.20
     active_k = corrupted_k
     # When RESET_K or SET_TIME:15 is received:
     active_k = default_manikin_k
-    assert_test("RESET_K / SET_TIME:15 restores Manikin K to unscaled 11.20", active_k == default_manikin_k, f"got {active_k}")
+    assert_test("RESET_K / SET_TIME:15 restores Manikin K to ground-truth optimum 10.85", active_k == default_manikin_k, f"got {active_k}")
 
-    # Verify 5.60 cm 1-MPU chest displacement reports 5.60 cm at default K=11.20 (with NOMINAL_K=11.20)
+    # Verify 5.60 cm 1-MPU chest displacement reports ~5.425 cm (pad-compliance corrected) without clamping
     raw_vest_cm = 5.60
     scaled_default_cm = raw_vest_cm * (default_manikin_k / NOMINAL_K)
     assert_test(
-        "Out-of-the-box K=11.20 reports 5.60 cm 1-MPU chest motion without clamping",
-        abs(scaled_default_cm - 5.60) <= 0.01 and scaled_default_cm < 10.0,
-        f"got {scaled_default_cm:.2f} cm"
+        "Out-of-the-box K=10.85 reports 5.425 cm for 5.60 cm raw vest motion (0.96875x compliance scale) without clamping",
+        abs(scaled_default_cm - 5.425) <= 0.01 and scaled_default_cm < 10.0,
+        f"got {scaled_default_cm:.3f} cm"
     )
 
     # Verify 2-MPU differential scenario (1.3 cm -> 5.6 cm, ratio 4.31x) is still accepted within [0.15, 8.50]
@@ -525,6 +528,74 @@ def run_simulation_suite():
         detected_strokes == total_strokes_expected,
         f"detected {detected_strokes} / {total_strokes_expected} strokes"
     )
+
+    # -------------------------------------------------------------------------
+    # TEST 7: Pre-Onset Idle Dwell Cap & 9-Session Ground-Truth Verification
+    # -------------------------------------------------------------------------
+    print("\n-- Test Group 7: Pre-Onset Idle Dwell Cap & Empirical Ground-Truth Replay --")
+    dwell_est = DepthEstimator(128)
+    # 450 ms idle dwell with slow 0.035g hand weight shift before 5.50 cm compression
+    for i in range(45):
+        dwell_est.push(0.035 * math.sin(math.pi * i / 45.0), 0.010)
+    t = 0.0
+    steps = int(period / dt)
+    dwell_onset_idx = None
+    for s_i in range(steps):
+        x_p = generate_cpr_waveform("DWELL30", t - h, period, 5.50)
+        x_c = generate_cpr_waveform("DWELL30", t, period, 5.50)
+        x_n = generate_cpr_waveform("DWELL30", t + h, period, 5.50)
+        a_g = ((x_n - 2.0 * x_c + x_p) / (h * h)) / G_CM
+        dwell_est.push(a_g, dt)
+        if dwell_onset_idx is None and s_i >= 16:
+            dwell_onset_idx = dwell_est.count() - 1
+        t += dt
+    end_idx = dwell_est.count() - 1
+    uncapped_d = dwell_est.closed_cycle_depth_cm(0, end_idx, k=default_manikin_k)
+    capped_start = max(0, dwell_onset_idx - 22)
+    capped_d = dwell_est.closed_cycle_depth_cm(capped_start, end_idx, k=default_manikin_k)
+    assert_test(
+        "Pre-onset window cap (MAX_PRE=22) suppresses 450 ms idle-dwell depth inflation",
+        (uncapped_d - 5.50) > 0.45 and abs(capped_d - 5.50) <= 0.15,
+        f"uncapped={uncapped_d:.2f} cm, capped={capped_d:.2f} cm (target 5.50 cm)"
+    )
+
+    # Verify against ground_truth_verification_suite across all 9 Laerdal sessions
+    from ground_truth_verification_suite import load_trial_samples as gt_load, simulate_session as gt_sim
+    from pathlib import Path
+    import json
+    org_dir = Path(__file__).resolve().parents[2] / "DATA" / "organized_trials"
+    if org_dir.exists():
+        s_errs, d_errs, r_errs = [], [], []
+        for d_dir in sorted(org_dir.iterdir()):
+            if not d_dir.is_dir():
+                continue
+            s_data, gt_info = gt_load(d_dir)
+            if gt_info["status"] != "complete" or not gt_info["ground_truth"].get("complete_stats_visible"):
+                continue
+            res = gt_sim(s_data, preset=gt_info["sensitivity_preset"], k=10.85, max_pre_samples=22)
+            g_truth = gt_info["ground_truth"]
+            s_errs.append(abs(res["strokes"] - g_truth["total_compressions"]))
+            d_errs.append(res["mean_depth_mm"] - g_truth["mean_depth_mm"])
+            r_errs.append(abs(res["avg_rate_cpm"] - g_truth["avg_rate_cpm"]))
+        s_mae = sum(s_errs) / len(s_errs)
+        d_mae = sum(abs(e) for e in d_errs) / len(d_errs)
+        d_rmse = math.sqrt(sum(e * e for e in d_errs) / len(d_errs))
+        r_mae = sum(r_errs) / len(r_errs)
+        assert_test(
+            f"9-Session Laerdal Ground-Truth Stroke Count MAE <= 1.0 (got {s_mae:.2f}, max {max(s_errs)})",
+            s_mae <= 1.0 and max(s_errs) <= 2,
+            f"MAE={s_mae:.2f}, max={max(s_errs)}"
+        )
+        assert_test(
+            f"9-Session Laerdal Ground-Truth Mean Depth MAE <= 2.0 mm & RMSE <= 2.6 mm (got MAE={d_mae:.2f} mm, RMSE={d_rmse:.2f} mm)",
+            d_mae <= 2.0 and d_rmse <= 2.6,
+            f"MAE={d_mae:.2f} mm, RMSE={d_rmse:.2f} mm"
+        )
+        assert_test(
+            f"9-Session Laerdal Ground-Truth Rate MAE <= 1.8 CPM (got {r_mae:.2f} CPM)",
+            r_mae <= 1.8,
+            f"Rate MAE={r_mae:.2f} CPM"
+        )
 
     print("\n======================================================================")
     print(f"Results: {passed} PASSED, {failed} FAILED")

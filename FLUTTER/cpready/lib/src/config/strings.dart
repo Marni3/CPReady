@@ -273,7 +273,7 @@ class AppStrings {
   static const String deviceSettingsKHelper =
       'Enter a value from 1.00 to 100.00. SET_K writes and persists it on the '
       'device.';
-  static const String deviceSettingsKHint = 'e.g. 11.20';
+  static const String deviceSettingsKHint = 'e.g. 10.85';
   static const String deviceSettingsKSet = 'Set K on Device';
   static const String deviceSettingsKSending = 'Sending K…';
   static const String deviceSettingsKInvalid =
@@ -315,7 +315,7 @@ class AppStrings {
   static const String deviceSettingsSensorModeSending =
       'Updating sensor mode…';
   static const String deviceSettingsSensorModeSent1 =
-      'Sensor mode set to 1-MPU (Chest Only). Default Manikin K is 11.20.';
+      'Sensor mode set to 1-MPU (Chest Only). Default Manikin K is 10.85.';
   static const String deviceSettingsSensorModeSent2 =
       'Sensor mode set to 2-MPU (Differential). Run Manikin Calibration if needed.';
   static const String deviceSettingsSensorModeFailed =

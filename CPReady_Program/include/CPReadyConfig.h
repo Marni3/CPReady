@@ -50,9 +50,10 @@ namespace CPReadyConfig {
     constexpr uint32_t    DEFAULT_PRACTICE_DURATION_SEC       = 120;       // Total trial duration before auto-stop (0 = manual STOP)
     // Depth is integrated from acceleration (DepthEstimator.h). NOMINAL_INTEGRATOR_K (11.2)
     // is the 1.0x reference denominator for the double integrator, and DEPTH_CALIBRATION_K
-    // (11.2) is the 1.0x default for 1-MPU chest-only mode (field data median 5.2-6.5 cm).
+    // (10.85) is the empirical least-squares optimum for 1-MPU chest-only mode against the
+    // Laerdal Little Anne QC ground-truth sensors (0.96875x pad/vest compliance correction, MAE 1.88 mm).
     constexpr float       NOMINAL_INTEGRATOR_K                = 11.2f;     // Unscaled 1.0x integrator reference denominator
-    constexpr float       DEPTH_CALIBRATION_K                 = 11.2f;     // Manikin profile default K (1.0x unscaled for 1-MPU chest mode)
+    constexpr float       DEPTH_CALIBRATION_K                 = 10.85f;    // Manikin profile default K (1-MPU ground-truth optimum)
     constexpr float       COMPRESSION_START_THRESHOLD_G       = 0.28f;     // Downstroke acceleration trigger threshold (g)
     constexpr float       RECOIL_THRESHOLD_G                  = -0.35f;    // Upward rebound threshold to confirm release (g)
 
@@ -65,9 +66,9 @@ namespace CPReadyConfig {
     constexpr float       DEPTH_K_MIN                         = 1.0f;
     constexpr float       DEPTH_K_MAX                         = 100.0f;
 
-    // Version of the depth model that saved K values belong to. Incremented to 4 so stale
-    // 48.2f values in NVS are replaced once by the unscaled 11.2f 1-MPU default.
-    constexpr uint8_t     DEPTH_MODEL_VERSION                 = 4;
+    // Version of the depth model that saved K values belong to. Incremented to 5 so NVS
+    // migrates cleanly to the ground-truth fine-tuned 10.85f 1-MPU default.
+    constexpr uint8_t     DEPTH_MODEL_VERSION                 = 5;
 
     // A detection whose raw unscaled integrated motion is smaller than this is a bump (hands
     // repositioned, vest knocked), not a compression, and is not counted.
@@ -138,7 +139,7 @@ namespace CPReadyConfig {
     constexpr float       ENVELOPE_DECAY_PER_SAMPLE     = 0.993f;  // Signal-envelope decay at 100 Hz (half-life ~1 s)
     constexpr uint32_t    MIN_VALID_PERIOD_MS           = 300;     // Shortest stroke period accepted as a cadence (200 cpm)
     constexpr uint32_t    PAUSE_DETECTION_TIMEOUT_MS    = 1500;    // A gap longer than this is a pause: no CCF credit, no rate, cue streaks reset
-    constexpr uint32_t    MAX_PRE_ONSET_INTEGRATION_SAMPLES = 18;  // Caps pre-onset idle dwell window (180 ms at 100 Hz) so low-cadence dwell does not inflate closed-cycle depth
+    constexpr uint32_t    MAX_PRE_ONSET_INTEGRATION_SAMPLES = 22;  // Caps pre-onset idle dwell window (220 ms at 100 Hz) so low-cadence dwell does not inflate closed-cycle depth
 
     // Chest recoil source. Without a force sensor the "recoil" flag is an acceleration
     // proxy that cannot see leaning, so it is reported as estimated and does not drive

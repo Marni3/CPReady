@@ -90,11 +90,16 @@ The table below compares:
 - However, when a trainee hesitates or dwells at the top of the chest for `250–500 ms` between strokes (as in `01_2MPU_Balanced1` and `08_1MPU_Strict1`), `lastStrokeEndSampleIndex` sits `30–50` samples before `onsetSampleIndex`. Including that idle dwell period in the double integral integrates low-frequency hand shift over a much longer window $T$, inflating `hi - lo` by `+5` to `+7 mm`.
 - Bounding `cycleStartIndex = max(lastStrokeEndSampleIndex, onsetSampleIndex - 18)` captures the entire physical push lead-in before the filtered trigger while excluding idle dwell between strokes.
 
-### 4.3 Firmware & Flutter Refinements Applied
+### 4.3 Firmware & Flutter Refinements Applied (Model v5)
 1. **`CPReady_Program/include/CPReadyConfig.h`**:
-   - Added `MAX_PRE_ONSET_INTEGRATION_SAMPLES = 18` (`180 ms` at `100 Hz`).
+   - Set `DEPTH_CALIBRATION_K = 10.85f` (with `NOMINAL_INTEGRATOR_K = 11.20f` as the `1.0x` physical double-integrator reference, applying a `0.96875x` compliance factor that achieves the global minimum `1.88 mm` MAE and `2.49 mm` RMSE across all 9 ground-truth sessions).
+   - Added `MAX_PRE_ONSET_INTEGRATION_SAMPLES = 22` (`220 ms` at `100 Hz`).
+   - Incremented `DEPTH_MODEL_VERSION = 5` so NVS automatically migrates to `10.85f`.
 2. **`CPReady_Program/include/CompressionTracker.h`**:
    - Updated closed-cycle depth integration to bound `cycleStartIndex` to at most `MAX_PRE_ONSET_INTEGRATION_SAMPLES` before `onsetSampleIndex`.
-   - Updated `HIGH` sensitivity preset (`preset == 1`) `recoilArmFraction` from `0.10f` to `0.20f` (`recoilArmMinG = 0.030f`) so `HIGH` mode retains its sensitive `0.05g` downstroke trigger without double-counting post-recoil spring oscillations.
-3. **`FLUTTER/cpready/lib/src/screens/device_settings/device_settings_screen.dart`**:
-   - Synchronized the `HIGH` preset UI display value for `Recoil Arm` (`0.20`).
+   - Updated `HIGH` sensitivity preset (`preset == 1`) to `minStartThresholdG = 0.06f`, `adaptiveStartFraction = 0.25f`, `recoilArmFraction = 0.20f`, `recoilArmMinG = 0.030f`, and `minStrokeDepthCm = 0.25f`, achieving **`0.78` Stroke MAE (max error `2` strokes)** across all 9 ground-truth sessions.
+3. **`FLUTTER/cpready/lib/src/screens/device_settings/device_settings_screen.dart` & `strings.dart`**:
+   - Synchronized the `HIGH` preset UI display values (`0.06` Trigger, `0.20` Recoil Arm, `0.25` Min Depth) and default `K = 10.85` helper strings.
+4. **Researcher Error-Bounds Reference (`RESEARCHER_ERROR_BOUNDS_AND_TUNING_GUIDE.md` & `.pdf`)**:
+   - Full theoretical and empirical Min / MAE / RMSE / Max error tables across all tunable parameters are documented in [`RESEARCHER_ERROR_BOUNDS_AND_TUNING_GUIDE.md`](RESEARCHER_ERROR_BOUNDS_AND_TUNING_GUIDE.md) and [`RESEARCHER_ERROR_BOUNDS_AND_TUNING_GUIDE.pdf`](RESEARCHER_ERROR_BOUNDS_AND_TUNING_GUIDE.pdf).
+
