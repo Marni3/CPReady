@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "session_id": "6ee8938f-bf1d-479e-bfca-b99a8919d0c8",
+  "participant_code": "P007",
+  "experiment": "7th test",
+  "notes": "Single mpu strict",
+  "device_name": "CPReady",
+  "device_id": "68:09:47:53:C8:4E",
+  "app_version": "1.0.0",
+  "started_at": "2026-11-04T06:03:08.053633Z",
+  "status": "complete",
+  "ended_at": "2026-11-04T06:03:52.254500Z",
+  "sample_count": 4407,
+  "frame_count": 441,
+  "missing_samples": 0,
+  "missing_frames": 0,
+  "firmware_dropped_frames": 0,
+  "first_sample_index": 0,
+  "last_sample_index": 4406,
+  "files": [
+    "raw.csv",
+    "packets.csv",
+    "events.csv"
+  ]
+}

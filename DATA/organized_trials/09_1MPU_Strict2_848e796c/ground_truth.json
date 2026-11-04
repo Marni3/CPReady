@@ -1,0 +1,26 @@
+{
+  "trial_index": 9,
+  "folder_name": "09_1MPU_Strict2_848e796c",
+  "session_id": "848e796c-801d-4c8c-93ee-73f52a4511d2",
+  "zip_file": "848e796c-801d-4c8c-93ee-73f52a4511d2.zip",
+  "screenshot_rel": "Single MPU/1MPU_Strict2.jpg",
+  "screenshot_clock_pht": "2026-11-04 14:07",
+  "handwritten_label": "2nd strict",
+  "recorded_mpu_mode": "1-MPU (Chest Only)",
+  "sensitivity_preset": "STRICT",
+  "ground_truth": {
+    "score": 98,
+    "total_compressions": 71,
+    "mean_depth_mm": 57,
+    "good_release_pct": 99,
+    "good_depth_pct": 97,
+    "good_rate_pct": 70,
+    "avg_rate_cpm": 103,
+    "tip": "Make sure you release completely",
+    "complete_stats_visible": true
+  },
+  "started_at_utc": "2026-11-04T06:06:00.185695Z",
+  "ended_at_utc": "2026-11-04T06:06:44.711815Z",
+  "sample_count": 4437,
+  "status": "complete"
+}

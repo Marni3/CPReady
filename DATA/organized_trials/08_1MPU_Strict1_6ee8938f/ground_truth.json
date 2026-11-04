@@ -1,0 +1,26 @@
+{
+  "trial_index": 8,
+  "folder_name": "08_1MPU_Strict1_6ee8938f",
+  "session_id": "6ee8938f-bf1d-479e-bfca-b99a8919d0c8",
+  "zip_file": "6ee8938f-bf1d-479e-bfca-b99a8919d0c8.zip",
+  "screenshot_rel": "Single MPU/1MPU_Strict1.jpg",
+  "screenshot_clock_pht": "2026-11-04 14:04",
+  "handwritten_label": "1st strict",
+  "recorded_mpu_mode": "1-MPU (Chest Only)",
+  "sensitivity_preset": "STRICT",
+  "ground_truth": {
+    "score": 91,
+    "total_compressions": 71,
+    "mean_depth_mm": 54,
+    "good_release_pct": 99,
+    "good_depth_pct": 80,
+    "good_rate_pct": 71,
+    "avg_rate_cpm": 107,
+    "tip": "Try to perform 2 ventilations in each cycle",
+    "complete_stats_visible": true
+  },
+  "started_at_utc": "2026-11-04T06:03:08.053633Z",
+  "ended_at_utc": "2026-11-04T06:03:52.254500Z",
+  "sample_count": 4407,
+  "status": "complete"
+}

@@ -1,0 +1,26 @@
+{
+  "trial_index": 1,
+  "folder_name": "01_2MPU_Balanced1_a4dc7413",
+  "session_id": "a4dc7413-ebbd-44fd-82eb-7259d7c0c236",
+  "zip_file": "a4dc7413-ebbd-44fd-82eb-7259d7c0c236.zip",
+  "screenshot_rel": "Double MPU/2MPU_Balanced1.jpg",
+  "screenshot_clock_pht": "2026-11-03 15:36",
+  "handwritten_label": "1st balanced",
+  "recorded_mpu_mode": "2-MPU (Differential)",
+  "sensitivity_preset": "BALANCED",
+  "ground_truth": {
+    "score": null,
+    "total_compressions": 52,
+    "mean_depth_mm": 46,
+    "good_release_pct": 100,
+    "good_depth_pct": 37,
+    "good_rate_pct": 69,
+    "avg_rate_cpm": 103,
+    "tip": "Make sure you compress deep enough",
+    "complete_stats_visible": true
+  },
+  "started_at_utc": "2026-11-03T07:35:21.175156Z",
+  "ended_at_utc": "2026-11-03T07:36:00.236437Z",
+  "sample_count": 3889,
+  "status": "complete"
+}

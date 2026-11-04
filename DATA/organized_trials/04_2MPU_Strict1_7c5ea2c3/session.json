@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "session_id": "7c5ea2c3-6b9f-4a06-be0b-6c7a764d95a2",
+  "participant_code": "P003",
+  "experiment": "3rd test",
+  "notes": "Dual mpu strict",
+  "device_name": "CPReady",
+  "device_id": "68:09:47:53:C8:4E",
+  "app_version": "1.0.0",
+  "started_at": "2026-11-04T05:49:19.924277Z",
+  "status": "complete",
+  "ended_at": "2026-11-04T05:50:26.295065Z",
+  "sample_count": 6593,
+  "frame_count": 661,
+  "missing_samples": 9,
+  "missing_frames": 0,
+  "firmware_dropped_frames": 0,
+  "first_sample_index": 0,
+  "last_sample_index": 6601,
+  "files": [
+    "raw.csv",
+    "packets.csv",
+    "events.csv"
+  ]
+}

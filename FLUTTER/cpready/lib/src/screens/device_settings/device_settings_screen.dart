@@ -398,7 +398,7 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
       _sensSaving = false;
       if (mode == 'HIGH') {
         _trigController.text = '0.05';
-        _armController.text = '0.10';
+        _armController.text = '0.20';
         _minDepthController.text = '0.15';
       } else if (mode == 'STRICT') {
         _trigController.text = '0.12';

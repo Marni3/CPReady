@@ -1,0 +1,26 @@
+{
+  "trial_index": 5,
+  "folder_name": "05_2MPU_Strict2_f501e7c8",
+  "session_id": "f501e7c8-0135-47ca-b753-cdedd5c78c20",
+  "zip_file": "f501e7c8-0135-47ca-b753-cdedd5c78c20.zip",
+  "screenshot_rel": "Double MPU/2MPU_Strict2.jpg",
+  "screenshot_clock_pht": "2026-11-04 13:53",
+  "handwritten_label": "2nd strict",
+  "recorded_mpu_mode": "2-MPU (Differential)",
+  "sensitivity_preset": "STRICT",
+  "ground_truth": {
+    "score": 98,
+    "total_compressions": 69,
+    "mean_depth_mm": 57,
+    "good_release_pct": 100,
+    "good_depth_pct": 97,
+    "good_rate_pct": 97,
+    "avg_rate_cpm": 109,
+    "tip": "Try to perform 2 ventilations in each cycle",
+    "complete_stats_visible": true
+  },
+  "started_at_utc": "2026-11-04T05:52:02.510521Z",
+  "ended_at_utc": "2026-11-04T05:52:47.597291Z",
+  "sample_count": 4492,
+  "status": "complete"
+}

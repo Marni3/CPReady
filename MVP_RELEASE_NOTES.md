@@ -36,3 +36,4 @@
     - Added `unclamped_depth_mm` to `raw.csv`.
     - Added `device_config`, `stroke`, `device_error`, `final_summary`, and `recording_stopped`/`interrupted` events to `events.csv` and `session.json`.
   - Updated `supabase/DATA_FORMAT.md` to match the exact wire and CSV contracts.
+

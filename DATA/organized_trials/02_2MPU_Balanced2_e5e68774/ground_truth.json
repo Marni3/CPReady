@@ -1,0 +1,29 @@
+{
+  "trial_index": 2,
+  "folder_name": "02_2MPU_Balanced2_e5e68774",
+  "session_id": "e5e68774-cf0c-4d12-ba58-bcc2e2027717",
+  "zip_file": "e5e68774-cf0c-4d12-ba58-bcc2e2027717.zip",
+  "screenshot_rel": "Double MPU/2MPU_Balanced2.jpg",
+  "screenshot_clock_pht": "2026-11-03 15:38",
+  "handwritten_label": "2nd balanced",
+  "recorded_mpu_mode": "2-MPU (Differential)",
+  "sensitivity_preset": "BALANCED",
+  "ground_truth": {
+    "score": 21,
+    "duration_sec": 59,
+    "mode": "30:2 CPR",
+    "total_compressions": null,
+    "mean_depth_mm": null,
+    "good_release_pct": null,
+    "good_depth_pct": null,
+    "good_rate_pct": null,
+    "avg_rate_cpm": null,
+    "tip": "Make sure you compress deep enough",
+    "complete_stats_visible": false,
+    "note": "Screenshot captured top summary card (Score 21, 00:59, shallow depth tip); Compressions card below fold."
+  },
+  "started_at_utc": "2026-11-03T07:37:32.051969Z",
+  "ended_at_utc": "2026-11-03T07:38:34.895903Z",
+  "sample_count": 6267,
+  "status": "complete"
+}

@@ -1,0 +1,26 @@
+{
+  "trial_index": 4,
+  "folder_name": "04_2MPU_Strict1_7c5ea2c3",
+  "session_id": "7c5ea2c3-6b9f-4a06-be0b-6c7a764d95a2",
+  "zip_file": "7c5ea2c3-6b9f-4a06-be0b-6c7a764d95a2.zip",
+  "screenshot_rel": "Double MPU/2MPU_Strict1.jpg",
+  "screenshot_clock_pht": "2026-11-04 13:50",
+  "handwritten_label": "1st strict",
+  "recorded_mpu_mode": "2-MPU (Differential)",
+  "sensitivity_preset": "STRICT",
+  "ground_truth": {
+    "score": 96,
+    "total_compressions": 103,
+    "mean_depth_mm": 54,
+    "good_release_pct": 99,
+    "good_depth_pct": 77,
+    "good_rate_pct": 79,
+    "avg_rate_cpm": 104,
+    "tip": "Make sure you compress deep enough",
+    "complete_stats_visible": true
+  },
+  "started_at_utc": "2026-11-04T05:49:19.924277Z",
+  "ended_at_utc": "2026-11-04T05:50:26.295065Z",
+  "sample_count": 6593,
+  "status": "complete"
+}

@@ -1,0 +1,19 @@
+{
+  "trial_index": 3,
+  "folder_name": "03_2MPU_Interrupted_f71deb5f",
+  "session_id": "f71deb5f-f297-41a7-8346-6b078c347595",
+  "zip_file": "f71deb5f-f297-41a7-8346-6b078c347595.zip",
+  "screenshot_rel": null,
+  "screenshot_clock_pht": null,
+  "handwritten_label": null,
+  "recorded_mpu_mode": "2-MPU (Differential)",
+  "sensitivity_preset": "BALANCED",
+  "ground_truth": {
+    "complete_stats_visible": false,
+    "note": "Aborted/interrupted session after 2.64 s (264 samples)."
+  },
+  "started_at_utc": "2026-11-03T07:39:39.713570Z",
+  "ended_at_utc": "2026-11-03T07:39:42.753301Z",
+  "sample_count": 264,
+  "status": "interrupted"
+}

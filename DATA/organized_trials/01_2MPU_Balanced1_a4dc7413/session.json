@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "session_id": "a4dc7413-ebbd-44fd-82eb-7259d7c0c236",
+  "participant_code": "P001",
+  "experiment": "1st test",
+  "notes": "Balanced dual mpu",
+  "device_name": "CPReady",
+  "device_id": "68:09:47:53:C8:4E",
+  "app_version": "1.0.0",
+  "started_at": "2026-11-03T07:35:21.175156Z",
+  "status": "complete",
+  "ended_at": "2026-11-03T07:36:00.236437Z",
+  "sample_count": 3889,
+  "frame_count": 389,
+  "missing_samples": 0,
+  "missing_frames": 0,
+  "firmware_dropped_frames": 0,
+  "first_sample_index": 0,
+  "last_sample_index": 3888,
+  "files": [
+    "raw.csv",
+    "packets.csv",
+    "events.csv"
+  ]
+}

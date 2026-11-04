@@ -1,0 +1,26 @@
+{
+  "trial_index": 10,
+  "folder_name": "10_1MPU_Balanced1_48011a51",
+  "session_id": "48011a51-ebbb-45ce-b80c-67b89ae6e77a",
+  "zip_file": "48011a51-ebbb-45ce-b80c-67b89ae6e77a.zip",
+  "screenshot_rel": "Single MPU/1MPU_Balanced1.jpg",
+  "screenshot_clock_pht": "2026-11-04 14:10",
+  "handwritten_label": "1st balance",
+  "recorded_mpu_mode": "1-MPU (Chest Only)",
+  "sensitivity_preset": "BALANCED",
+  "ground_truth": {
+    "score": 99,
+    "total_compressions": 70,
+    "mean_depth_mm": 58,
+    "good_release_pct": 100,
+    "good_depth_pct": 100,
+    "good_rate_pct": 71,
+    "avg_rate_cpm": 102,
+    "tip": "Try to perform 2 ventilations in each cycle",
+    "complete_stats_visible": true
+  },
+  "started_at_utc": "2026-11-04T06:09:21.671839Z",
+  "ended_at_utc": "2026-11-04T06:10:06.628603Z",
+  "sample_count": 4483,
+  "status": "complete"
+}

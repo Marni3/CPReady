@@ -1,0 +1,26 @@
+{
+  "trial_index": 11,
+  "folder_name": "11_1MPU_High2_44c2e739",
+  "session_id": "44c2e739-591c-4306-b2f1-b000e8eed2db",
+  "zip_file": "44c2e739-591c-4306-b2f1-b000e8eed2db.zip",
+  "screenshot_rel": "Single MPU/1MPU_High2.jpg",
+  "screenshot_clock_pht": "2026-11-04 14:18",
+  "handwritten_label": "2nd high",
+  "recorded_mpu_mode": "1-MPU (Chest Only)",
+  "sensitivity_preset": "HIGH",
+  "ground_truth": {
+    "score": 96,
+    "total_compressions": 80,
+    "mean_depth_mm": 51,
+    "good_release_pct": 100,
+    "good_depth_pct": 59,
+    "good_rate_pct": 84,
+    "avg_rate_cpm": 102,
+    "tip": "Make sure you compress deep enough",
+    "complete_stats_visible": true
+  },
+  "started_at_utc": "2026-11-04T06:17:25.908038Z",
+  "ended_at_utc": "2026-11-04T06:18:14.377827Z",
+  "sample_count": 4834,
+  "status": "complete"
+}

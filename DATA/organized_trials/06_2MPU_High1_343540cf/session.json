@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "session_id": "343540cf-fb7a-4f20-977e-c943e55ed125",
+  "participant_code": "P005",
+  "experiment": "5th test",
+  "notes": "Dual mpu high",
+  "device_name": "CPReady",
+  "device_id": "68:09:47:53:C8:4E",
+  "app_version": "1.0.0",
+  "started_at": "2026-11-04T05:54:49.376082Z",
+  "status": "complete",
+  "ended_at": "2026-11-04T05:55:41.350179Z",
+  "sample_count": 5184,
+  "frame_count": 519,
+  "missing_samples": 0,
+  "missing_frames": 0,
+  "firmware_dropped_frames": 0,
+  "first_sample_index": 0,
+  "last_sample_index": 5183,
+  "files": [
+    "raw.csv",
+    "packets.csv",
+    "events.csv"
+  ]
+}

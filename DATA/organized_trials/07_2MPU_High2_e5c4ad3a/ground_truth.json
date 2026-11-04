@@ -1,0 +1,26 @@
+{
+  "trial_index": 7,
+  "folder_name": "07_2MPU_High2_e5c4ad3a",
+  "session_id": "e5c4ad3a-e2eb-4df3-9e6f-c7fefc4214cd",
+  "zip_file": "e5c4ad3a-e2eb-4df3-9e6f-c7fefc4214cd.zip",
+  "screenshot_rel": "Double MPU/2MPU_High2.jpg",
+  "screenshot_clock_pht": "2026-11-04 13:58",
+  "handwritten_label": "2nd High",
+  "recorded_mpu_mode": "2-MPU (Differential)",
+  "sensitivity_preset": "HIGH",
+  "ground_truth": {
+    "score": 99,
+    "total_compressions": 69,
+    "mean_depth_mm": 59,
+    "good_release_pct": 100,
+    "good_depth_pct": 99,
+    "good_rate_pct": 68,
+    "avg_rate_cpm": 101,
+    "tip": "Make sure you compress deep enough",
+    "complete_stats_visible": true
+  },
+  "started_at_utc": "2026-11-04T05:57:41.648491Z",
+  "ended_at_utc": "2026-11-04T05:58:30.397494Z",
+  "sample_count": 4843,
+  "status": "complete"
+}

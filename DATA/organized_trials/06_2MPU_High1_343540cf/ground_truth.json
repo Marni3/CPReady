@@ -1,0 +1,26 @@
+{
+  "trial_index": 6,
+  "folder_name": "06_2MPU_High1_343540cf",
+  "session_id": "343540cf-fb7a-4f20-977e-c943e55ed125",
+  "zip_file": "343540cf-fb7a-4f20-977e-c943e55ed125.zip",
+  "screenshot_rel": "Double MPU/2MPU_High1.jpg",
+  "screenshot_clock_pht": "2026-11-04 13:56",
+  "handwritten_label": "1st High",
+  "recorded_mpu_mode": "2-MPU (Differential)",
+  "sensitivity_preset": "HIGH",
+  "ground_truth": {
+    "score": 99,
+    "total_compressions": 82,
+    "mean_depth_mm": 60,
+    "good_release_pct": 100,
+    "good_depth_pct": 99,
+    "good_rate_pct": 89,
+    "avg_rate_cpm": 105,
+    "tip": "Try to perform 2 ventilations in each cycle",
+    "complete_stats_visible": true
+  },
+  "started_at_utc": "2026-11-04T05:54:49.376082Z",
+  "ended_at_utc": "2026-11-04T05:55:41.350179Z",
+  "sample_count": 5184,
+  "status": "complete"
+}

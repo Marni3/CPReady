@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "session_id": "44c2e739-591c-4306-b2f1-b000e8eed2db",
+  "participant_code": "P012",
+  "experiment": "12th test",
+  "notes": "Single mpu high",
+  "device_name": "CPReady",
+  "device_id": "68:09:47:53:C8:4E",
+  "app_version": "1.0.0",
+  "started_at": "2026-11-04T06:17:25.908038Z",
+  "status": "complete",
+  "ended_at": "2026-11-04T06:18:14.377827Z",
+  "sample_count": 4834,
+  "frame_count": 484,
+  "missing_samples": 0,
+  "missing_frames": 0,
+  "firmware_dropped_frames": 0,
+  "first_sample_index": 0,
+  "last_sample_index": 4833,
+  "files": [
+    "raw.csv",
+    "packets.csv",
+    "events.csv"
+  ]
+}

@@ -138,6 +138,7 @@ namespace CPReadyConfig {
     constexpr float       ENVELOPE_DECAY_PER_SAMPLE     = 0.993f;  // Signal-envelope decay at 100 Hz (half-life ~1 s)
     constexpr uint32_t    MIN_VALID_PERIOD_MS           = 300;     // Shortest stroke period accepted as a cadence (200 cpm)
     constexpr uint32_t    PAUSE_DETECTION_TIMEOUT_MS    = 1500;    // A gap longer than this is a pause: no CCF credit, no rate, cue streaks reset
+    constexpr uint32_t    MAX_PRE_ONSET_INTEGRATION_SAMPLES = 18;  // Caps pre-onset idle dwell window (180 ms at 100 Hz) so low-cadence dwell does not inflate closed-cycle depth
 
     // Chest recoil source. Without a force sensor the "recoil" flag is an acceleration
     // proxy that cannot see leaning, so it is reported as estimated and does not drive

@@ -305,7 +305,7 @@ public:
     // Returns 0 = BALANCED, 1 = HIGH, 2 = STRICT, 3 = CUSTOM
     uint8_t getSensitivityPresetCode() const {
         if (fabsf(minStartThresholdG - 0.05f) < 0.005f &&
-            fabsf(recoilArmFraction - 0.10f) < 0.01f &&
+            fabsf(recoilArmFraction - 0.20f) < 0.01f &&
             fabsf(minStrokeDepthCm - 0.15f) < 0.02f) {
             return 1;
         }
@@ -336,8 +336,8 @@ public:
         if (preset == 1) {
             minStartThresholdG    = 0.05f;
             adaptiveStartFraction = 0.22f;
-            recoilArmFraction     = 0.10f;
-            recoilArmMinG         = 0.025f;
+            recoilArmFraction     = 0.20f;
+            recoilArmMinG         = 0.030f;
             minStrokeDepthCm      = 0.15f;
         } else if (preset == 2) {
             minStartThresholdG    = 0.12f;
@@ -454,8 +454,15 @@ public:
                     float physicalDepthCm = 0.0f;
                     bool depthKnown = false;
                     if (!isPostPause) {
+                        uint32_t cycleStartIndex = lastStrokeEndSampleIndex;
+                        if (onsetSampleIndex > CPReadyConfig::MAX_PRE_ONSET_INTEGRATION_SAMPLES) {
+                            uint32_t cappedStart = onsetSampleIndex - CPReadyConfig::MAX_PRE_ONSET_INTEGRATION_SAMPLES;
+                            if (cappedStart > cycleStartIndex) {
+                                cycleStartIndex = cappedStart;
+                            }
+                        }
                         depthKnown = depthEstimator.closedCycleDepthCm(
-                            lastStrokeEndSampleIndex, strokeEndIndex, physicalDepthCm);
+                            cycleStartIndex, strokeEndIndex, physicalDepthCm);
                     }
                     if (!depthKnown) {
                         depthKnown = depthEstimator.fromRestDepthCm(
