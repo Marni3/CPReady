@@ -25,15 +25,12 @@ void main() {
     );
   });
 
-  test('leaves the minimum gap between different cues', () {
+  test('allows different cues immediately', () {
     DateTime now = DateTime(2026, 10, 25, 12);
     final VoiceCueGate gate = VoiceCueGate(clock: () => now);
 
     expect(gate.allows(1), isTrue);
     now = now.add(const Duration(milliseconds: 100));
-    expect(gate.allows(2), isFalse);
-
-    now = now.add(const Duration(milliseconds: 200));
     expect(gate.allows(2), isTrue);
   });
 

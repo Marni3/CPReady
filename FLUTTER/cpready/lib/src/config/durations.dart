@@ -92,9 +92,6 @@ class AppDurations {
   /// firmware's own 5 s prompt cooldown, so a legitimate repeat still plays.
   static const int voiceCueDuplicateMs = 1000;
 
-  /// Shortest gap between two different cues, so they never overlap.
-  static const int voiceCueMinGapMs = 250;
-
   // -----------------------------------------------------------------------
   // Live cadence warning
   // -----------------------------------------------------------------------
@@ -158,9 +155,6 @@ class AppDurations {
   );
   static const Duration voiceCueDuplicate = Duration(
     milliseconds: voiceCueDuplicateMs,
-  );
-  static const Duration voiceCueMinGap = Duration(
-    milliseconds: voiceCueMinGapMs,
   );
   static const Duration defaultAnimation = Duration(
     milliseconds: defaultAnimationMs,

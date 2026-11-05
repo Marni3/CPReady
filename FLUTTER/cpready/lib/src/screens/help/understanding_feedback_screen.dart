@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/config.dart';
+import '../../core/app_scope.dart';
 
 // ============================================================
 // UNDERSTANDING FEEDBACK SCREEN
@@ -935,27 +939,61 @@ class _BasisOfStandardsCard extends StatelessWidget {
 // VOICE PROMPTS CONTENT
 // ============================================================
 
-class _VoicePromptsContent extends StatelessWidget {
+class _VoicePromptsContent extends StatefulWidget {
   const _VoicePromptsContent();
 
   @override
+  State<_VoicePromptsContent> createState() => _VoicePromptsContentState();
+}
+
+class _VoicePromptsContentState extends State<_VoicePromptsContent> {
+  bool _voiceEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVoiceSetting();
+  }
+
+  Future<void> _loadVoiceSetting() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _voiceEnabled = prefs.getBool('voice_coaching_enabled') ?? true;
+    });
+  }
+
+  Future<void> _setVoiceEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('voice_coaching_enabled', enabled);
+    setState(() {
+      _voiceEnabled = enabled;
+    });
+  }
+
+  void _playPrompt(int cueCode) {
+    if (!_voiceEnabled) return;
+    final coach = AppScope.voice(context);
+    unawaited(coach.play(cueCode));
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // ==================================================
         // INTRODUCTION
         // ==================================================
 
-        _VoicePromptsIntroduction(),
+        const _VoicePromptsIntroduction(),
 
-        SizedBox(height: 28),
+        const SizedBox(height: 28),
 
         _SectionHeading(
           title: 'VOICE COACHING PROMPTS',
         ),
 
-        SizedBox(height: 14),
+        const SizedBox(height: 14),
 
         // ==================================================
         // TOO FAST
@@ -967,9 +1005,10 @@ class _VoicePromptsContent extends StatelessWidget {
               'Aim for 100–120 chest compressions per minute '
               'while keeping a steady rhythm.',
           isPositive: false,
+          onPlay: () => _playPrompt(AppBleConfig.cueSlowDown),
         ),
 
-        SizedBox(height: 14),
+        const SizedBox(height: 14),
 
         // ==================================================
         // TOO SLOW
@@ -981,9 +1020,10 @@ class _VoicePromptsContent extends StatelessWidget {
               'Adult CPR requires a compression rate of '
               '100–120 compressions per minute.',
           isPositive: false,
+          onPlay: () => _playPrompt(AppBleConfig.cueSpeedUp),
         ),
 
-        SizedBox(height: 14),
+        const SizedBox(height: 14),
 
         // ==================================================
         // TOO DEEP
@@ -995,9 +1035,10 @@ class _VoicePromptsContent extends StatelessWidget {
               'For adult CPR, avoid compressing the chest '
               'deeper than 6 cm.',
           isPositive: false,
+          onPlay: () => _playPrompt(AppBleConfig.cuePushShallower),
         ),
 
-        SizedBox(height: 14),
+        const SizedBox(height: 14),
 
         // ==================================================
         // TOO SHALLOW
@@ -1009,9 +1050,10 @@ class _VoicePromptsContent extends StatelessWidget {
               'For adult CPR, compress the chest to a depth '
               'of at least 5 cm.',
           isPositive: false,
+          onPlay: () => _playPrompt(AppBleConfig.cuePushHarder),
         ),
 
-        SizedBox(height: 14),
+        const SizedBox(height: 14),
 
         // ==================================================
         // INCOMPLETE RECOIL
@@ -1024,9 +1066,10 @@ class _VoicePromptsContent extends StatelessWidget {
               'The chest should return to its normal position '
               'between compressions. Avoid leaning on it.',
           isPositive: false,
+          onPlay: () => _playPrompt(AppBleConfig.cueReleaseFully),
         ),
 
-        SizedBox(height: 14),
+        const SizedBox(height: 14),
 
         // ==================================================
         // GOOD COMPRESSIONS
@@ -1039,9 +1082,10 @@ class _VoicePromptsContent extends StatelessWidget {
               'its feedback criteria. Continue maintaining '
               'your technique.',
           isPositive: true,
+          onPlay: () => _playPrompt(AppBleConfig.cueGoodJob),
         ),
 
-        SizedBox(height: 28),
+        const SizedBox(height: 28),
 
         // ==================================================
         // VOICE CONTROL
@@ -1051,17 +1095,20 @@ class _VoicePromptsContent extends StatelessWidget {
           title: 'VOICE CONTROL',
         ),
 
-        SizedBox(height: 14),
+        const SizedBox(height: 14),
 
-        _VoiceControlCard(),
+        _VoiceControlCard(
+          voiceEnabled: _voiceEnabled,
+          onChanged: _setVoiceEnabled,
+        ),
 
-        SizedBox(height: 20),
+        const SizedBox(height: 20),
 
         // ==================================================
         // BOTTOM NOTE
         // ==================================================
 
-        _VoicePromptsNote(),
+        const _VoicePromptsNote(),
       ],
     );
   }
@@ -1136,11 +1183,13 @@ class _VoicePromptCard extends StatelessWidget {
     required this.prompt,
     required this.explanation,
     required this.isPositive,
+    required this.onPlay,
   });
 
   final String prompt;
   final String explanation;
   final bool isPositive;
+  final VoidCallback onPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -1171,18 +1220,22 @@ class _VoicePromptCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // SPEAKER ICON
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEAF2FC),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(
-              Icons.volume_up_rounded,
-              size: 31,
-              color: AppColors.brandBlue,
+          // SPEAKER ICON (CLICKABLE)
+          InkWell(
+            onTap: onPlay,
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF2FC),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.volume_up_rounded,
+                size: 31,
+                color: AppColors.brandBlue,
+              ),
             ),
           ),
 
@@ -1227,7 +1280,13 @@ class _VoicePromptCard extends StatelessWidget {
 // ============================================================
 
 class _VoiceControlCard extends StatelessWidget {
-  const _VoiceControlCard();
+  const _VoiceControlCard({
+    required this.voiceEnabled,
+    required this.onChanged,
+  });
+
+  final bool voiceEnabled;
+  final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1241,27 +1300,27 @@ class _VoiceControlCard extends StatelessWidget {
           color: const Color(0xFFDCE6F1),
         ),
       ),
-      child: const Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           SizedBox(
             width: 40,
             height: 40,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: Color(0xFFEAF2FC),
+                color: const Color(0xFFEAF2FC),
                 borderRadius: BorderRadius.all(
                   Radius.circular(11),
                 ),
               ),
               child: Icon(
-                Icons.volume_up_outlined,
+                voiceEnabled ? Icons.volume_up_outlined : Icons.volume_off_outlined,
                 color: AppColors.brandBlue,
                 size: 20,
               ),
             ),
           ),
-          SizedBox(width: 12),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1274,10 +1333,10 @@ class _VoiceControlCard extends StatelessWidget {
                     color: AppColors.brandBlue,
                   ),
                 ),
-                SizedBox(height: 6),
+                const SizedBox(height: 6),
                 Text(
-                  'Use the sound control on the Live Practice '
-                  'screen to turn voice prompts on or off.',
+                  'Use this toggle to turn voice prompts on or off '
+                  'during practice sessions.',
                   style: TextStyle(
                     fontSize: 12.5,
                     height: 1.45,
@@ -1286,6 +1345,11 @@ class _VoiceControlCard extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          Switch(
+            value: voiceEnabled,
+            onChanged: onChanged,
+            activeColor: AppColors.brandBlue,
           ),
         ],
       ),

@@ -12,6 +12,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -420,7 +421,17 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       final int cue = metrics.audioPromptCode;
       final bool newCue = cue != _previousCueCode;
       _previousCueCode = cue;
+      if (newCue && cue != 0 && kDebugMode) {
+        debugPrint(
+          'Voice cue $cue received at ${DateTime.now().toIso8601String()}',
+        );
+      }
       if (newCue && !_muted && !_ending && !_finished && _cueGate.allows(cue)) {
+        if (kDebugMode) {
+          debugPrint(
+            'Voice cue $cue accepted at ${DateTime.now().toIso8601String()}',
+          );
+        }
         unawaited(_coach?.play(cue));
       }
     }

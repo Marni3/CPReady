@@ -52,6 +52,7 @@ class AppAssets {
   /// Coaching-cue audio, keyed by the firmware's `audio_prompt_code`.
   ///
   /// Codes without an entry (0, the "nothing to say" value) are never played.
+  /// Leading silence trimmed from original MP3s to reduce first-cue latency.
   static const Map<int, String> voicePrompts = <int, String>{
     AppBleConfig.cuePushHarder: 'assets/audio/push_harder.mp3',
     AppBleConfig.cuePushShallower: 'assets/audio/push_shallower.mp3',

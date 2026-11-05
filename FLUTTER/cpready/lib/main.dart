@@ -62,6 +62,11 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(
+      _voiceCoach.preload().catchError((Object error) {
+        debugPrint('Voice cue preload failed: $error');
+      }),
+    );
     unawaited(_uploadService.retryPending(_repository));
     _router = buildRouter(
       initialRoute: AppRoutes.splash,

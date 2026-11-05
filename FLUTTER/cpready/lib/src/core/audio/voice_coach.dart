@@ -44,10 +44,15 @@ class SilentVoiceCoach implements VoiceCoach {
 
 /// Production coach backed by `audioplayers`.
 ///
-/// Each cue keeps its own preloaded player. A cue is replayed by stopping its
-/// player and resuming it, which restarts the asset from the beginning.
+/// Each cue keeps its own preloaded player. A cue is replayed by seeking it to
+/// zero and resuming it, so the player does not abandon and re-request audio
+/// focus on every cue.
 class AssetVoiceCoach implements VoiceCoach {
   final Map<int, AudioPlayer> _players = <int, AudioPlayer>{};
+  final Map<int, Future<AudioPlayer?>> _loading = <int, Future<AudioPlayer?>>{};
+  Future<void>? _preloadFuture;
+  AudioPlayer? _activePlayer;
+  int _playGeneration = 0;
   bool _disposed = false;
 
   /// Prefix that `audioplayers` puts in front of every [AssetSource] path.
@@ -63,8 +68,8 @@ class AssetVoiceCoach implements VoiceCoach {
   /// plugin request `assets/assets/audio/...`, which does not exist.
   static String _sourcePath(String bundlePath) =>
       bundlePath.startsWith(_bundlePrefix)
-      ? bundlePath.substring(_bundlePrefix.length)
-      : bundlePath;
+          ? bundlePath.substring(_bundlePrefix.length)
+          : bundlePath;
 
   /// Spoken coaching, tagged as speech on the media stream.
   ///
@@ -83,37 +88,111 @@ class AssetVoiceCoach implements VoiceCoach {
   );
 
   @override
-  Future<void> preload() async {
-    if (_disposed) return;
+  Future<void> preload() {
+    if (_disposed) return Future<void>.value();
+    return _preloadFuture ??= _preloadAll();
+  }
 
+  Future<void> _preloadAll() async {
     for (final MapEntry<int, String> entry in AppAssets.voicePrompts.entries) {
       if (_disposed) return;
-      if (_players.containsKey(entry.key)) continue;
+      await _loadCue(entry.key);
+    }
+  }
 
-      AudioPlayer? player;
-      try {
-        player = AudioPlayer();
-        await player.setAudioContext(_context);
-        await player.setReleaseMode(ReleaseMode.stop);
-        await player.setSource(AssetSource(_sourcePath(entry.value)));
-        _players[entry.key] = player;
-      } catch (error) {
-        // A cue that fails to load is retried on the next preload instead of
-        // leaving the coach permanently silent.
-        debugPrint('Voice cue preload failed for code ${entry.key}: $error');
-        await player?.dispose();
+  /// Returns the loaded player for [cueCode], waiting for an in-flight load or
+  /// starting one if necessary. A player is never silently skipped just
+  /// because the live screen opened while preload was still running.
+  Future<AudioPlayer?> _loadCue(int cueCode) {
+    final AudioPlayer? existing = _players[cueCode];
+    if (existing != null) return Future<AudioPlayer?>.value(existing);
+
+    final String? bundlePath = AppAssets.voicePrompts[cueCode];
+    if (bundlePath == null) return Future<AudioPlayer?>.value();
+
+    return _loading.putIfAbsent(
+      cueCode,
+      () => _createPlayer(cueCode, bundlePath),
+    );
+  }
+
+  Future<AudioPlayer?> _createPlayer(int cueCode, String bundlePath) async {
+    AudioPlayer? player;
+    try {
+      if (kDebugMode) {
+        debugPrint('Voice cue $cueCode loading');
       }
+      player = AudioPlayer();
+      await player.setAudioContext(_context);
+      await player.setReleaseMode(ReleaseMode.stop);
+      await player.setSource(AssetSource(_sourcePath(bundlePath)));
+
+      if (_disposed) {
+        await player.dispose();
+        return null;
+      }
+
+      _players[cueCode] = player;
+      if (kDebugMode) {
+        debugPrint('Voice cue $cueCode preloaded');
+      }
+      return player;
+    } catch (error) {
+      debugPrint('Voice cue load failed for code $cueCode: $error');
+      await player?.dispose();
+      return null;
+    } finally {
+      _loading.remove(cueCode);
     }
   }
 
   @override
   Future<void> play(int cueCode) async {
-    final AudioPlayer? player = _players[cueCode];
-    if (player == null || _disposed) return;
+    if (_disposed) return;
+
+    final int generation = ++_playGeneration;
+    if (kDebugMode) {
+      debugPrint(
+        'Voice cue $cueCode play requested at '
+        '${DateTime.now().toIso8601String()}',
+      );
+    }
+    final Stopwatch stopwatch = Stopwatch()..start();
+    final AudioPlayer? player = await _loadCue(cueCode);
+    if (player == null || _disposed || generation != _playGeneration) {
+      if (kDebugMode) {
+        debugPrint(
+            'Voice cue $cueCode not played: player unavailable or stale');
+      }
+      return;
+    }
 
     try {
-      await player.stop();
+      final AudioPlayer? previous = _activePlayer;
+      _activePlayer = player;
+      if (previous != null && previous != player) {
+        // Pause rather than stop: stop() abandons audio focus, which makes the
+        // next cue wait for a fresh focus grant before it can start.
+        try {
+          await previous.pause();
+        } catch (error) {
+          debugPrint('Voice cue pause failed for previous cue: $error');
+        }
+        if (_disposed || generation != _playGeneration) return;
+      }
+
+      // Seek to zero instead of stop()+resume(). This restarts the preloaded
+      // asset without the extra focus release/request cycle.
+      await player.seek(Duration.zero);
+      if (_disposed || generation != _playGeneration) return;
       await player.resume();
+
+      if (kDebugMode) {
+        debugPrint(
+          'Voice cue $cueCode started after '
+          '${stopwatch.elapsedMilliseconds} ms',
+        );
+      }
     } catch (error) {
       debugPrint('Voice cue playback failed for code $cueCode: $error');
     }
@@ -121,6 +200,8 @@ class AssetVoiceCoach implements VoiceCoach {
 
   @override
   Future<void> stop() async {
+    _playGeneration++;
+    _activePlayer = null;
     for (final AudioPlayer player in _players.values) {
       try {
         await player.stop();
@@ -133,6 +214,8 @@ class AssetVoiceCoach implements VoiceCoach {
   @override
   Future<void> dispose() async {
     _disposed = true;
+    _playGeneration++;
+    _activePlayer = null;
     for (final AudioPlayer player in _players.values) {
       try {
         await player.dispose();
@@ -141,5 +224,6 @@ class AssetVoiceCoach implements VoiceCoach {
       }
     }
     _players.clear();
+    _loading.clear();
   }
 }
