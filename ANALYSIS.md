@@ -1,8 +1,11 @@
 # CPReady Field Data Analysis
 
-**Analysis date:** 2026-11-04 (baseline); **Revision 2:** 2026-11-05  
-**Data set:** 12 recorded sessions in `DATA/` — 11 baseline sessions (10 complete, 1 interrupted) plus the new `ce67d9d5` capture (2.56 s, interrupted, no compressions)  
-**Scope:** diagnose missed compressions, unexpectedly low depth readings, and the new complaint that irregular rhythm makes depth less accurate and more variable  
+**Analysis date:** 2026-11-04 (baseline); **Revision 2:** 2026-11-05; **Revision 3:** 2026-11-05 (schema-2 uploads)
+
+**Data set:** 17 recorded sessions in `DATA/` — 11 baseline sessions (10 complete, 1 interrupted), the `ce67d9d5` idle capture, the old-schema `2928353c` session, and four schema-2 sessions (`3f74e948`, `af47d3f5`, `b6d1fe73`, `8f4e8e4c`)
+
+**Scope:** diagnose missed compressions, low depth readings, rhythm-dependent fluctuation, and validate the new schema-2 telemetry and remaining live-display/pause/timestamp artifacts
+
 **Change policy:** analysis only. No firmware, Flutter, Supabase, or configuration source file was modified. This report is the only file changed.
 
 ---
@@ -29,17 +32,19 @@ The original two symptoms have different but connected causes, and Revision 2 ad
 
 6. **A second, independent depth problem exists even in single mode.** The double integrator plus the default manikin scale (`48.2 / 11.2 = 4.30×`) produces 4–10 cm from normal chest motion, frequently saturating. The runtime `K` is not recorded in any upload, so the relative contribution of `K`, integration boundary conditions, and sensor gain cannot be separated from these files alone.
 
-7. **The upload pipeline hides the evidence needed to diagnose this.** `packets.csv` omits `recoil_status`, no session contains a type-6 config report (`K`, mode, preset, duration), `events.csv` contains only `recording_started`, and `DATA_FORMAT.md` documents the packet types incorrectly.
+7. **The old upload pipeline hides the evidence needed to diagnose this.** In the 12 pre-schema-2 uploads, `packets.csv` omits `recoil_status`, no session contains a type-6 config report (`K`, mode, preset, duration), `events.csv` contains only `recording_started`, and `DATA_FORMAT.md` documents the packet types incorrectly. Schema 2 adds `recoil_status`, a `device_config` event, and full lifecycle events, so this limitation no longer applies to the four new sessions.
 
 8. **One session is a separate hardware fault.** `f71deb5f` stopped after 2.73 s with packet type 5, error code 7 (`ERR_I2C_FAULT`). It is not evidence about the detection algorithm.
 
 9. **Revision 2 (2026-11-05): the rhythm complaint is real, and it is a windowing problem.** The new `ce67d9d5` file is only a 2.56 s idle capture with zero compressions, so it cannot validate depth. In a replay of the nine ground-truth sessions through the current tuned model, strokes whose cycle interval is within ±10% of the session median deviate from the session median depth by **3.4 mm on average**; strokes whose interval is ≥20% off deviate by **26.1 mm** — a **7.7× increase in fluctuation**. The mechanism is analysed in §13: irregular cycles change the integration window, the pre-onset dwell included in it, and whether a pause is treated as a pause or as a continuous cycle. The new file does show a much-improved static baseline (chest **0.996 g**, base **1.000 g** versus 1.07–1.15 g / 0.83–0.89 g before), but it contains no compression data.
 
+10. **Revision 3 (schema-2 uploads): the clamp and summary bug is fixed, but live outliers and pause/clock artifacts remain.** The four schema-2 sessions record `K = 10.85`, unclamped depth, recoil, device config, stroke events, and a final summary. None clamps; final depths are **5.13, 5.23, 5.41, and 5.14 cm** at 113–116 cpm. The old-schema `2928353c` still shows the old failure: **74 of 77 strokes clamp at 10.0 cm**, and the reported **5.04 cm** final is the mean of the only three non-clamped strokes — all three are short-interval (0.2–0.3 s) partial detections. In the new sessions, the remaining problems are event-level: `3f74e948` reports **1.16 cm then 8.09 cm** on consecutive strokes 0.8 s apart; `b6d1fe73` has a **1.013 s timestamp/sampling gap** that creates a false 1.504 s pause, a **0.0 cm** stroke, and a **1.55 cm** final stroke; first-stroke depth is `0.0, 0.0, 7.81, 3.20 cm` across the four sessions. The new summary is the arithmetic mean of every nonzero stroke, so these outliers are included, and `recoil_status` mixes live booleans (`0/1`) with final percentages (`98/99/100`) in the same CSV column.
+
 ---
 
 ## 1. Data Inventory
 
-The 11 baseline zip archives plus the new 2026-11-05 `ce67d9d5` archive were extracted to `/tmp/opencode/`; the repository `DATA/` directory was left untouched. Each short session ID below corresponds to `DATA/<session-id>-<uuid>.zip`. Each archive contains exactly:
+All 17 zip archives (11 baseline, the `ce67d9d5` idle capture, and the five Revision 3 uploads) were extracted to `/tmp/opencode/`; the repository `DATA/` directory was left untouched. Each short session ID below corresponds to `DATA/<session-id>-<uuid>.zip`. Each archive contains exactly:
 
 - `raw.csv` — 100 Hz chest/base accelerometer samples
 - `packets.csv` — firmware metrics packets
@@ -62,8 +67,13 @@ The 11 baseline zip archives plus the new 2026-11-05 `ce67d9d5` archive were ext
 | `f501e7c8` | P004 | 4th test | Dual mpu strict | dual / STRICT | 2026-11-04 05:52:02 | 44.91 s | complete |
 | `f71deb5f` | P003 | 3rd test | Dual mpu balanced | dual / BALANCED | 2026-11-03 07:39:39 | 2.73 s | interrupted |
 | `ce67d9d5` | P001 | practice | *(blank)* | single / unknown (base constant 1000 mg) | 2026-11-05 08:50:13 | 2.56 s | interrupted |
+| `2928353c` | P0010 | 10th test | Single mpu balanced | single / BALANCED | 2026-11-04 06:12:05 | 50.03 s | complete (schema 1) |
+| `3f74e948` | P014 | 1st test code 11/05 | Device settings unchanged | single / manikin, K=10.85 | 2026-11-05 12:43:21 | 34.37 s | complete (schema 2) |
+| `af47d3f5` | P015 | 2nd test code 11/05 | Device settinhs unchanged | single / manikin, K=10.85 | 2026-11-05 12:49:04 | 48.95 s | complete (schema 2) |
+| `b6d1fe73` | P016 | 3rd practice code 11/05 | Device settings unchsnged | single / manikin, K=10.85 | 2026-11-05 13:00:02 | 61.96 s | complete (schema 2) |
+| `8f4e8e4c` | P016 | 4th Practice code 11/05 | Device settinhs unchange | single / manikin, K=10.85 | 2026-11-05 13:22:24 | 59.77 s | complete (schema 2) |
 
-Mode and preset are **inferred from the free-text `notes` field**, because no type-6 config report was uploaded. `P003` has two sessions both labelled “3rd test”: `7c5ea2c3` (complete, strict) and `f71deb5f` (interrupted, balanced). The new `ce67d9d5` session has no notes and no config report; it is identified from its raw stream only.
+Mode and preset are **inferred from the free-text `notes` field** in the baseline sessions, because no type-6 config report was uploaded. `P003` has two sessions both labelled “3rd test”: `7c5ea2c3` (complete, strict) and `f71deb5f` (interrupted, balanced). The new `ce67d9d5` session has no notes and no config report; it is identified from its raw stream only. The four schema-2 sessions explicitly record `device_config` (manikin, `depth_k=10.85`, 120 s) and have `base_x/y/z = 0`, confirming single-MPU operation.
 
 ### 1.2 Sampling health
 
@@ -81,8 +91,13 @@ Mode and preset are **inferred from the free-text `notes` field**, because no ty
 | `f501e7c8` | 4,492 | 0–4491 | 10.00 ms | 11.0 ms | 11 ms |
 | `f71deb5f` | 264 | 0–263 | 10.00 ms | 40.0 ms | 50 ms |
 | `ce67d9d5` | 257 | 0–256 | 10.00 ms | 10.0 ms | 10 ms |
+| `2928353c` | 5,004 | 0–5003 | 10.00 ms | 11.0 ms | 11 ms |
+| `3f74e948` | 3,438 | 0–3437 | 10.00 ms | 10.0 ms | 10 ms |
+| `af47d3f5` | 4,896 | 0–4895 | 10.00 ms | 10.0 ms | 10 ms |
+| `b6d1fe73` | 6,097 | 0–6096 | 10.00 ms | 10.0 ms | **1,013 ms** |
+| `8f4e8e4c` | 5,978 | 0–5977 | 10.00 ms | 10.0 ms | 10 ms |
 
-**The 100 Hz sampling loop is healthy.** The only 100+ ms gaps are the two 10-sample dropouts discussed in §7.1. The new 2.56 s session is clean at exactly 10.00 ms. There is no evidence of systematic BLE loss, CPU starvation, or sampling-rate collapse.
+**The 100 Hz sampling loop is healthy in most sessions, but `b6d1fe73` contains a real 1.013 s discontinuity.** At sample index 4871 / frame sequence 488, `t_us` jumps from `207303644` to `208316652` (**1.013008 s**), while `sample_index` advances only 4870 → 4871 and `frame_sequence` stays at 488. The session metadata reports `missing_samples: 0`, `missing_frames: 0`, and `firmware_dropped_frames: 0`. This is not a normal BLE frame loss — a frame loss would skip `sample_index`/`frame_sequence` — it is consistent with a **firmware sampling-loop stall or suspension** of about one second. The app cannot detect it with its current missing-sample accounting. The stall creates the false 1.504 s pause between strokes 93 and 94 and the 0.0 cm stroke discussed in §14.4. The other Revision 3 sessions are clean at 10.00 ms.
 
 ### 1.3 The new `ce67d9d5` session (2026-11-05)
 
@@ -106,6 +121,18 @@ This archive is not a compression trial. It is a **2.56 s idle capture** that en
 The chest stream contains a small, highly periodic 33 Hz dither (z alternates 968 / 996 / 1037 mg; x alternates −16 / −2 / 18 mg). The base stream is constant at 1000 mg on all three axes. This is not physiological compression motion. It is either a stationary device with a high-frequency sensor/board artifact or a synthetic idle test. The dither amplitude is below every preset’s start threshold, so **zero detections is the correct outcome**.
 
 The positive finding is that the static magnitudes are now very close to 1 g, versus 1.07–1.15 g on the chest and 0.83–0.89 g on the base in the baseline data. That is consistent with a calibration/gain fix. The negative finding is that the file contains **no compression, no depth, no recoil, and no config report**, so it cannot support the claim that depth or rhythm tracking is now better. It also still uses `schema_version: 1` and the old `raw.csv` header without `unclamped_depth_mm`, `recoil_status`, or a type-6 config packet.
+
+### 1.4 Revision 3 sessions (2026-11-05 uploads)
+
+| Session | Schema | K | Duration | Strokes | Final depth / rate | Key observation |
+|---|---:|---:|---:|---:|---:|---|
+| `2928353c` | 1 | unknown | 50.03 s | 77 | **5.04 cm / 102 cpm** | 74/77 strokes clamp at 10.0 cm; final is mean of the 3 non-clamped, short-interval strokes |
+| `3f74e948` | 2 | 10.85 | 34.37 s | 62 | **5.13 cm / 114 cpm** | clean except a 1.16 cm → 8.09 cm split at strokes 23–24 |
+| `af47d3f5` | 2 | 10.85 | 48.95 s | 86 | **5.41 cm / 116 cpm** | first stroke 7.81 cm, then 4.47 / 4.44 cm |
+| `b6d1fe73` | 2 | 10.85 | 61.96 s | 116 | **5.14 cm / 115 cpm** | 1.013 s timestamp gap; 0.0 cm stroke after false 1.504 s pause; final stroke 1.55 cm |
+| `8f4e8e4c` | 2 | 10.85 | 59.77 s | 112 | **5.23 cm / 113 cpm** | cleanest new session: 112 strokes, no clamp, 5.6% per-stroke depth CV |
+
+The four schema-2 sessions have `base_x/y/z = 0`, so they are single-MPU runs. They all record `device_config` (`manikin`, `depth_k = 10.85`, `practice_duration_sec = 120`), `unclamped_depth_mm`, `recoil_status`, stroke events, `recording_stopped`, and `final_summary`. No paired Laerdal ground-truth file accompanies these uploads, so absolute accuracy cannot be verified from these files; only internal consistency and event-level behavior can be assessed.
 
 ---
 
@@ -362,9 +389,9 @@ These do not cause the physio measurements, but they make diagnosis much harder 
 
 | Gap | Evidence | Effect |
 |---|---|---|
-| `recoil_status` missing from CSV | Firmware packet has it (`BLEReadings.h`); the header in `telemetry.dart:62–65` and the row writer in `telemetry_recorder.dart:187` omit it | Recoil compliance cannot be analyzed from uploads |
-| No type-6 config report | All 10 complete sessions contain only types 1 and 4; `f71deb5f` contains 1 and 5 | Runtime mode, preset, `K`, profile, and duration are unknown |
-| `events.csv` only has start | All 12 files contain only `recording_started` | No stop/interrupt/error context |
+| `recoil_status` missing from CSV | Absent from the 12 pre-schema-2 uploads; present in schema 2, but live rows are 0/1 while the final type-4 row is 98/99/100 | Old uploads cannot be analyzed; schema-2 column is not type-stable |
+| No type-6 config report | The 12 pre-schema-2 sessions contain only types 1/4 (and 1/5 for `f71deb5f`); schema 2 records a `device_config` event instead | Runtime mode, preset, `K`, profile, and duration were unknown before schema 2 |
+| `events.csv` only has start | The 12 pre-schema-2 files contain only `recording_started`; schema 2 adds device/stroke/final/stop events | Old uploads have no stop/interrupt/error context |
 | Packet type map wrong in docs | `DATA_FORMAT.md` says 4 = calibration_progress, 5 = calibration_ready; firmware says 4 = final summary, 5 = error, 6 = config | Offline tools will misread the final summary |
 | `quality_flags` width wrong | Docs say uint16; firmware uses uint8 | Binary parsing risk |
 | Base Z described as +1000 mg | Observed 847–888 mg in dual sessions | Offline gravity removal is wrong |
@@ -461,10 +488,10 @@ Clipping is rare and localized, but it can inflate a single stroke’s integrate
 
 ### 7.3 Metadata mismatches
 
-- `events.csv` has only `recording_started` in all 12 sessions. There is no `recording_stopped`, `interrupted`, or error event, even for `f71deb5f` or `ce67d9d5`.
-- `packets.csv` has no `recoil_status`, despite the firmware packet containing it.
-- No type-2/3 calibration-progress packets and no type-6 config report were recorded. Either calibration happened before recording started, or the app does not record those types.
-- `session.json` has no final metrics block; the only final depth/rate/CCF is in the type-4 packet. Offline tools must parse `packets.csv` to recover the summary.
+- The 12 pre-schema-2 sessions have only `recording_started` in `events.csv`. There is no `recording_stopped`, `interrupted`, or error event, even for `f71deb5f` or `ce67d9d5`. The four schema-2 sessions add `device_config`, `stroke`, `final_summary`, and `recording_stopped`.
+- The old `packets.csv` has no `recoil_status`, despite the firmware packet containing it. Schema 2 adds the column, but it stores live `0/1` and the final percentage in the same field.
+- No type-2/3 calibration-progress packets and no type-6 config report were recorded in the old sessions. Schema 2 records `device_config` as an event instead.
+- The old `session.json` has no final metrics block; the only final depth/rate/CCF is in the type-4 packet. Schema 2 adds a matching `final_summary` block.
 
 ### 7.4 Documentation errors in `supabase/DATA_FORMAT.md`
 
@@ -575,6 +602,11 @@ Use this to reproduce the conclusions:
 - [ ] Confirm `f71deb5f` has type 5 / code 7 and no type 4.
 - [ ] Confirm `ce67d9d5` has 257 rows, zero strokes, a zeroed type-4 summary, chest static magnitude ≈0.996 g, and base static magnitude ≈1.000 g.
 - [ ] Replay the nine ground-truth sessions through the tuned model and confirm that strokes with interval deviation ≥20% from the session median have a much larger absolute depth deviation than strokes within ±10%.
+- [ ] Confirm `2928353c` has 77 strokes, 74 values at 1000 tenths mm, and a final type-4 depth of 504; verify 504 is the mean of 461, 508, and 542, and that those three strokes have 0.2–0.3 s intervals.
+- [ ] Confirm the four schema-2 sessions have `depth_k = 10.85`, zero base axes, `unclamped_depth_mm`, `recoil_status`, `device_config`, stroke events, and `recording_stopped`.
+- [ ] Confirm `3f74e948` stroke 23 is 116 tenths mm with `recoil_status=0`, stroke 24 is 809 tenths mm, and their raw intervals are 0.30 s and 0.80 s.
+- [ ] Confirm `b6d1fe73` has a 1.013 s `t_us` jump at sample 4871 / frame 488 with continuous `sample_index` and `frame_sequence`, and that stroke 94 is 0 tenths mm after a 1.504 s interval.
+- [ ] Confirm the final type-4 `recoil_status` values are 98/99/100 while live type-1 values are 0/1.
 
 ---
 
@@ -766,4 +798,158 @@ Algorithm directions that follow from this analysis — not implemented here:
 - The new `ce67d9d5` capture shows a **clear static-calibration improvement** (chest 0.996 g, base 1.000 g) and no false strokes or false 10 cm clamp, but it contains **zero compressions**. It cannot be used to claim that depth or rhythm accuracy is fixed.
 - The rhythm complaint is supported by the replay: irregular cycles produce **7.7× larger per-stroke depth deviation** than regular cycles, with swings in both directions. The dominant mechanism is the rhythm-dependent integration window, reinforced by the fixed 1.5 s pause test and the last-stroke live display.
 - The remaining problem after calibration is therefore **segmentation and display robustness**, not just sensor noise. The next useful data set is a controlled steady-versus-irregular trial at a known depth, with the per-stroke fields listed in §13.7.
+- No firmware, Flutter, Supabase, or configuration source file was modified in this revision. Only this analysis file was changed.
+
+---
+
+## 14. Revision 3 — Schema-2 Uploads and Remaining Problems (2026-11-05)
+
+### 14.1 The new telemetry is a real improvement
+
+The four schema-2 sessions (`3f74e948`, `af47d3f5`, `b6d1fe73`, `8f4e8e4c`) add the fields that were missing from every baseline upload:
+
+- `device_config` with `profile = manikin`, `depth_k = 10.85`, `practice_duration_sec = 120`;
+- `unclamped_depth_mm` in `raw.csv`;
+- `recoil_status` in `packets.csv`;
+- per-stroke `stroke` events, `recording_started`, `device_config`, `final_summary`, and `recording_stopped` in `events.csv`;
+- a `final_summary` block in `session.json` that matches the type-4 packet;
+- no 10 cm clamp in any of the four sessions.
+
+This is enough to stop reconstructing `K`, mode, and pre-clamp depth from guesses. The central depth is now stable around 5.1–5.4 cm, and the cleanest session (`8f4e8e4c`) has 112 strokes, no clamp, a final 5.23 cm, and only **5.6% per-stroke depth CV**. That is a large improvement over the old single-MPU sessions, which clamped 69–74 of 70–77 strokes.
+
+However, the new files expose a different class of problem: **individual events are still wrong even when the session average is plausible.** The rest of this section separates the old-schema failure from the new-schema event-level failures.
+
+### 14.2 The old-schema `2928353c` session is still severely broken
+
+`2928353c` is a schema-1 single-MPU BALANCED session from 2026-11-04. It is the old failure mode, not the new firmware:
+
+| Metric | Value |
+|---|---:|
+| Strokes | 77 |
+| Strokes clamped at 10.0 cm | **74 / 77** |
+| Non-clamped values | **4.61, 5.08, 5.42 cm** |
+| Intervals for those three | **0.2, 0.3, 0.2 s** |
+| Live mean of all 77 packet depths | **9.81 cm** |
+| Final summary depth | **5.04 cm** |
+| Final summary rate | 102 cpm (live rate ~111 cpm) |
+
+The final 5.04 cm is exactly the arithmetic mean of the only three non-clamped strokes:
+
+```text
+(4.61 + 5.08 + 5.42) / 3 = 5.04 cm
+```
+
+Those three strokes are also the three shortest intervals in the session (0.2–0.3 s), i.e. the most likely partial/double detections. The 74 normal-rate strokes all clamp at 10.0 cm and are excluded from the final average. So the reported 5.04 cm is not a valid session depth — it is the mean of the three abnormal strokes, while the normal strokes are hidden by the clamp and the selection rule. This is the same old clamp/summary defect documented in §4, now confirmed again in a complete 77-stroke session.
+
+The new schema-2 sessions fix this specific defect: no clamps, and the final summary equals the mean of all nonzero live depths (within 0.1 tenths mm).
+
+### 14.3 `3f74e948`: the strongest remaining live fluctuation
+
+`3f74e948` has 62 strokes, a final 5.13 cm, a median 5.11 cm, and no clamps. Apart from the unmeasured first stroke, it is clean for 59 of 62 strokes, but contains a single split/false-trigger pair:
+
+| Stroke | Interval | Depth | `recoil_status` | `quality_flags` |
+|---:|---:|---:|---:|---:|
+| 22 | 0.50 s | 4.9 cm | 1 | 9 |
+| **23** | **0.30 s** | **1.16 cm** | **0** | **9** |
+| **24** | **0.80 s** | **8.09 cm** | 1 | **9** |
+| 25 | 0.50 s | 5.1 cm | 1 | 9 |
+
+The raw waveform shows stroke 23 being declared while the chest is still near the top of the previous cycle (`chest_z ≈ 1.23 g`), not at a full downstroke. The next full downstroke is declared 0.8 s later as stroke 24. This is consistent with a false early trigger that splits one real compression into a shallow fragment and a deep follow-on. The live display jumps **1.16 cm → 8.09 cm in 0.8 s**, then returns to 5.1 cm on the next stroke.
+
+Two diagnostics fail to catch this:
+
+- the shallow stroke has `recoil_status = 0`, but its depth is still displayed and included in the summary;
+- both strokes have `quality_flags = 9`, i.e. the “steady” bit is set. A single 0.30 s / 0.80 s pair does not clear the current cadence-jitter check.
+
+The summary is only mildly affected because 61 valid strokes dilute the pair: excluding both changes the mean from 5.13 to 5.147 cm (about +0.17 mm). The user-visible problem is the live value, not the final average.
+
+### 14.4 `b6d1fe73`: a 1.013 s device stall creates a false pause and a 0.0 cm stroke
+
+`b6d1fe73` has 116 strokes and a final 5.14 cm. It contains the only **>1 s** sampling discontinuity in the whole data set:
+
+- at sample 4871 / frame 488, `t_us` jumps from `207303644` to `208316652` — **1.013008 s**;
+- `sample_index` advances only 4870 → 4871 and `frame_sequence` remains 488;
+- metadata reports `missing_samples: 0`, `missing_frames: 0`, `firmware_dropped_frames: 0`;
+- the packet arrival stream also shows a ~1.04 s gap.
+
+This is consistent with a **firmware sampling-loop stall/suspension**, not a BLE frame loss. A normal BLE drop would skip `sample_index` and/or `frame_sequence`; this stall does not. The app's missing-sample accounting therefore cannot see it.
+
+The detector experiences the stall as a pause:
+
+| Event | Value |
+|---|---:|
+| Stroke 93 | 5.40 cm, rate 118 |
+| Interval 93 → 94 | **1.504 s** (just over the 1.5 s pause threshold) |
+| Stroke 94 | **0.00 cm**, rate 0, `quality_flags=10` |
+| Stroke 95 | 5.51 cm, 0.5 s later |
+| Final stroke 116 | **1.55 cm**, `recoil_status=0` |
+
+Including the stall, the raw interval CV is **19.2%**; excluding the 1.504 s interval it is **8.5%**. So the apparent “unsteady rhythm” in this session is largely a device timestamp/sampling artifact, not necessarily the user’s rhythm. The 0.0 cm packet is consistent with the false-pause path failing to measure the first post-pause stroke.
+
+The final stroke is also an outlier: 1.55 cm, recoil 0, followed by 0.66 s of data before the session stops. The final summary includes it. Excluding the first and last strokes raises the mean from 5.14 to 5.189 cm (about +0.49 mm), so the session average is not badly biased, but the last live value is visibly wrong.
+
+### 14.5 First-stroke depth is inconsistent across the new sessions
+
+The first stroke is measured through the from-rest path, which has no previous cycle to close against. Across the four schema-2 sessions it produced:
+
+| Session | First stroke | Session median | Difference |
+|---|---:|---:|---:|
+| `3f74e948` | **0.00 cm** | 5.11 cm | not measured |
+| `8f4e8e4c` | **0.00 cm** | 5.24 cm | not measured |
+| `af47d3f5` | **7.81 cm** | 5.41 cm | **+2.40 cm** |
+| `b6d1fe73` | **3.20 cm** | 5.17 cm | **−1.97 cm** |
+
+The two 0.00 cm values are cases where `fromRestDepthCm` returned no valid measurement; the app still displays 0.0 cm. The 7.81 cm and 3.20 cm values are measured but are large outliers relative to the rest of the session. The first stroke carries `quality_flags = 10` (first-stroke + estimated recoil) and CCF 0 in the per-stroke packet, but the app has no “first stroke not yet validated” state; it shows the number as if it were a normal reading.
+
+The effect on the final mean is sub-millimetre because there are 62–116 strokes, but the first live number is wrong by up to 2.4 cm. The first-stroke path needs a separate validity rule or a “measuring” display state.
+
+### 14.6 Telemetry and quality-score inconsistencies
+
+The new files fix the missing fields but introduce or expose several contract problems:
+
+1. **`recoil_status` has two meanings in one column.** Live type-1 packets contain `0` or `1`; the final type-4 packet contains `98`, `99`, or `100`. A downstream parser that treats the column as boolean will read the final row as “true,” and a parser that expects a percentage will misread every live row. The final `recoil_percent` field in `session.json` is the percentage; the CSV column is not type-stable.
+
+2. **The final `quality_flags = 9` does not summarize the session.** All four schema-2 final summaries report 9 (steady + recoil estimated), even though live packets include `flags = 8` (steady bit clear): 3 packets in `3f74e948`, 3 in `8f4e8e4c`, 8 in `af47d3f5`, and 6 in `b6d1fe73`. The summary carries the last reading’s flags, not an aggregate “did the rhythm ever become unsteady?” flag.
+
+3. **The bad `3f74e948` pair is not flagged at all.** Both the 1.16 cm and 8.09 cm strokes have `quality_flags = 9`. The only warning is `recoil_status = 0` on the shallow one, and that field is not used to suppress the depth or exclude it from the summary.
+
+4. **Session scores stay high despite event-level outliers.** The final CCF is 92% for `3f74e948` (which contains the 1.16/8.09 pair), 95% for `b6d1fe73` (which contains the 0.0 cm pause stroke and 1.55 cm final stroke), and 89% for `af47d3f5` (first stroke 7.81 cm). Recoil is 98–100%. These are session-level percentages; they do not surface a single bad stroke. That is why the user can see a high score and a fluctuating live number at the same time.
+
+5. **The final summary is the mean of every nonzero stroke, not a quality-filtered mean.** It matches the arithmetic mean of nonzero live depths exactly (within 0.1 tenths mm):
+   - `3f74e948`: final 513, mean 513.0;
+   - `8f4e8e4c`: final 523, mean 523.1;
+   - `af47d3f5`: final 541, mean 541.0;
+   - `b6d1fe73`: final 514, mean 514.0.
+
+   This is an improvement over the old clamp-exclusion rule, but it still includes no-recoil, pause, and end-of-session outliers. With 62–116 strokes the mean is robust to one or two outliers, but it is not a valid “good compressions only” average.
+
+6. **The final rate and live rate use different estimators.** Live rate is the median of the recent periods and is usually 118–125 cpm; the final summary rate is an active-time average and is 113–116 cpm. Both can be defensible, but the user sees one number during the session and a lower number at the end.
+
+### 14.7 What is fixed and what remains
+
+**Fixed by schema 2 / `K = 10.85`:**
+
+- no 10 cm clamp in the four new sessions;
+- final summary no longer excludes clamped values;
+- runtime `K`, mode, profile, unclamped depth, recoil, and lifecycle events are recorded;
+- steady single-MPU sessions produce plausible 5.1–5.4 cm values with low per-stroke CV;
+- the old `2928353c` failure is clearly isolated to schema 1.
+
+**Still open:**
+
+- live depth can jump by centimetres on a split/false trigger (`3f74e948`, 1.16 → 8.09 cm);
+- a firmware timestamp/sampling stall creates a false pause, a 0.0 cm stroke, and inflates rhythm variability (`b6d1fe73`);
+- first-stroke depth is either unmeasured (0.0 cm) or a large outlier (7.81 / 3.20 cm);
+- the final summary includes no-recoil, pause, and end-of-session outliers;
+- `recoil_status` is not type-stable between live and final packets;
+- the final quality flags do not aggregate unsteady packets, and the steady bit does not catch the 0.3/0.8 s split;
+- absolute depth accuracy is still unverified because the new sessions have no Laerdal ground truth;
+- the old-schema `2928353c` still reports a plausible-looking 5.04 cm that is actually the mean of three short-interval partial strokes while 74 normal strokes clamp at 10.0 cm.
+
+### 14.8 Revised bottom line for Revision 3
+
+- The new schema-2 data shows the **core depth-calibration fix works**: no clamps, stable ~5.1–5.4 cm central tendency, and full telemetry for `K`, mode, pre-clamp depth, recoil, and events.
+- The remaining complaints are **event-level and device-level**, not a general failure of the depth scale: a split/false trigger in `3f74e948`, a 1.013 s firmware stall in `b6d1fe73`, inconsistent first-stroke measurement, and a summary that averages every nonzero stroke.
+- The old `2928353c` session is a clean demonstration that the old clamp/summary bug can still produce a believable final number from the wrong strokes: 74 of 77 clamp at 10.0 cm, while the reported 5.04 cm is the mean of the three 0.2–0.3 s partial detections.
+- Do not change thresholds or `K` from these files alone. The next useful test is a steady-versus-irregular trial with a known true depth, plus instrumentation that preserves the per-stroke interval, window bounds, pre-clamp depth, `recoil_status`, and a validity flag, and that detects `t_us` stalls even when `sample_index` does not jump.
 - No firmware, Flutter, Supabase, or configuration source file was modified in this revision. Only this analysis file was changed.
