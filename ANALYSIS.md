@@ -1,15 +1,15 @@
 # CPReady Field Data Analysis
 
-**Analysis date:** 2026-11-04  
-**Data set:** 11 recorded sessions in `DATA/` (10 complete, 1 interrupted)  
-**Scope:** diagnose missed compressions and unexpectedly low depth readings  
-**Change policy:** analysis only. No firmware, Flutter, Supabase, or configuration source file was modified. This report is the only file added.
+**Analysis date:** 2026-11-04 (baseline); **Revision 2:** 2026-11-05  
+**Data set:** 12 recorded sessions in `DATA/` — 11 baseline sessions (10 complete, 1 interrupted) plus the new `ce67d9d5` capture (2.56 s, interrupted, no compressions)  
+**Scope:** diagnose missed compressions, unexpectedly low depth readings, and the new complaint that irregular rhythm makes depth less accurate and more variable  
+**Change policy:** analysis only. No firmware, Flutter, Supabase, or configuration source file was modified. This report is the only file changed.
 
 ---
 
 ## 0. Executive Summary
 
-The two symptoms have different but connected causes:
+The original two symptoms have different but connected causes, and Revision 2 adds a third — rhythm-dependent fluctuation:
 
 1. **Missed compressions are overwhelmingly a dual-sensor problem.** In every dual-MPU session the base accelerometer moves almost exactly like the chest accelerometer (`r = 0.978–0.995`, base/chest gain `0.95–0.99`). Firmware subtracts the two signals (`rawNet = -(chest − base)`), so it cancels **roughly 80–90% of the real compression signal**. The remaining differential is mostly noise and is *negatively* correlated with chest motion (`r = −0.13 to −0.25`). Detection therefore falls to 1–65% of the chest-only reference, depending on preset.
 
@@ -33,11 +33,13 @@ The two symptoms have different but connected causes:
 
 8. **One session is a separate hardware fault.** `f71deb5f` stopped after 2.73 s with packet type 5, error code 7 (`ERR_I2C_FAULT`). It is not evidence about the detection algorithm.
 
+9. **Revision 2 (2026-11-05): the rhythm complaint is real, and it is a windowing problem.** The new `ce67d9d5` file is only a 2.56 s idle capture with zero compressions, so it cannot validate depth. In a replay of the nine ground-truth sessions through the current tuned model, strokes whose cycle interval is within ±10% of the session median deviate from the session median depth by **3.4 mm on average**; strokes whose interval is ≥20% off deviate by **26.1 mm** — a **7.7× increase in fluctuation**. The mechanism is analysed in §13: irregular cycles change the integration window, the pre-onset dwell included in it, and whether a pause is treated as a pause or as a continuous cycle. The new file does show a much-improved static baseline (chest **0.996 g**, base **1.000 g** versus 1.07–1.15 g / 0.83–0.89 g before), but it contains no compression data.
+
 ---
 
 ## 1. Data Inventory
 
-All 11 zip archives were extracted to `/tmp/opencode/CPReady_DATA/`; the repository `DATA/` directory was left untouched. Each short session ID below corresponds to `DATA/<session-id>-<uuid>.zip`. Each archive contains exactly:
+The 11 baseline zip archives plus the new 2026-11-05 `ce67d9d5` archive were extracted to `/tmp/opencode/`; the repository `DATA/` directory was left untouched. Each short session ID below corresponds to `DATA/<session-id>-<uuid>.zip`. Each archive contains exactly:
 
 - `raw.csv` — 100 Hz chest/base accelerometer samples
 - `packets.csv` — firmware metrics packets
@@ -59,8 +61,9 @@ All 11 zip archives were extracted to `/tmp/opencode/CPReady_DATA/`; the reposit
 | `e5e68774` | P002 | 2nd test | Dual mpu balanced | dual / BALANCED | 2026-11-03 07:37:32 | 62.66 s | complete |
 | `f501e7c8` | P004 | 4th test | Dual mpu strict | dual / STRICT | 2026-11-04 05:52:02 | 44.91 s | complete |
 | `f71deb5f` | P003 | 3rd test | Dual mpu balanced | dual / BALANCED | 2026-11-03 07:39:39 | 2.73 s | interrupted |
+| `ce67d9d5` | P001 | practice | *(blank)* | single / unknown (base constant 1000 mg) | 2026-11-05 08:50:13 | 2.56 s | interrupted |
 
-Mode and preset are **inferred from the free-text `notes` field**, because no type-6 config report was uploaded. `P003` has two sessions both labelled “3rd test”: `7c5ea2c3` (complete, strict) and `f71deb5f` (interrupted, balanced).
+Mode and preset are **inferred from the free-text `notes` field**, because no type-6 config report was uploaded. `P003` has two sessions both labelled “3rd test”: `7c5ea2c3` (complete, strict) and `f71deb5f` (interrupted, balanced). The new `ce67d9d5` session has no notes and no config report; it is identified from its raw stream only.
 
 ### 1.2 Sampling health
 
@@ -77,8 +80,32 @@ Mode and preset are **inferred from the free-text `notes` field**, because no ty
 | `e5e68774` | 6,267 | 0–6266 | 10.00 ms | 11.0 ms | 11 ms |
 | `f501e7c8` | 4,492 | 0–4491 | 10.00 ms | 11.0 ms | 11 ms |
 | `f71deb5f` | 264 | 0–263 | 10.00 ms | 40.0 ms | 50 ms |
+| `ce67d9d5` | 257 | 0–256 | 10.00 ms | 10.0 ms | 10 ms |
 
-**The 100 Hz sampling loop is healthy.** The only 100+ ms gaps are the two 10-sample dropouts discussed in §7.1. There is no evidence of systematic BLE loss, CPU starvation, or sampling-rate collapse.
+**The 100 Hz sampling loop is healthy.** The only 100+ ms gaps are the two 10-sample dropouts discussed in §7.1. The new 2.56 s session is clean at exactly 10.00 ms. There is no evidence of systematic BLE loss, CPU starvation, or sampling-rate collapse.
+
+### 1.3 The new `ce67d9d5` session (2026-11-05)
+
+This archive is not a compression trial. It is a **2.56 s idle capture** that ends with a zeroed final summary. Its purpose in this revision is to check whether the static/calibration problem improved, not to evaluate rhythm or depth accuracy.
+
+| Property | Value |
+|---|---:|
+| Raw rows | 257 (indices 0–256) |
+| Duration | 2.561 s |
+| Frames | 26 |
+| Packets | 13 × type 1 (realtime), 1 × type 4 (final summary) |
+| Packet sequence | 7–20, no gaps |
+| Event log | only `recording_started` |
+| Status | `interrupted` (the app rejects a `completed` session with 0 compressions) |
+| Final summary | rate 0, depth 0, CCF 0, compressions 0, quality flags 9 |
+| Chest static magnitude | **0.996 g** |
+| Base static magnitude | **1.000 g** |
+| Chest dynamic SD | 0.028 g |
+| Base dynamic SD | 0.000 g |
+
+The chest stream contains a small, highly periodic 33 Hz dither (z alternates 968 / 996 / 1037 mg; x alternates −16 / −2 / 18 mg). The base stream is constant at 1000 mg on all three axes. This is not physiological compression motion. It is either a stationary device with a high-frequency sensor/board artifact or a synthetic idle test. The dither amplitude is below every preset’s start threshold, so **zero detections is the correct outcome**.
+
+The positive finding is that the static magnitudes are now very close to 1 g, versus 1.07–1.15 g on the chest and 0.83–0.89 g on the base in the baseline data. That is consistent with a calibration/gain fix. The negative finding is that the file contains **no compression, no depth, no recoil, and no config report**, so it cannot support the claim that depth or rhythm tracking is now better. It also still uses `schema_version: 1` and the old `raw.csv` header without `unclamped_depth_mm`, `recoil_status`, or a type-6 config packet.
 
 ---
 
@@ -337,7 +364,7 @@ These do not cause the physio measurements, but they make diagnosis much harder 
 |---|---|---|
 | `recoil_status` missing from CSV | Firmware packet has it (`BLEReadings.h`); the header in `telemetry.dart:62–65` and the row writer in `telemetry_recorder.dart:187` omit it | Recoil compliance cannot be analyzed from uploads |
 | No type-6 config report | All 10 complete sessions contain only types 1 and 4; `f71deb5f` contains 1 and 5 | Runtime mode, preset, `K`, profile, and duration are unknown |
-| `events.csv` only has start | All 11 files contain only `recording_started` | No stop/interrupt/error context |
+| `events.csv` only has start | All 12 files contain only `recording_started` | No stop/interrupt/error context |
 | Packet type map wrong in docs | `DATA_FORMAT.md` says 4 = calibration_progress, 5 = calibration_ready; firmware says 4 = final summary, 5 = error, 6 = config | Offline tools will misread the final summary |
 | `quality_flags` width wrong | Docs say uint16; firmware uses uint8 | Binary parsing risk |
 | Base Z described as +1000 mg | Observed 847–888 mg in dual sessions | Offline gravity removal is wrong |
@@ -434,7 +461,7 @@ Clipping is rare and localized, but it can inflate a single stroke’s integrate
 
 ### 7.3 Metadata mismatches
 
-- `events.csv` has only `recording_started` in all 11 sessions. There is no `recording_stopped`, `interrupted`, or error event, even for `f71deb5f`.
+- `events.csv` has only `recording_started` in all 12 sessions. There is no `recording_stopped`, `interrupted`, or error event, even for `f71deb5f` or `ce67d9d5`.
 - `packets.csv` has no `recoil_status`, despite the firmware packet containing it.
 - No type-2/3 calibration-progress packets and no type-6 config report were recorded. Either calibration happened before recording started, or the app does not record those types.
 - `session.json` has no final metrics block; the only final depth/rate/CCF is in the type-4 packet. Offline tools must parse `packets.csv` to recover the summary.
@@ -546,6 +573,8 @@ Use this to reproduce the conclusions:
 - [ ] Confirm the final average equals the mean of non-clamped strokes in `848e796c` (725, 593), `44c2e739` (12 values), `48011a51` (400), and the fallback in `6ee8938f`.
 - [ ] Search all packets for values in `[140, 170]`; confirm `158` maps to 15.8 mm and that no value of `15` (1.5 mm) exists.
 - [ ] Confirm `f71deb5f` has type 5 / code 7 and no type 4.
+- [ ] Confirm `ce67d9d5` has 257 rows, zero strokes, a zeroed type-4 summary, chest static magnitude ≈0.996 g, and base static magnitude ≈1.000 g.
+- [ ] Replay the nine ground-truth sessions through the tuned model and confirm that strokes with interval deviation ≥20% from the session median have a much larger absolute depth deviation than strokes within ±10%.
 
 ---
 
@@ -580,3 +609,161 @@ Use this to reproduce the conclusions:
 - **If the goal is to fix the 1.5 cm reading:** the value is real in the sense that the firmware computed 1.58 cm, but it is not the participant’s compression depth. It is what remains after roughly 80–90% of the chest signal is cancelled. The app is displaying it correctly.
 - **If the goal is to fix the 10 cm readings:** the integrator plus the default 4.30× scale is saturating, and the summary then hides the saturated strokes. That is a separate depth-pipeline problem that also needs a controlled calibration trial.
 - **Before changing any algorithm:** run the base-mount control experiment in §9.1 and capture the pre-clamp depth plus runtime `K` in §9.2. Without those two pieces of evidence, threshold or `K` changes would be guesses.
+
+---
+
+## 13. Revision 2 — New Session and Rhythm Sensitivity (2026-11-05)
+
+### 13.1 The new `ce67d9d5` file is an idle capture, not a rhythm trial
+
+`ce67d9d5-8ac5-43d9-8e85-1c31f106345d` is 2.56 s long and contains **zero compressions**. It has 257 raw samples, 26 frames, 13 realtime packets, and one type-4 final summary. The final summary reports rate 0, depth 0, CCF 0, compressions 0, and quality flags 9. The app marks it `interrupted` because a session with no compressions cannot be `completed`; that status is an app semantic, not evidence of a crash.
+
+The useful finding is the static baseline:
+
+| Metric | Baseline dual sessions | Baseline single sessions | New `ce67d9d5` |
+|---|---:|---:|---:|
+| Chest static magnitude | 1.066–1.148 g | 1.108–1.148 g | **0.996 g** |
+| Base static magnitude | 0.834–0.894 g | 0 (unused) | **1.000 g** |
+| Chest dynamic SD | 0.333–0.639 g | 0.438–0.581 g | 0.028 g |
+| Base dynamic SD | 0.324–0.626 g | 0 | 0.000 g |
+| Detected strokes | 1–103 | 70–86 | 0 |
+| Final depth | 1.8–4.39 cm | 4.00–10.00 cm | 0 |
+
+The chest stream contains a highly periodic 33 Hz dither (z alternates 968 / 996 / 1037 mg; x alternates −16 / −2 / 18 mg). The base is constant at 1000 mg on all axes. This is not physiological chest motion. It is consistent with a stationary device and a small high-frequency sensor/board artifact, or with a synthetic idle test. The dither is below every preset’s start threshold, so zero detections is the correct result.
+
+The new file therefore supports one narrow conclusion: **the static calibration/gain mismatch is much better than in the baseline sessions.** It does not validate compression depth, stroke detection, or rhythm tracking, because it contains no compression at all. It also still uses `schema_version: 1` and the old `raw.csv` header, with no `unclamped_depth_mm`, no `recoil_status`, and no type-6 config report. It cannot confirm which `K`, preset, or firmware model produced it.
+
+### 13.2 What the rhythm complaint means in this pipeline
+
+The user’s observation is specific: **the less steady the rhythm, the less accurate the depth and the more the number moves.** That is not a separate sensor failure. It is the expected consequence of three design choices:
+
+1. depth is integrated over a window whose start and end are both detected from the waveform;
+2. the window is allowed to include up to a fixed 220 ms of pre-onset data;
+3. the live number is the most recent stroke, not a robust average.
+
+When the rhythm is steady, the window is approximately one cycle and the boundary assumptions hold. When the rhythm is irregular, the window length, the amount of idle dwell inside it, and the fraction of the cycle represented by the fixed pre-onset cap all change. The double integral then returns a different depth for the same physical compression.
+
+### 13.3 Replay method
+
+To isolate the algorithm from the old dual-sensor cancellation, the nine complete sessions with Laerdal ground truth were replayed through the current tuned chest-only model described in `GROUND_TRUTH_ANALYSIS.md`:
+
+- `DEPTH_CALIBRATION_K = 10.85`
+- `NOMINAL_INTEGRATOR_K = 11.20`
+- `MAX_PRE_ONSET_INTEGRATION_SAMPLES = 22`
+- each session’s recorded preset (`STRICT`, `BALANCED`, or `HIGH`)
+
+For each detected stroke, the replay records the detected cycle interval and the pre-clamped scaled depth. “Regular” means the interval is within ±10% of that session’s median interval. “Irregular” means it is at least 20% away from the median. This within-session comparison controls for preset, participant, and session-level amplitude.
+
+This is a replay of the **current tuned model**, not the firmware that produced the baseline archives. It is valid for exposing how the algorithm reacts to timing; it is not a reconstruction of the old device’s exact per-stroke output.
+
+### 13.4 Result: irregular cycles fluctuate about 7.7× more
+
+Trial numbers below match the `DATA/organized_trials/` folders.
+
+| Trial | Preset | GT mean depth | Replay mean depth | Error | Interval CV | Depth CV | Irregular strokes | Irregular mean depth |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `01` | BALANCED | 46 mm | 51.4 mm | +5.4 mm | 12.2% | 30.0% | 3 | 85.1 mm |
+| `04` | STRICT | 54 mm | 54.4 mm | +0.4 mm | 10.2% | 12.4% | 2 | 31.1 mm |
+| `05` | STRICT | 57 mm | 57.7 mm | +0.7 mm | 4.8% | 7.9% | 0 | — |
+| `06` | HIGH | 60 mm | 59.4 mm | −0.6 mm | 7.5% | 12.2% | 1 | 15.9 mm |
+| `07` | HIGH | 59 mm | 57.0 mm | −2.0 mm | 5.8% | 12.5% | 1 | 48.0 mm |
+| `08` | STRICT | 54 mm | 57.0 mm | +3.0 mm | 17.3% | 9.3% | 5 | 50.9 mm |
+| `09` | STRICT | 57 mm | 53.8 mm | −3.2 mm | 7.3% | 9.3% | 1 | 38.8 mm |
+| `10` | BALANCED | 58 mm | 57.8 mm | −0.2 mm | 7.6% | 15.6% | 1 | 100.0 mm |
+| `11` | HIGH | 51 mm | 52.3 mm | +1.3 mm | 13.0% | 29.2% | 5 | 88.3 mm |
+
+Across all 652 usable replay strokes:
+
+- strokes within ±10% of the session median interval deviate from the session median depth by **3.36 mm on average**;
+- strokes at least 20% away from the median interval deviate by **26.14 mm on average**;
+- that is a **7.7× increase in per-stroke fluctuation** for the same nominal compression task.
+
+The irregular group is small (19 strokes), so the exact ratio should not be treated as a calibration constant. But the direction is unambiguous, and the examples are exactly the user’s symptom: the irregular strokes produce both very high values (`10` → 100.0 mm, `11` → 88.3 mm, `01` → 85.1 mm) and very low values (`06` → 15.9 mm, `04` → 31.1 mm, `09` → 38.8 mm). The number swings in both directions rather than simply reading low.
+
+At the session level, the correlation between interval CV and absolute depth error is **r = 0.42**, and between interval CV and depth CV is **r = 0.38** across the nine sessions. Those correlations are moderate rather than strong because only nine sessions are available and depth amplitude, preset, and detection differences also vary. The within-session comparison is the stronger evidence because it holds those session-level factors fixed.
+
+### 13.5 Root causes of the rhythm sensitivity
+
+#### RC-8 — The integration window is rhythm-dependent
+
+The closed-cycle depth is integrated from a start index to a detected stroke-end index. The start is bounded by:
+
+```text
+cycleStart = max(lastStrokeEndSampleIndex, onsetSampleIndex - 22)
+```
+
+The end is the sample where recoil is considered complete. The double integrator subtracts the mean acceleration so that velocity returns to zero at the end of the window, then subtracts the mean velocity so that displacement returns to its starting level. That correction is only valid if the window represents **exactly one complete cycle**.
+
+With a steady rhythm the window is close to one cycle, so the boundary correction is approximately correct. With an irregular rhythm:
+
+- a short cycle makes the fixed 22-sample pre-onset cap a larger fraction of the cycle;
+- a long cycle or a pause makes it a smaller fraction, and the window may include idle dwell;
+- a late or early onset detection shifts both the start and the apparent cycle length;
+- a late recoil completion shifts the end;
+- a missed onset makes the next window span two or more cycles, with no period-plausibility check to reject it.
+
+At 100–120 cpm, one cycle is 50–60 samples. The fixed 22-sample cap is therefore roughly 37–44% of a normal cycle. A timing change of only a few samples is a several-percent change in the integration window, which is enough to move the depth by millimetres. This is the core reason the reading is rhythm-sensitive even when the physical compression depth is unchanged.
+
+#### RC-9 — The 1.5 s pause test is a cliff
+
+The tracker classifies a stroke as post-pause when:
+
+```text
+raw_period_ms > 1500
+```
+
+A 1.4 s pause is treated as a continuous cycle and can include idle motion in the integration window. A 1.6 s pause switches to the from-rest path, which requires a stable rest estimate; if rest is unstable, the code falls back to a shorter window. The estimate can therefore jump discontinuously as the pause crosses 1.5 s, even if the physical compression is identical.
+
+The earlier ground-truth work already measured the dwell effect: integration across 180–400 ms of top-of-chest dwell inflated depth by roughly +5.2 to +7.2 mm on several trials. Capping the pre-onset window at 22 samples reduced that bias, but it did not remove the dependence on where the pause falls relative to the cap. A fixed threshold also cannot distinguish “slow but continuous CPR” from “stopped and restarted.”
+
+#### RC-10 — The live display shows the last stroke, not a robust average
+
+Even in the tuned replay, per-stroke depth CV ranges from **7.9% to 30.0%**. The live telemetry packet repeats the most recent depth, and the 5 Hz heartbeat repeats that same value. A single bad stroke therefore looks like a sustained reading for several packets. The final summary may average the session, but the number the user watches during the session is the noisiest one.
+
+The rate and CCF have the same issue. Rate is a median of the last three periods; with an irregular rhythm that median jumps as soon as one long or short interval enters the window. CCF is computed from detected strokes and periods, so missed or irregular strokes change it. The user sees depth, rate, and CCF move together and reasonably concludes that “unsteady rhythm makes the readings inaccurate.”
+
+#### RC-11 — Dual mode amplifies every rhythm error
+
+In the baseline dual sessions, missed strokes are already common because the differential signal cancels most of the chest motion. A missed stroke makes the next closed-cycle window span multiple cycles, which is the same failure mode as an irregular rhythm but much more frequent. The packet also repeats the previous depth when the current stroke has no valid depth, so a missed or invalid stroke can leave a stale value on screen.
+
+The new `ce67d9d5` file does not exercise this path: it has no compressions and the base is static. The dual-mode amplification therefore remains a baseline finding; it is not validated or cleared by the new file.
+
+### 13.6 Why the session-level correlation is only moderate
+
+The rhythm effect is real, but it is not the only source of error:
+
+- only nine sessions have complete ground truth;
+- ground truth provides a mean depth, not a per-stroke depth, so per-stroke “error” is measured against the session median rather than a true per-stroke reference;
+- preset and participant differ across sessions;
+- a physically unsteady rhythm usually also changes compression amplitude, and the device cannot separate “timing changed the window” from “the person actually compressed shallower”;
+- the replay uses the current tuned model, not the historical firmware, and the baseline archives were recorded with a different `K`/clamp behavior;
+- the irregular group has only 19 strokes, so the 7.7× ratio has wide uncertainty.
+
+The correct interpretation is therefore: **the replay demonstrates a strong mechanism and a large within-session effect, not a precise population estimate.** It is enough to explain the complaint and to justify a controlled rhythm test; it is not enough to pick a new threshold by itself.
+
+### 13.7 What to measure next
+
+A controlled rhythm protocol would settle the remaining ambiguity without guessing:
+
+1. Use one manikin and one target depth (for example 5.0 cm) at three rates: 80, 100, and 120 cpm.
+2. For each rate, record both a metronome-steady run and an intentionally irregular run with 10–30% period jitter and occasional 0.5–1.5 s pauses.
+3. Record per-stroke: detected interval, pre-onset window length, post-pause flag, pre-clamp depth, scaled depth, clamp flag, preset, and `K`.
+4. Compare depth MAE, per-stroke depth CV, and clamp rate between steady and irregular runs at the same target depth.
+
+Acceptance test: if irregular runs have more than about twice the per-stroke depth CV of steady runs at the same true depth, the windowing explanation is confirmed. If they do not, the residual is likely amplitude variation or a detector miss rather than the integrator.
+
+Algorithm directions that follow from this analysis — not implemented here:
+
+- validate the detected period against the recent median and reject or re-anchor windows that span more than one cycle;
+- replace the fixed 1.5 s pause cliff with a pause test relative to the recent median period (for example, greater than two median periods);
+- use a median of the last three valid stroke depths for the live display instead of the last stroke;
+- make the pre-onset window proportional to the detected period rather than a fixed 22 samples;
+- report a rhythm/validity flag so the app can show “unstable rhythm” instead of silently showing a noisy number;
+- keep chest-only as the depth source of truth; the base sensor is a reference only after it passes a stationarity check.
+
+### 13.8 Revised bottom line for Revision 2
+
+- The new `ce67d9d5` capture shows a **clear static-calibration improvement** (chest 0.996 g, base 1.000 g) and no false strokes or false 10 cm clamp, but it contains **zero compressions**. It cannot be used to claim that depth or rhythm accuracy is fixed.
+- The rhythm complaint is supported by the replay: irregular cycles produce **7.7× larger per-stroke depth deviation** than regular cycles, with swings in both directions. The dominant mechanism is the rhythm-dependent integration window, reinforced by the fixed 1.5 s pause test and the last-stroke live display.
+- The remaining problem after calibration is therefore **segmentation and display robustness**, not just sensor noise. The next useful data set is a controlled steady-versus-irregular trial at a known depth, with the per-stroke fields listed in §13.7.
+- No firmware, Flutter, Supabase, or configuration source file was modified in this revision. Only this analysis file was changed.
