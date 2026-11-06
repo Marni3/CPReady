@@ -64,6 +64,13 @@ class AppDurations {
   /// it. Mirrors DEFAULT_PRACTICE_DURATION_SEC in the firmware.
   static const int practiceSessionSeconds = 120;
 
+  /// Extra time added to the chosen session length in the firmware's own
+  /// auto-stop. The firmware clock starts at START, before the trainee's first
+  /// compression; the app ends the session itself, timed from that first
+  /// compression. This value only keeps the firmware backstop from cutting the
+  /// session short while the trainee gets into position.
+  static const int sessionStartGraceSeconds = 120;
+
   /// Length of the manikin depth trial.
   static const int manikinTrialSeconds = 15;
 
