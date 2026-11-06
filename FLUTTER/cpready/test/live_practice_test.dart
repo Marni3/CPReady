@@ -20,20 +20,21 @@ CprMetrics _live({
   int flags = 0x01,
   int cue = 0,
   int? sequence,
-}) => CprMetrics(
-  packetType: AppBleConfig.packetRealtime,
-  recoilComplete: true,
-  recoilPercentage: 100,
-  rateCpm: 110,
-  depthCm: 5.5,
-  depthMm: 55,
-  ccfPercent: 90,
-  audioPromptCode: cue,
-  totalCompressions: count,
-  elapsedSeconds: 10,
-  qualityFlags: flags,
-  sequence: sequence,
-);
+}) =>
+    CprMetrics(
+      packetType: AppBleConfig.packetRealtime,
+      recoilComplete: true,
+      recoilPercentage: 100,
+      rateCpm: 110,
+      depthCm: 5.5,
+      depthMm: 55,
+      ccfPercent: 90,
+      audioPromptCode: cue,
+      totalCompressions: count,
+      elapsedSeconds: 10,
+      qualityFlags: flags,
+      sequence: sequence,
+    );
 
 CprMetrics _summary({int count = 30, int flags = 0x01, int? sequence}) =>
     CprMetrics(
@@ -52,17 +53,17 @@ CprMetrics _summary({int count = 30, int flags = 0x01, int? sequence}) =>
     );
 
 CprMetrics _status(int type, {int code = 0}) => CprMetrics(
-  packetType: type,
-  recoilComplete: true,
-  recoilPercentage: 100,
-  rateCpm: 0,
-  depthCm: 0,
-  depthMm: 0,
-  ccfPercent: 0,
-  audioPromptCode: code,
-  totalCompressions: 0,
-  elapsedSeconds: 0,
-);
+      packetType: type,
+      recoilComplete: true,
+      recoilPercentage: 100,
+      rateCpm: 0,
+      depthCm: 0,
+      depthMm: 0,
+      ccfPercent: 0,
+      audioPromptCode: code,
+      totalCompressions: 0,
+      elapsedSeconds: 0,
+    );
 
 Widget _harness(
   FakeBleController controller,
@@ -76,7 +77,11 @@ Widget _harness(
     voiceCoach: voiceCoach,
     child: MaterialApp(
       theme: appThemeData().theme,
-      home: LivePracticeScreen(traineeName: 'Alexandra', cueClock: cueClock),
+      home: LivePracticeScreen(
+        traineeName: 'Alexandra',
+        practiceDurationSec: 120,
+        cueClock: cueClock,
+      ),
     ),
   );
 }

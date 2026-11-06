@@ -14,18 +14,20 @@ import 'package:cpready/src/widgets/widgets.dart';
 import 'support/fake_ble_controller.dart';
 import 'support/fake_session_repository.dart';
 
-CprMetrics _packet(int type, {int elapsedSeconds = 0, int audioPromptCode = 0}) => CprMetrics(
-  packetType: type,
-  recoilComplete: true,
-  recoilPercentage: 100,
-  rateCpm: 0,
-  depthCm: 0,
-  depthMm: 0,
-  ccfPercent: 0,
-  audioPromptCode: audioPromptCode,
-  totalCompressions: 0,
-  elapsedSeconds: elapsedSeconds,
-);
+CprMetrics _packet(int type,
+        {int elapsedSeconds = 0, int audioPromptCode = 0}) =>
+    CprMetrics(
+      packetType: type,
+      recoilComplete: true,
+      recoilPercentage: 100,
+      rateCpm: 0,
+      depthCm: 0,
+      depthMm: 0,
+      ccfPercent: 0,
+      audioPromptCode: audioPromptCode,
+      totalCompressions: 0,
+      elapsedSeconds: elapsedSeconds,
+    );
 
 Future<void> _deliver(
   WidgetTester tester,
@@ -46,7 +48,10 @@ Future<FakeBleController> _pumpScreen(WidgetTester tester) async {
       voiceCoach: const SilentVoiceCoach(),
       child: MaterialApp(
         theme: appThemeData().theme,
-        home: const CalibrationScreen(traineeName: 'Alexandra'),
+        home: const CalibrationScreen(
+          traineeName: 'Alexandra',
+          practiceDurationSec: 120,
+        ),
       ),
     ),
   );
@@ -133,7 +138,8 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('shows disconnected error message when entering while disconnected', (
+  testWidgets(
+      'shows disconnected error message when entering while disconnected', (
     WidgetTester tester,
   ) async {
     final FakeBleController controller = FakeBleController(connected: false);
@@ -144,7 +150,10 @@ void main() {
         voiceCoach: const SilentVoiceCoach(),
         child: MaterialApp(
           theme: appThemeData().theme,
-          home: const CalibrationScreen(traineeName: 'Alexandra'),
+          home: const CalibrationScreen(
+            traineeName: 'Alexandra',
+            practiceDurationSec: 120,
+          ),
         ),
       ),
     );
@@ -163,7 +172,11 @@ void main() {
   ) async {
     final FakeBleController controller = await _pumpScreen(tester);
 
-    await _deliver(tester, controller, _packet(AppBleConfig.packetError, audioPromptCode: AppBleConfig.errMotionUnstable));
+    await _deliver(
+        tester,
+        controller,
+        _packet(AppBleConfig.packetError,
+            audioPromptCode: AppBleConfig.errMotionUnstable));
 
     expect(find.text(AppStrings.calibrationErrorUnstable), findsOneWidget);
     expect(find.text(AppStrings.calibrationRetry), findsOneWidget);
@@ -178,7 +191,11 @@ void main() {
   ) async {
     final FakeBleController controller = await _pumpScreen(tester);
 
-    await _deliver(tester, controller, _packet(AppBleConfig.packetError, audioPromptCode: AppBleConfig.errWrongState));
+    await _deliver(
+        tester,
+        controller,
+        _packet(AppBleConfig.packetError,
+            audioPromptCode: AppBleConfig.errWrongState));
 
     expect(find.text(AppStrings.calibrationErrorBusy), findsOneWidget);
     expect(find.text(AppStrings.calibrationRetry), findsOneWidget);

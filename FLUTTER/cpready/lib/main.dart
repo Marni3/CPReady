@@ -10,6 +10,7 @@ import 'src/core/audio/voice_coach.dart';
 import 'src/core/ble/ble_controller.dart';
 import 'src/core/history/session_repository.dart';
 import 'src/core/metrics/cpr_metrics.dart';
+import 'src/core/practice_session_args.dart';
 import 'src/core/telemetry/upload_service.dart';
 import 'src/core/navigation.dart';
 import 'src/core/tab_state.dart';
@@ -25,15 +26,23 @@ import 'src/screens/guide/guide_screen.dart';
 import 'src/screens/setup/practice_setup_screen.dart';
 import 'src/screens/hand_placement/hand_placement_screen.dart';
 import 'src/screens/calibration/calibration_screen.dart';
-import 'src/screens/begin_compression/begin_compression_screen.dart';
 import 'src/screens/live_practice/live_practice_screen.dart';
 import 'src/screens/manikin_calibration/manikin_calibration_screen.dart';
 import 'src/screens/device_settings/device_settings_screen.dart';
 import 'src/screens/session_complete/session_complete_screen.dart';
 
-/// Trainee name carried through the practice flow in GoRouter's `extra`.
-String _traineeName(BuildContext context) =>
-    GoRouterState.of(context).extra as String? ?? '';
+/// Practice values carried through GoRouter's `extra`.
+///
+/// Older callers still pass a bare trainee name; those fall back to the
+/// default session length so the flow never breaks mid-way.
+PracticeSessionArgs _sessionArgs(BuildContext context) {
+  final Object? extra = GoRouterState.of(context).extra;
+  if (extra is PracticeSessionArgs) return extra;
+  return PracticeSessionArgs(
+    traineeName: extra as String? ?? '',
+    practiceDurationSec: AppDeviceSettings.defaultPracticeDurationSec,
+  );
+}
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -82,17 +91,31 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
         AppRoutes.guide: (_) => const GuideScreen(),
         AppRoutes.setup: (_) =>
             const FlowConnectionGuard(child: PracticeSetupScreen()),
-        AppRoutes.handPlacement: (context) => FlowConnectionGuard(
-              child: HandPlacementScreen(traineeName: _traineeName(context)),
+        AppRoutes.handPlacement: (context) {
+          final PracticeSessionArgs args = _sessionArgs(context);
+          return FlowConnectionGuard(
+            child: HandPlacementScreen(
+              traineeName: args.traineeName,
+              practiceDurationSec: args.practiceDurationSec,
             ),
-        AppRoutes.calibration: (context) => FlowConnectionGuard(
-              child: CalibrationScreen(traineeName: _traineeName(context)),
+          );
+        },
+        AppRoutes.calibration: (context) {
+          final PracticeSessionArgs args = _sessionArgs(context);
+          return FlowConnectionGuard(
+            child: CalibrationScreen(
+              traineeName: args.traineeName,
+              practiceDurationSec: args.practiceDurationSec,
             ),
-        AppRoutes.beginCompression: (context) => FlowConnectionGuard(
-              child: BeginCompressionScreen(traineeName: _traineeName(context)),
-            ),
-        AppRoutes.livePractice: (context) =>
-            LivePracticeScreen(traineeName: _traineeName(context)),
+          );
+        },
+        AppRoutes.livePractice: (context) {
+          final PracticeSessionArgs args = _sessionArgs(context);
+          return LivePracticeScreen(
+            traineeName: args.traineeName,
+            practiceDurationSec: args.practiceDurationSec,
+          );
+        },
         AppRoutes.manikinCalibration: (_) => const ManikinCalibrationScreen(),
         if (AppFeatures.enableDeviceSettings)
           AppRoutes.deviceSettings: (_) => const DeviceSettingsScreen(),

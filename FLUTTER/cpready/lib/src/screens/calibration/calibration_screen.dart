@@ -7,8 +7,9 @@
 ///
 /// CALIBRATE is sent when this screen opens — the firmware only starts its
 /// baseline window on that command, and reports progress/success as packet
-/// types 2 and 3. Retry runs that same command again; Begin Session continues
-/// to the countdown, which is what sends START.
+/// types 2 and 3. Retry runs that same command again; Begin Session opens the
+/// live screen, which sends SET_TIME and START and waits for the first
+/// compression before the session clock starts.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -20,6 +21,7 @@ import '../../config/config.dart';
 import '../../core/app_scope.dart';
 import '../../core/ble/ble_controller.dart';
 import '../../core/metrics/cpr_metrics.dart';
+import '../../core/practice_session_args.dart';
 import '../../widgets/widgets.dart';
 
 /// Baseline calibration screen.
@@ -27,7 +29,14 @@ class CalibrationScreen extends StatefulWidget {
   /// Trainee name captured on the setup screen; carried through the flow.
   final String traineeName;
 
-  const CalibrationScreen({super.key, required this.traineeName});
+  /// Session duration in seconds (0 = unlimited/manual stop).
+  final int practiceDurationSec;
+
+  const CalibrationScreen({
+    super.key,
+    required this.traineeName,
+    required this.practiceDurationSec,
+  });
 
   @override
   State<CalibrationScreen> createState() => _CalibrationScreenState();
@@ -183,7 +192,13 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
   void _beginSession() {
     if (_state != _CalibrationState.ready) return;
-    context.pushNamed(AppRoutes.beginCompression, extra: widget.traineeName);
+    context.pushNamed(
+      AppRoutes.livePractice,
+      extra: PracticeSessionArgs(
+        traineeName: widget.traineeName,
+        practiceDurationSec: widget.practiceDurationSec,
+      ),
+    );
   }
 
   @override
@@ -203,15 +218,14 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
     final String statusText = switch (_state) {
       _CalibrationState.waiting => AppStrings.calibrationWaiting,
-      _CalibrationState.calibrating =>
-        _elapsedSeconds == null
-            ? AppStrings.calibrationCalibrating
-            : AppStrings.calibrationCountdown(
-                math.max(
-                  0,
-                  AppDurations.calibrationWindowSeconds - _elapsedSeconds!,
-                ),
+      _CalibrationState.calibrating => _elapsedSeconds == null
+          ? AppStrings.calibrationCalibrating
+          : AppStrings.calibrationCountdown(
+              math.max(
+                0,
+                AppDurations.calibrationWindowSeconds - _elapsedSeconds!,
               ),
+            ),
       _CalibrationState.ready => AppStrings.calibrationReady,
       _CalibrationState.error => AppStrings.calibrationError,
     };
@@ -228,8 +242,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     final String? helper = ready
         ? null
         : _state == _CalibrationState.error
-        ? (_errorText ?? AppStrings.calibrationError)
-        : AppStrings.calibrationNotReady;
+            ? (_errorText ?? AppStrings.calibrationError)
+            : AppStrings.calibrationNotReady;
 
     return Scaffold(
       backgroundColor: AppColors.surfaceScaffold,
@@ -247,7 +261,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
               children: <Widget>[
                 Expanded(
                   child: LayoutBuilder(
-                    builder: (BuildContext context, BoxConstraints constraints) {
+                    builder:
+                        (BuildContext context, BoxConstraints constraints) {
                       // The card takes the space the title and the helper
                       // line leave over. Both are measured with the styles
                       // they are painted with; the whole block scrolls if it
@@ -256,8 +271,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                         context,
                         AppStrings.calibrationTitle,
                         titleStyle,
-                        maxWidth:
-                            constraints.maxWidth -
+                        maxWidth: constraints.maxWidth -
                             AppSizes.flowBackIconSize -
                             AppSpacing.flowBackTapRight -
                             AppSpacing.flowBackTitleGap,
@@ -265,12 +279,12 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                       final double helperHeight = helper == null
                           ? 0
                           : AppSpacing.small +
-                                measureTextHeight(
-                                  context,
-                                  helper,
-                                  helperStyle,
-                                  maxWidth: constraints.maxWidth,
-                                );
+                              measureTextHeight(
+                                context,
+                                helper,
+                                helperStyle,
+                                maxWidth: constraints.maxWidth,
+                              );
                       final double cardSpace = math.max(
                         0.0,
                         constraints.maxHeight -

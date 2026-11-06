@@ -20,7 +20,6 @@ import 'package:cpready/src/core/audio/voice_coach.dart';
 import 'package:cpready/src/core/ble/ble_controller.dart';
 import 'package:cpready/src/core/history/session_repository.dart';
 import 'package:cpready/src/core/metrics/cpr_metrics.dart';
-import 'package:cpready/src/screens/begin_compression/begin_compression_screen.dart';
 import 'package:cpready/src/screens/calibration/calibration_screen.dart';
 import 'package:cpready/src/screens/device_settings/device_settings_screen.dart';
 import 'package:cpready/src/screens/guide/guide_screen.dart';
@@ -97,21 +96,24 @@ final List<_Case> _cases = <_Case>[
   _Case('Setup', () => const PracticeSetupScreen()),
   _Case(
     'HandPlacement',
-    () => const HandPlacementScreen(traineeName: 'Alexandra Konstantinopoulos'),
+    () => const HandPlacementScreen(
+      traineeName: 'Alexandra Konstantinopoulos',
+      practiceDurationSec: 120,
+    ),
   ),
   _Case(
     'Calibration',
-    () => const CalibrationScreen(traineeName: 'Alexandra Konstantinopoulos'),
-  ),
-  _Case(
-    'Countdown',
-    () => const BeginCompressionScreen(
+    () => const CalibrationScreen(
       traineeName: 'Alexandra Konstantinopoulos',
+      practiceDurationSec: 120,
     ),
   ),
   _Case(
     'Live',
-    () => const LivePracticeScreen(traineeName: 'Alexandra Konstantinopoulos'),
+    () => const LivePracticeScreen(
+      traineeName: 'Alexandra Konstantinopoulos',
+      practiceDurationSec: 120,
+    ),
   ),
   _Case('ManikinCalibration', ManikinCalibrationScreen.new),
   _Case('DeviceSettings', DeviceSettingsScreen.new),
@@ -184,8 +186,7 @@ void main() {
           expect(
             tester.takeException(),
             isNull,
-            reason:
-                '${testCase.name} overflowed at ${_label(size)} '
+            reason: '${testCase.name} overflowed at ${_label(size)} '
                 'with text scale $scale',
           );
         }
@@ -248,8 +249,7 @@ void main() {
         expect(
           tester.takeException(),
           isNull,
-          reason:
-              'Setup overflowed with the keyboard open at ${_label(size)} '
+          reason: 'Setup overflowed with the keyboard open at ${_label(size)} '
               'with text scale $scale',
         );
       }
@@ -307,8 +307,8 @@ Widget _harness(
       builder: (BuildContext context, Widget? child) {
         AppScale.update(MediaQuery.sizeOf(context));
         return MediaQuery(
-          data: MediaQuery.of(context)
-              .copyWith(textScaler: TextScaler.noScaling),
+          data:
+              MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
           child: child ?? const SizedBox.shrink(),
         );
       },

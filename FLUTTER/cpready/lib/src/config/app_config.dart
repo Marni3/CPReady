@@ -23,7 +23,6 @@ class AppRoutes {
   static const String setup = '/setup';
   static const String handPlacement = '/hand_placement';
   static const String calibration = '/calibration';
-  static const String beginCompression = '/begin_compression';
   static const String livePractice = '/live_practice';
   static const String sessionComplete = '/session_complete';
   static const String manikinCalibration = '/manikin_calibration';
@@ -39,7 +38,6 @@ class AppRoutes {
     setup,
     handPlacement,
     calibration,
-    beginCompression,
     livePractice,
     sessionComplete,
     manikinCalibration,

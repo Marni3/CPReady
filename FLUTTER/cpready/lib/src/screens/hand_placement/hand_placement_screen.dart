@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/config.dart';
+import '../../core/practice_session_args.dart';
 import '../../widgets/widgets.dart';
 
 /// Hand-placement screen.
@@ -17,10 +18,23 @@ class HandPlacementScreen extends StatelessWidget {
   /// Trainee name captured on the setup screen; carried through the flow.
   final String traineeName;
 
-  const HandPlacementScreen({super.key, required this.traineeName});
+  /// Session duration in seconds (0 = unlimited/manual stop).
+  final int practiceDurationSec;
+
+  const HandPlacementScreen({
+    super.key,
+    required this.traineeName,
+    required this.practiceDurationSec,
+  });
 
   void _begin(BuildContext context) {
-    context.pushNamed(AppRoutes.calibration, extra: traineeName);
+    context.pushNamed(
+      AppRoutes.calibration,
+      extra: PracticeSessionArgs(
+        traineeName: traineeName,
+        practiceDurationSec: practiceDurationSec,
+      ),
+    );
   }
 
   @override
@@ -52,65 +66,63 @@ class HandPlacementScreen extends StatelessWidget {
                   child: LayoutBuilder(
                     builder:
                         (BuildContext context, BoxConstraints constraints) {
-                          // The card takes the space the title leaves over. The
-                          // title is measured with the style it is painted with,
-                          // so the figure is exact; the whole block scrolls if
-                          // it still does not fit.
-                          final double titleHeight = measureTextHeight(
-                            context,
-                            AppStrings.handPlacementTitle,
-                            titleStyle,
-                            maxWidth:
-                                constraints.maxWidth -
-                                AppSizes.flowBackIconSize -
-                                AppSpacing.flowBackTapRight -
-                                AppSpacing.flowBackTitleGap,
-                          );
-                          final double cardSpace = math.max(
-                            0.0,
-                            constraints.maxHeight -
-                                math.max(
-                                  titleHeight,
-                                  AppSizes.flowBackIconSize +
-                                      2 * AppSpacing.flowBackTapV,
-                                ) -
-                                AppSpacing.flowTitleGap,
-                          );
+                      // The card takes the space the title leaves over. The
+                      // title is measured with the style it is painted with,
+                      // so the figure is exact; the whole block scrolls if
+                      // it still does not fit.
+                      final double titleHeight = measureTextHeight(
+                        context,
+                        AppStrings.handPlacementTitle,
+                        titleStyle,
+                        maxWidth: constraints.maxWidth -
+                            AppSizes.flowBackIconSize -
+                            AppSpacing.flowBackTapRight -
+                            AppSpacing.flowBackTitleGap,
+                      );
+                      final double cardSpace = math.max(
+                        0.0,
+                        constraints.maxHeight -
+                            math.max(
+                              titleHeight,
+                              AppSizes.flowBackIconSize +
+                                  2 * AppSpacing.flowBackTapV,
+                            ) -
+                            AppSpacing.flowTitleGap,
+                      );
 
-                          return SingleChildScrollView(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                      return SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: <Widget>[
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: <Widget>[
-                                    const FlowBackButton(),
-                                    SizedBox(
-                                      width: AppSpacing.flowBackTitleGap,
-                                    ),
-                                    Expanded(
-                                      child: Text(
-                                        AppStrings.handPlacementTitle,
-                                        style: titleStyle,
-                                      ),
-                                    ),
-                                  ],
+                                const FlowBackButton(),
+                                SizedBox(
+                                  width: AppSpacing.flowBackTitleGap,
                                 ),
-                                SizedBox(height: AppSpacing.flowTitleGap),
-                                ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    minHeight: cardSpace,
-                                  ),
-                                  child: FlowIllustrationCard(
-                                    caption:
-                                        AppStrings.handPlacementInstruction,
-                                    availableHeight: cardSpace,
+                                Expanded(
+                                  child: Text(
+                                    AppStrings.handPlacementTitle,
+                                    style: titleStyle,
                                   ),
                                 ),
                               ],
                             ),
-                          );
-                        },
+                            SizedBox(height: AppSpacing.flowTitleGap),
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                minHeight: cardSpace,
+                              ),
+                              child: FlowIllustrationCard(
+                                caption: AppStrings.handPlacementInstruction,
+                                availableHeight: cardSpace,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
                 SizedBox(height: AppSpacing.section),

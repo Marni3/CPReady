@@ -1,10 +1,13 @@
 /// Active CPR session: live metrics and the press-and-hold End Session control.
 ///
-/// Full-screen (no top header, no bottom nav) and with no back button. A
-/// session ends in three ways: the hold completes and STOP is sent, the
-/// firmware sends its own FINAL_SUMMARY (it auto-stops once its configured
-/// session time elapses), or the BLE link drops. A drop abandons the session —
-/// nothing is saved and the app returns to Home with a notice.
+/// Full-screen (no top header, no bottom nav) and with no back button. On
+/// entry the screen sends SET_TIME and START, then waits: the session (and its
+/// clock) begins on the trainee's first compression, and a chosen duration is
+/// enforced from that moment. A session ends when the hold completes and STOP
+/// is sent, when the chosen duration expires, when the firmware sends its own
+/// FINAL_SUMMARY (its safety stop), or when the BLE link drops. A drop
+/// abandons the session — nothing is saved and the app returns to Home with a
+/// notice.
 ///
 /// Every visual value comes from `lib/src/config/`; this file only composes
 /// widgets.
@@ -26,6 +29,7 @@ import '../../core/history/history_revision.dart';
 import '../../core/history/session_record.dart';
 import '../../core/history/session_repository.dart';
 import '../../core/metrics/cpr_metrics.dart';
+import '../../core/practice_session_args.dart';
 import '../../core/telemetry/raw_frame.dart';
 import '../../core/telemetry/session_metadata.dart';
 import '../../core/telemetry/telemetry_recorder.dart';
@@ -39,6 +43,9 @@ class LivePracticeScreen extends StatefulWidget {
   /// Trainee name captured on the setup screen; filed with the session.
   final String traineeName;
 
+  /// Session duration in seconds (0 = unlimited/manual stop).
+  final int practiceDurationSec;
+
   /// Clock for the voice-cue gate. Widget tests pass one that follows the
   /// pumped time; the app leaves it null and uses the wall clock.
   @visibleForTesting
@@ -47,6 +54,7 @@ class LivePracticeScreen extends StatefulWidget {
   const LivePracticeScreen({
     super.key,
     required this.traineeName,
+    required this.practiceDurationSec,
     this.cueClock,
   });
 
@@ -71,6 +79,18 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   DateTime? _lastCompressionAt;
   bool _ending = false;
   bool _finished = false;
+
+  /// Wall-clock moment of the first compression. The session clock and the
+  /// saved start time use this, not the moment the screen opened.
+  DateTime? _sessionStartAt;
+
+  /// True once a real-time packet has reported at least one compression.
+  bool _firstCompressionSeen = false;
+
+  /// Firmware elapsed time when the first compression was reported. Used to
+  /// turn the firmware's own clock (which starts at START) into a duration
+  /// measured from the first compression.
+  int _firstCompressionElapsedSec = 0;
 
   /// Consecutive real-time packets that reported an unsteady rhythm.
   int _unsteadyPackets = 0;
@@ -112,10 +132,10 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       unawaited(_startTelemetry(controller));
     }
 
-    // START is accepted only after calibration. If the device rejects it or the
-    // first notification never arrives, surface the failure instead of showing
-    // an apparently live session full of zeros forever.
-    _startWatchdog = Timer(AppDurations.startWatchdog, _onStartTimeout);
+    // SET_TIME has to be accepted before START: the firmware rejects config
+    // changes during a running session. START then makes the firmware emit
+    // real-time packets; the app's session clock starts on the first one.
+    unawaited(_sendStartCommands(controller));
 
     // Keeps the elapsed timer and the compression-activity window current.
     _tick = Timer.periodic(AppDurations.liveTick, (_) {
@@ -123,6 +143,48 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         setState(() {});
       }
     });
+  }
+
+  /// Configures the firmware's safety stop and starts the stream.
+  ///
+  /// The firmware counts its session length from START, before the trainee's
+  /// first compression, so the chosen duration gets a grace period on the
+  /// device. The app ends the session itself once the chosen time has elapsed
+  /// since the first compression; the firmware value is only a backstop for a
+  /// lost link or a killed app.
+  Future<void> _sendStartCommands(BleController controller) async {
+    final int duration = widget.practiceDurationSec;
+    final int firmwareDuration = duration == 0
+        ? 0
+        : math.min(3600, duration + AppDurations.sessionStartGraceSeconds);
+
+    try {
+      await controller
+          .sendCommand(AppBleConfig.commandSetTime(firmwareDuration));
+    } catch (error) {
+      // START may still work; the live screen surfaces a dropped link.
+      debugPrint('Practice duration set failed: $error');
+    }
+
+    try {
+      await controller.sendCommand(AppBleConfig.commandStart);
+    } catch (error) {
+      debugPrint('Session start failed: $error');
+      if (!mounted) return;
+      // Without a link there is nothing to retry; the connection listener (or
+      // the flow guard) takes over. Only a rejected START on a live link needs
+      // the failure dialog.
+      if (!controller.isConnected) return;
+      _onStartTimeout();
+      return;
+    }
+
+    if (!mounted || _finished) return;
+
+    // START is accepted only after calibration. If the device rejected it or
+    // the first notification never arrives, surface the failure instead of
+    // showing an apparently live session full of zeros forever.
+    _startWatchdog ??= Timer(AppDurations.startWatchdog, _onStartTimeout);
   }
 
   Future<void> _startTelemetry(BleController controller) async {
@@ -313,7 +375,13 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     if (controller != null && controller.isConnected) {
       // START was rejected or lost while the link is still up. A fresh
       // CALIBRATE is required before the firmware will accept START again.
-      context.go(AppRoutes.calibration, extra: widget.traineeName);
+      context.go(
+        AppRoutes.calibration,
+        extra: PracticeSessionArgs(
+          traineeName: widget.traineeName,
+          practiceDurationSec: widget.practiceDurationSec,
+        ),
+      );
     } else {
       context.go(AppRoutes.home);
     }
@@ -385,6 +453,15 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       _startWatchdog = null;
       final bool unsteady = !metrics.isSteadyCadence && !metrics.isFirstStroke;
       _unsteadyPackets = unsteady ? _unsteadyPackets + 1 : 0;
+
+      // "Begin Session" opens this screen, but the session itself starts on
+      // the trainee's first compression.
+      if (!_firstCompressionSeen && count > 0) {
+        _firstCompressionSeen = true;
+        _firstCompressionElapsedSec = metrics.elapsedSeconds;
+        _sessionStartAt = DateTime.now();
+        _controller?.sessionStartedAt = _sessionStartAt;
+      }
     }
 
     setState(() {
@@ -398,6 +475,20 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
             _unsteadyPackets >= AppDurations.liveCadenceWarningPackets;
       }
     });
+
+    // The firmware's limit counts from START, before the first compression, so
+    // the app stops the session itself once the chosen length has elapsed
+    // since that first compression. Unlimited (0) relies on the manual stop.
+    if (realtime &&
+        _firstCompressionSeen &&
+        widget.practiceDurationSec > 0 &&
+        !_ending &&
+        !_finished &&
+        metrics.elapsedSeconds - _firstCompressionElapsedSec >=
+            widget.practiceDurationSec) {
+      unawaited(_endSession());
+      return;
+    }
 
     // Firmware auto-stop: a FINAL_SUMMARY arrives without a STOP command.
     if (metrics.packetType == AppBleConfig.packetFinalSummary &&
@@ -517,7 +608,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
     if (!mounted || controller == null) return;
 
-    final DateTime startedAt = controller.sessionStartedAt ?? DateTime.now();
+    final DateTime startedAt =
+        _sessionStartAt ?? controller.sessionStartedAt ?? DateTime.now();
     final int recorded = controller.stopRecording().length;
     final DateTime endedAt = controller.sessionEndedAt ?? DateTime.now();
 
@@ -536,10 +628,15 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       Future<TelemetryUploadResult>? telemetryUpload,
     ) = await _stopTelemetry(finalReason != SessionEndReason.completed);
 
-    // Firmware duration when a summary exists, else the app-measured span.
+    // Firmware duration when a summary exists, minus the time that passed
+    // before the first compression, so the result reflects the practice
+    // session rather than the wait to get into position.
     final int durationSeconds = finalSummary != null
-        ? finalSummary.elapsedSeconds
-        : endedAt.difference(startedAt).inSeconds;
+        ? math.max(
+            0,
+            finalSummary.elapsedSeconds - _firstCompressionElapsedSec,
+          )
+        : math.max(0, endedAt.difference(startedAt).inSeconds);
 
     bool historySaved = true;
     if (finalReason == SessionEndReason.completed) {
@@ -581,7 +678,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     final summary = await _requestResults(controller);
     if (summary == null || summary.totalCompressions <= 0) return null;
 
-    final DateTime startedAt = controller.sessionStartedAt ?? DateTime.now();
+    final DateTime startedAt =
+        _sessionStartAt ?? controller.sessionStartedAt ?? DateTime.now();
     final DateTime endedAt = controller.sessionEndedAt ?? DateTime.now();
     final bool historySaved = await _persistSession(
       controller,
@@ -589,7 +687,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       controller.sessionPackets.length,
       startedAt,
       endedAt,
-      summary.elapsedSeconds,
+      math.max(0, summary.elapsedSeconds - _firstCompressionElapsedSec),
     );
 
     return SessionResultData(
@@ -706,7 +804,19 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                               onToggleMute: _toggleMute,
                             ),
                           SizedBox(height: AppSpacing.liveTimerTopGap),
-                          _TimerBlock(startedAt: controller?.sessionStartedAt),
+                          _TimerBlock(startedAt: _sessionStartAt),
+                          if (!_firstCompressionSeen) ...<Widget>[
+                            SizedBox(height: AppSpacing.liveNoticeTopGap),
+                            Text(
+                              AppStrings.liveWaitingForCompression,
+                              textAlign: TextAlign.center,
+                              style: AppTypography.style(
+                                size: AppTypography.liveTimerLabelSize,
+                                weight: FontWeight.normal,
+                                color: AppColors.liveLabelText,
+                              ),
+                            ),
+                          ],
                           if (latest?.isBenchMode ?? false) ...<Widget>[
                             SizedBox(height: AppSpacing.liveBenchBadgeTopGap),
                             const Center(child: BenchBadge()),

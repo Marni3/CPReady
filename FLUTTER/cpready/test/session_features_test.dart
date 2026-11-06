@@ -37,8 +37,7 @@ Widget _harness(
 }) {
   return AppScope(
     controller: controller,
-    repository:
-        repository ??
+    repository: repository ??
         SessionRepository(
           factory: const _FailingDatabaseFactory(),
           databasePath: 'session-features-test.db',
@@ -76,6 +75,8 @@ void main() {
     expect(find.text(AppStrings.setupProfileSendFailed), findsNothing);
 
     // Each profile has its own K, so the app confirms before switching.
+    await tester.ensureVisible(find.text(AppStrings.setupProfileBench));
+    await tester.pumpAndSettle();
     await tester.tap(find.text(AppStrings.setupProfileBench));
     await tester.pumpAndSettle();
     expect(find.text(AppStrings.profileSwitchWarningTitle), findsOneWidget);
@@ -116,6 +117,8 @@ void main() {
     );
     expect(selector.profile, KinematicProfile.bench);
 
+    await tester.ensureVisible(find.text(AppStrings.setupProfileManikin));
+    await tester.pumpAndSettle();
     await tester.tap(find.text(AppStrings.setupProfileManikin));
     await tester.pumpAndSettle();
     await tester.tap(find.text(AppStrings.profileSwitchConfirm));
@@ -132,7 +135,12 @@ void main() {
   ) async {
     final BleController controller = BleController();
     await tester.pumpWidget(
-      _harness(const LivePracticeScreen(traineeName: 'Alexandra'), controller),
+      _harness(
+          const LivePracticeScreen(
+            traineeName: 'Alexandra',
+            practiceDurationSec: 120,
+          ),
+          controller),
     );
     await tester.pump();
 
@@ -154,7 +162,12 @@ void main() {
   ) async {
     final BleController controller = BleController();
     await tester.pumpWidget(
-      _harness(const LivePracticeScreen(traineeName: 'Alexandra'), controller),
+      _harness(
+          const LivePracticeScreen(
+            traineeName: 'Alexandra',
+            practiceDurationSec: 120,
+          ),
+          controller),
     );
     await tester.pump();
 
@@ -174,6 +187,9 @@ void main() {
       controller.debugDeliver(_packet(totalCompressions: count));
       await tester.pump();
     }
+    // Packets arrive through an async stream, so the frame that paints the
+    // last state change needs one more pump.
+    await tester.pump();
     expect(find.text(AppStrings.liveCadenceWarning), findsOneWidget);
 
     controller.debugDeliver(
@@ -182,6 +198,7 @@ void main() {
         totalCompressions: 7,
       ),
     );
+    await tester.pump();
     await tester.pump();
     expect(find.text(AppStrings.liveCadenceWarning), findsNothing);
 
@@ -192,6 +209,7 @@ void main() {
         totalCompressions: 8,
       ),
     );
+    await tester.pump();
     await tester.pump();
     expect(find.text(AppStrings.liveBenchBadge), findsOneWidget);
 

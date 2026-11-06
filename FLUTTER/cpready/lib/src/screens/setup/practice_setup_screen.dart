@@ -1,15 +1,15 @@
 /// Practice setup: capture the trainee name that the session is filed under
-/// and pick the device's kinematic profile.
+/// and pick the device's kinematic profile and session duration.
 ///
 /// Full-screen (no top header, no bottom nav), like the Step-by-step Guide:
 /// a small back arrow beside the title, the big heading, the name field with
-/// its helper line, the training-mode options, and the Continue button near
-/// the bottom.
+/// its helper line, the training-mode options, the session duration picker,
+/// and the Continue button near the bottom.
 ///
-/// The name is the only value carried forward. The selected profile is the last
+/// The name and duration are carried forward. The selected profile is the last
 /// value known to the app: it is loaded from the local settings row and sent to
 /// the device only when the user confirms a change. The flow is:
-/// Setup → Hand Placement → Calibration → countdown → Live Practice.
+/// Setup → Hand Placement → Calibration → Live Practice (starts on first compression).
 
 import 'dart:async';
 
@@ -20,8 +20,12 @@ import '../../config/config.dart';
 import '../../core/app_scope.dart';
 import '../../core/ble/kinematic_profile.dart';
 import '../../core/history/session_repository.dart';
+import '../../core/practice_session_args.dart';
 import '../../core/settings/device_settings.dart';
 import '../../widgets/widgets.dart';
+
+/// Session lengths offered on the setup screen. 0 = unlimited (manual stop).
+const List<int> _durationOptions = <int>[30, 60, 120, 0];
 
 /// Practice setup screen.
 class PracticeSetupScreen extends StatefulWidget {
@@ -83,7 +87,13 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
       if (!mounted || settings == null) return;
       setState(() {
         _profile = settings.profile;
-        _practiceDurationSec = settings.practiceDurationSec;
+        // Only show a value the picker can represent; firmware-only trial
+        // lengths (for example the 15 s manikin window) fall back to default.
+        _practiceDurationSec = _durationOptions.contains(
+          settings.practiceDurationSec,
+        )
+            ? settings.practiceDurationSec
+            : AppDeviceSettings.defaultPracticeDurationSec;
       });
     } catch (error) {
       debugPrint('Device settings load failed: $error');
@@ -97,7 +107,13 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
     controller.telemetryParticipantCode = _participantCode.text.trim();
     controller.telemetryExperiment = _experiment.text.trim();
     controller.telemetryNotes = _notes.text.trim();
-    context.pushNamed(AppRoutes.handPlacement, extra: _name.text.trim());
+    context.pushNamed(
+      AppRoutes.handPlacement,
+      extra: PracticeSessionArgs(
+        traineeName: _name.text.trim(),
+        practiceDurationSec: _practiceDurationSec,
+      ),
+    );
   }
 
   /// Sends the profile only after the user confirms the K-reset warning.
@@ -293,6 +309,33 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
               ),
               SizedBox(height: AppSpacing.setupProfileTopGap),
               Text(
+                AppStrings.setupDurationTitle,
+                style: AppTypography.style(
+                  size: AppTypography.setupProfileLabelSize,
+                  weight: FontWeight.bold,
+                  color: AppColors.flowHeadingText,
+                ),
+              ),
+              SizedBox(height: AppSpacing.flowHelperGap),
+              Text(
+                AppStrings.setupDurationHelper,
+                style: AppTypography.style(
+                  size: AppTypography.flowHelperSize,
+                  weight: FontWeight.normal,
+                  color: AppColors.flowHelperText,
+                ),
+              ),
+              SizedBox(height: AppSpacing.flowHelperGap),
+              _DurationPicker(
+                value: _practiceDurationSec,
+                onChanged: (value) {
+                  setState(() {
+                    _practiceDurationSec = value;
+                  });
+                },
+              ),
+              SizedBox(height: AppSpacing.setupProfileTopGap),
+              Text(
                 AppStrings.setupTrainingMode,
                 style: AppTypography.style(
                   size: AppTypography.setupProfileLabelSize,
@@ -418,6 +461,141 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+// ============================================================
+// DURATION PICKER
+// ============================================================
+
+/// Session-length choice: tappable rows that match the training-mode selector.
+class _DurationPicker extends StatelessWidget {
+  const _DurationPicker({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  static String _label(int seconds) {
+    switch (seconds) {
+      case 30:
+        return AppStrings.setupDuration30s;
+      case 60:
+        return AppStrings.setupDuration60s;
+      case 120:
+        return AppStrings.setupDuration120s;
+      case 0:
+        return AppStrings.setupDurationUnlimited;
+      default:
+        return '${seconds}s';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        for (int i = 0; i < _durationOptions.length; i++) ...<Widget>[
+          _DurationOption(
+            label: _label(_durationOptions[i]),
+            selected: value == _durationOptions[i],
+            onTap: () => onChanged(_durationOptions[i]),
+          ),
+          if (i != _durationOptions.length - 1)
+            SizedBox(height: AppSpacing.setupProfileOptionGap),
+        ],
+      ],
+    );
+  }
+}
+
+/// One row of [DurationPicker].
+class _DurationOption extends StatelessWidget {
+  const _DurationOption({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color border = selected
+        ? AppColors.profileOptionSelectedBorder
+        : AppColors.profileOptionBorder;
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          constraints: BoxConstraints(
+            minHeight: AppSizes.profileOptionMinHeight,
+          ),
+          padding: EdgeInsets.symmetric(
+            horizontal: AppSpacing.profileOptionPaddingH,
+            vertical: AppSpacing.profileOptionPaddingV,
+          ),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppColors.profileOptionSelectedBackground
+                : AppColors.profileOptionBackground,
+            borderRadius: BorderRadius.circular(AppSizes.profileOptionRadius),
+            border: Border.all(
+              color: border,
+              width: AppSizes.profileOptionBorderWidth,
+            ),
+          ),
+          child: Row(
+            children: <Widget>[
+              Container(
+                width: AppSizes.profileOptionIndicatorSize,
+                height: AppSizes.profileOptionIndicatorSize,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected
+                        ? AppColors.profileOptionIndicator
+                        : AppColors.profileOptionBorder,
+                    width: AppSizes.profileOptionIndicatorBorderWidth,
+                  ),
+                ),
+                child: selected
+                    ? Container(
+                        width: AppSizes.profileOptionIndicatorDotSize,
+                        height: AppSizes.profileOptionIndicatorDotSize,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.profileOptionIndicator,
+                        ),
+                      )
+                    : null,
+              ),
+              SizedBox(width: AppSpacing.profileOptionIndicatorGap),
+              Expanded(
+                child: Text(
+                  label,
+                  style: AppTypography.style(
+                    size: AppTypography.profileOptionTitleSize,
+                    weight: FontWeight.bold,
+                    color: AppColors.profileOptionText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

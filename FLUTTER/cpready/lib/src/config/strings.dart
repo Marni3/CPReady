@@ -203,7 +203,23 @@ class AppStrings {
 
   /// Persistent reminder after a successful mode change.
   static const String profileSwitchResetNotice =
-      'Mode changed. Depth now uses this mode’s calibration (K).';
+      'Mode changed. Depth now uses this mode\'s calibration (K).';
+
+  // -----------------------------------------------------------------------
+  // Practice setup — session duration
+  // -----------------------------------------------------------------------
+
+  /// Section label above the duration picker.
+  static const String setupDurationTitle = 'Session duration';
+
+  static const String setupDurationHelper =
+      'The session will end automatically at this time. Choose unlimited '
+      'for manual stop only.';
+
+  static const String setupDuration30s = '30 seconds';
+  static const String setupDuration60s = '1 minute';
+  static const String setupDuration120s = '2 minutes';
+  static const String setupDurationUnlimited = 'Unlimited (manual stop)';
 
   // -----------------------------------------------------------------------
   // Practice setup — raw data recording
@@ -310,10 +326,8 @@ class AppStrings {
       '1-MPU (Chest Only) uses the chest accelerometer alone and avoids common-mode cancellation when the manikin moves with compressions. 2-MPU (Differential) subtracts the base accelerometer.';
   static const String deviceSettingsSensorMode1Mpu =
       '1-MPU (Chest Only)\n(Recommended)';
-  static const String deviceSettingsSensorMode2Mpu =
-      '2-MPU\n(Differential)';
-  static const String deviceSettingsSensorModeSending =
-      'Updating sensor mode…';
+  static const String deviceSettingsSensorMode2Mpu = '2-MPU\n(Differential)';
+  static const String deviceSettingsSensorModeSending = 'Updating sensor mode…';
   static const String deviceSettingsSensorModeSent1 =
       'Sensor mode set to 1-MPU (Chest Only). Default Manikin K is 10.85.';
   static const String deviceSettingsSensorModeSent2 =
@@ -461,6 +475,10 @@ class AppStrings {
 
   static const String livePracticeTitle = 'Live Practice';
   static const String liveElapsedLabel = 'Elapsed Time';
+
+  /// Shown under the timer until the trainee's first compression.
+  static const String liveWaitingForCompression =
+      'Waiting for the first compression — the session starts automatically.';
   static const String liveRateLabel = 'Rate';
   static const String liveRecoilLabel = 'Recoil';
   static const String liveDepthLabel = 'Depth';
