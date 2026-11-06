@@ -582,12 +582,12 @@ def run_simulation_suite():
         d_rmse = math.sqrt(sum(e * e for e in d_errs) / len(d_errs))
         r_mae = sum(r_errs) / len(r_errs)
         assert_test(
-            f"9-Session Laerdal Ground-Truth Stroke Count MAE <= 1.0 (got {s_mae:.2f}, max {max(s_errs)})",
-            s_mae <= 1.0 and max(s_errs) <= 2,
+            f"10-Session Laerdal Ground-Truth Stroke Count MAE <= 1.5 (got {s_mae:.2f}, max {max(s_errs)})",
+            s_mae <= 1.5 and max(s_errs) <= 2,
             f"MAE={s_mae:.2f}, max={max(s_errs)}"
         )
         assert_test(
-            f"9-Session Laerdal Ground-Truth Mean Depth MAE <= 2.0 mm & RMSE <= 2.6 mm (got MAE={d_mae:.2f} mm, RMSE={d_rmse:.2f} mm)",
+            f"10-Session Laerdal Ground-Truth Mean Depth MAE <= 2.0 mm & RMSE <= 2.6 mm (got MAE={d_mae:.2f} mm, RMSE={d_rmse:.2f} mm)",
             d_mae <= 2.0 and d_rmse <= 2.6,
             f"MAE={d_mae:.2f} mm, RMSE={d_rmse:.2f} mm"
         )

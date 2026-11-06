@@ -25,3 +25,4 @@ See [`../GROUND_TRUTH_ANALYSIS.md`](../GROUND_TRUTH_ANALYSIS.md) for the full ki
 | `09_1MPU_Strict2_848e796c` | `848e796c-7db7-44aa-b4af-c73e154c772e` | `2026-11-04 14:06:44` | `Single MPU/1MPU_Strict2.jpg` | `1-MPU` `STRICT` | 71 | 57 mm | 103 /min | 97% | 99% |
 | `10_1MPU_Balanced1_48011a51` | `48011a51-67f0-4a94-ae3c-b410e7366473` | `2026-11-04 14:10:06` | `Single MPU/1MPU_Balanced1.jpg` | `1-MPU` `BALANCED` | 70 | 58 mm | 102 /min | 100% | 100% |
 | `11_1MPU_High2_44c2e739` | `44c2e739-01ee-483e-bac1-52c0137f5281` | `2026-11-04 14:18:14` | `Single MPU/1MPU_High2.jpg` | `1-MPU` `HIGH` | 80 | 51 mm | 102 /min | 59% | 100% |
+

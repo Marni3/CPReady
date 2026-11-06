@@ -68,7 +68,9 @@ namespace CPReadyConfig {
 
     // Version of the depth model that saved K values belong to. Incremented to 5 so NVS
     // migrates cleanly to the ground-truth fine-tuned 10.85f 1-MPU default.
-    constexpr uint8_t     DEPTH_MODEL_VERSION                 = 5;
+    // Version of the depth model that saved K values belong to. Incremented to 6 for
+    // Model v6 with closed-cycle rest integration, dwell window capping, and split stroke guard.
+    constexpr uint8_t     DEPTH_MODEL_VERSION                 = 6;
 
     // A detection whose raw unscaled integrated motion is smaller than this is a bump (hands
     // repositioned, vest knocked), not a compression, and is not counted.
@@ -140,6 +142,10 @@ namespace CPReadyConfig {
     constexpr uint32_t    MIN_VALID_PERIOD_MS           = 300;     // Shortest stroke period accepted as a cadence (200 cpm)
     constexpr uint32_t    PAUSE_DETECTION_TIMEOUT_MS    = 1500;    // A gap longer than this is a pause: no CCF credit, no rate, cue streaks reset
     constexpr uint32_t    MAX_PRE_ONSET_INTEGRATION_SAMPLES = 22;  // Caps pre-onset idle dwell window (220 ms at 100 Hz) so low-cadence dwell does not inflate closed-cycle depth
+    constexpr uint32_t    MAX_CYCLE_INTEGRATION_SAMPLES = 66;    // Caps closed-cycle double integration window (660 ms) to avoid 80-100 mm spikes on dwell
+    constexpr uint32_t    MIN_STROKE_DURATION_MS        = 190;   // Minimum duration from onset to finish to reject mid-push double-pump split strokes
+    constexpr uint32_t    IDLE_UNMASK_TIMEOUT_MS        = 650;   // After 650 ms idle, accelerate envelope decay to unmask shallow strokes
+    constexpr float       IDLE_ENVELOPE_DECAY_PER_SAMPLE = 0.960f; // Faster envelope decay for idle unmasking (~150 ms half-life)
 
     // Chest recoil source. Without a force sensor the "recoil" flag is an acceleration
     // proxy that cannot see leaning, so it is reported as estimated and does not drive
