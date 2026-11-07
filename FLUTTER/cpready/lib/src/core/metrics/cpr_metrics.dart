@@ -73,6 +73,23 @@ class CprMetrics {
   bool get isRecoilEstimated =>
       qualityFlags & AppBleConfig.qualityRecoilEstimated != 0;
 
+  /// Sub-300 ms period bounce or premature split-stroke cut.
+  bool get isSubPeriodBounce =>
+      qualityFlags & AppBleConfig.qualitySubPeriodBounce != 0 ||
+      (!isFirstStroke && rateCpm == 0 && packetType == AppBleConfig.packetRealtime);
+
+  /// Closed-cycle integration window hit the 66-sample (660 ms) ceiling clamp.
+  bool get isWindowClamped =>
+      qualityFlags & AppBleConfig.qualityWindowClamped != 0;
+
+  /// Downstroke peak occurred >120 ms after initial onset trigger.
+  bool get isHesitationOnset =>
+      qualityFlags & AppBleConfig.qualityHesitationOnset != 0;
+
+  /// Fast idle envelope unmasking decay was active prior to onset.
+  bool get isEnvelopeUnmasked =>
+      qualityFlags & AppBleConfig.qualityEnvelopeUnmasked != 0;
+
   /// When [packetType] is [AppBleConfig.packetError], byte 7 carries the error reason code.
   int get errorCode => audioPromptCode;
 

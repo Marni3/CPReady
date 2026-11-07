@@ -506,9 +506,10 @@ class AppStrings {
   static const String liveMuteCues = 'Mute voice cues';
   static const String liveUnmuteCues = 'Unmute voice cues';
 
-  /// Shown after three consecutive packets report unsteady cadence.
+  /// Shown after consecutive packets report unsteady cadence.
   static const String liveCadenceWarning =
-      'Rhythm unsteady — depth readings may fluctuate.';
+      'Rhythm unsteady — realtime readings may be inaccurate. '
+      'Accuracy is maintained once session is finalized.';
 
   /// Capsule marking a session running the relaxed bench profile.
   static const String liveBenchBadge = 'BENCH MODE';

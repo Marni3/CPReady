@@ -47,10 +47,14 @@ constexpr uint8_t ERR_I2C_FAULT           = 7; // I2C communication fault or sen
 constexpr uint8_t ERR_CALIB_OUT_OF_RANGE  = 8; // Target depth ratio or resulting K outside supported bounds
 
 // Cadence Quality & Engine State Bitmask Flags (Byte 11)
-constexpr uint8_t CADENCE_FLAG_STEADY       = (1 << 0); // Bit 0: 1 = Steady rhythmic cadence, 0 = Erratic/Unsteady
-constexpr uint8_t CADENCE_FLAG_FIRST_STROKE = (1 << 1); // Bit 1: 1 = First stroke or stroke following an idle pause
-constexpr uint8_t CADENCE_FLAG_BENCH_MODE   = (1 << 2); // Bit 2: 1 = Bench profile active, 0 = Manikin profile
-constexpr uint8_t CADENCE_FLAG_RECOIL_ESTIMATED = (1 << 3); // Bit 3: 1 = recoil is an acceleration estimate (no force sensor)
+constexpr uint8_t CADENCE_FLAG_STEADY            = (1 << 0); // Bit 0: 1 = Steady rhythmic cadence, 0 = Erratic/Unsteady
+constexpr uint8_t CADENCE_FLAG_FIRST_STROKE      = (1 << 1); // Bit 1: 1 = First stroke or stroke following an idle pause
+constexpr uint8_t CADENCE_FLAG_BENCH_MODE        = (1 << 2); // Bit 2: 1 = Bench profile active, 0 = Manikin profile
+constexpr uint8_t CADENCE_FLAG_RECOIL_ESTIMATED  = (1 << 3); // Bit 3: 1 = recoil is an acceleration estimate (no force sensor)
+constexpr uint8_t CADENCE_FLAG_SUB_PERIOD_BOUNCE = (1 << 4); // Bit 4: 1 = Sub-300ms period (!isPostPause && rawPeriodMs < 300ms)
+constexpr uint8_t CADENCE_FLAG_WINDOW_CLAMPED    = (1 << 5); // Bit 5: 1 = Cycle integration window hit 66-sample ceiling clamp
+constexpr uint8_t CADENCE_FLAG_HESITATION_ONSET  = (1 << 6); // Bit 6: 1 = Delayed downstroke peak (>120ms after onset trigger)
+constexpr uint8_t CADENCE_FLAG_ENVELOPE_UNMASKED = (1 << 7); // Bit 7: 1 = Idle envelope unmask decay (0.960f) was active prior to onset
 
 // Strict 1-byte packed network packet (Exactly 16 Bytes)
 #pragma pack(push, 1)

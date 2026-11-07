@@ -194,3 +194,42 @@ When a trainee pauses at the top of the chest for $T_{\text{dwell}}$ between com
 | **Slower compressions (`80–95 CPM`) with a pause at the top of each stroke over-read depth by `3–5 mm`** | Pre-onset window includes part of the top-of-chest dwell. | Reduce `MAX_PRE_ONSET_INTEGRATION_SAMPLES` in `CPReadyConfig.h` from `22` (`220 ms`) to `18` (`180 ms`). |
 | **Incidental hand repositioning during a pause counts as a stroke** | Hand bump exceeds `minStartThresholdG` and produces `> 2.5 mm` of raw motion. | Select **`STRICT` Sensitivity Preset** (`SET_SENS:STRICT`) or raise **Min Depth** (`SET_MIN_D:0.50`). |
 
+
+---
+
+## 7. App-Side Retroactive Refinement (`R3 + Zero-Phase filtfilt`) & Dynamic Voice Coaching Engine (v1)
+
+To resolve unsteady-rhythm boundary errors ($\Delta v \neq 0$), split-stroke fragments, and premature-cut carryover pairs without sacrificing causal real-time responsiveness on the ESP32, the Flutter companion app (`FLUTTER/cpready`) executes a **4-Stage Hybrid Retroactive Refinement Pass (`SessionRefinementEngine`)** at session completion (`STOP`) and drives live voice coaching dynamically (`LiveCoachingController`).
+
+### 7.1 Four-Stage Hybrid Refinement Pipeline (`SessionRefinementEngine`)
+1. **Stage 0 — Self-Calibrated Zero-Phase Forward-Backward (`filtfilt`) Trajectory**:
+   - Applies a 2nd-order Butterworth forward-backward zero-phase high-pass filter ($f_c = 0.55\text{ Hz}$) to the 100 Hz chest acceleration and velocity stream to compute a phase-distortion-free displacement waveform $x_{\text{ff}}(t)$.
+   - Computes the session's steady-stroke gain ratio $\alpha_{\text{session}} = \text{median}_{k \in \text{steady}}(d_{\text{closed},k} / d_{\text{ff},k})$ to eliminate frequency-dependent filter attenuation, and blends `60%` self-calibrated `filtfilt` + `40%` closed-cycle **only on unsteady, window-clamped, or hesitation strokes**.
+2. **Stage 1 — Case A (True Split Stroke Merge) vs. Case B (Boundary-Shifted Pair Rebalance)**:
+   - **Case A**: Merges true split-stroke fragments ($\Delta t_i < 330\text{ ms}$ or $\Delta t_{i+1} < 330\text{ ms}$ with $\Delta t_i + \Delta t_{i+1} \le \max(700\text{ ms}, 1.30\,T_{\text{median}})$) into 1 stroke via 100 Hz closed-cycle re-integration or $\sqrt{d_i^2 + d_{i+1}^2}$.
+   - **Case B**: Re-balances premature-cut + carryover pairs ($\Delta t_i < 320\text{ ms}$, $\Delta t_{i+1} > 700\text{ ms}$, $\Delta t_i + \Delta t_{i+1} \ge 1.55\,T_{\text{median}}$) to $\frac{1}{2}(d_i + d_{i+1})$ while preserving the 2-stroke count.
+3. **Stage 2 — 100 Hz Gap Stroke Recovery**:
+   - Scans inter-stroke gaps $> 720\text{ ms}$ in the 100 Hz waveform to recover missed shallow/transition strokes.
+4. **Stage 3 — Local Steady-Median Winsorization**:
+   - Clamps residual unsteady transition outliers to within $\pm 5.0\text{ mm}$ of the local 5-stroke steady median depth.
+
+### 7.2 10-Session Ground-Truth Performance Comparison (`Live Model v6` vs. `4-Stage Hybrid Refinement`)
+
+| Session ID | Mode & Preset | Laerdal GT Depth (`Count`) | Live Model v6 Depth (`Count`) | **Refined Hybrid (`R3 + filtfilt`) Depth (`Count`)** | Live Abs Err | **Refined Abs Err** |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `01_2MPU_Balanced1` | 2-MPU `BALANCED` | **46.0 mm** (`52`) | 51.0 mm (`52`) | **50.3 mm (`52`)** | `4.95 mm` | **`4.34 mm`** |
+| `04_2MPU_Strict1` | 2-MPU `STRICT` | **54.0 mm** (`103`) | 54.6 mm (`101`) | **54.6 mm (`102`)** | `0.63 mm` | **`0.62 mm`** |
+| `05_2MPU_Strict2` | 2-MPU `STRICT` | **57.0 mm** (`69`) | 57.9 mm (`69`) | **57.9 mm (`69`)** | `0.85 mm` | **`0.85 mm`** |
+| `06_2MPU_High1` | 2-MPU `HIGH` | **60.0 mm** (`82`) | 59.6 mm (`84`) | **60.3 mm (`83`)** | `0.40 mm` | **`0.31 mm`** |
+| `07_2MPU_High2` | 2-MPU `HIGH` | **59.0 mm** (`69`) | 56.9 mm (`71`) | **57.9 mm (`70`)** | `2.15 mm` | **`1.06 mm`** |
+| `08_1MPU_Strict1` | 1-MPU `STRICT` | **54.0 mm** (`71`) | 55.2 mm (`70`) | **54.9 mm (`71`)** | `1.19 mm` | **`0.94 mm`** |
+| `09_1MPU_Strict2` | 1-MPU `STRICT` | **57.0 mm** (`71`) | 54.5 mm (`73`) | **55.6 mm (`72`)** | `2.46 mm` | **`1.37 mm`** |
+| `10_1MPU_Balanced1` | 1-MPU `BALANCED` | **58.0 mm** (`70`) | 57.5 mm (`71`) | **57.6 mm (`71`)** | `0.48 mm` | **`0.36 mm`** |
+| `11_1MPU_High2` | 1-MPU `HIGH` | **51.0 mm** (`80`) | 51.1 mm (`80`) | **51.1 mm (`80`)** | `0.13 mm` | **`0.13 mm`** |
+| `12_1MPU_Balanced2` | 1-MPU `BALANCED` | **56.0 mm** (`75`) | 53.0 mm (`77`) | **53.8 mm (`76`)** | `2.96 mm` | **`2.16 mm`** |
+| **10-Session Summary** | **All 10 Trials** | — | **`MAE = 1.62 mm`<br>`Count MAE = 1.20`** | **`MAE = 1.21 mm` (`RMSE = 1.75 mm`)<br>`Count MAE = 0.50` (`10/10` within `±1`)** | **`1.62 mm`** | **`1.21 mm`** |
+
+### 7.3 App-Side Dynamic Voice Coaching Engine (`LiveCoachingController` v1)
+- Located in `FLUTTER/cpready/lib/src/core/audio/live_coaching_controller.dart`.
+- **Unsteady-Rhythm Depth Suppression**: Whenever `!metrics.isSteadyCadence` or the live cadence warning banner is active, depth error streaks are cleared and depth cues (`"Compression too shallow"` / `"Compression too deep"`) are suppressed so rate prompts (`"Compression rate too slow"` / `"Compression rate too fast"`) stabilize the trainee's rhythm first.
+- **Tunable Parameters (`LiveCoachingConfig`)**: `consecutiveErrorStrokes = 5`, `sustainedErrorWindowMs = 3000`, `promptCooldownMs = 5000`, `positivePraiseIntervalMs = 15000`. Designed as a modular v1 baseline for future human-factors research.

@@ -189,6 +189,19 @@ class AppBleConfig {
   /// leaning, so the app shows it without grading it.
   static const int qualityRecoilEstimated = 0x08;
 
+  /// Stroke period was shorter than 300 ms (!isFirstStroke && rawPeriodMs < 300),
+  /// indicating a sub-period mechanical bounce or split-stroke fragment.
+  static const int qualitySubPeriodBounce = 0x10;
+
+  /// Closed-cycle integration window hit the 66-sample (660 ms) ceiling clamp.
+  static const int qualityWindowClamped = 0x20;
+
+  /// Downstroke peak occurred >120 ms after initial threshold trigger (hesitation onset).
+  static const int qualityHesitationOnset = 0x40;
+
+  /// Fast idle envelope unmasking decay (0.960f) was active prior to stroke onset.
+  static const int qualityEnvelopeUnmasked = 0x80;
+
   // -----------------------------------------------------------------------
   // Audio coaching cue codes (byte 7)
   // -----------------------------------------------------------------------

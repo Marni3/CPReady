@@ -97,7 +97,10 @@ namespace CPReadyConfig {
     constexpr float       CALIBRATION_MAX_ALIGNMENT_DIFF_G    = 0.35f;     // Max allowable chest vs base tilt/pre-pressure divergence (g)
 
     // Audio Guidance & Coaching (Phone Speaker)
-    constexpr bool        ENABLE_AUDIO_COACHING_PROMPTS = true;      // Master toggle for phone audio cue codes
+    // Note: Dynamic voice coaching decision logic has been migrated to the Flutter app
+    // (LiveCoachingController) so cues can adapt to unsteady rhythm and retroactive state.
+    // Keep false so firmware emits PROMPT_NONE on live packets (legacy path retained for reference).
+    constexpr bool        ENABLE_AUDIO_COACHING_PROMPTS = false;     // Master toggle for legacy firmware audio cue codes
     constexpr uint32_t    AUDIO_PROMPT_WINDOW_MS        = 3500;      // Sustained error window in milliseconds (3.5s)
     constexpr uint8_t     AUDIO_PROMPT_CONSECUTIVE_ERR  = 6;         // Minimum error strokes required to trigger voice
     constexpr uint32_t    AUDIO_PROMPT_COOLDOWN_MS      = 5000;      // Lockout duration between voice prompts (5.0s)

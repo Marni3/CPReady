@@ -21,6 +21,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../config/config.dart';
 import '../../core/app_scope.dart';
+import '../../core/audio/live_coaching_controller.dart';
 import '../../core/audio/voice_coach.dart';
 import '../../core/audio/voice_cue_gate.dart';
 import '../../core/ble/ble_controller.dart';
@@ -29,6 +30,7 @@ import '../../core/history/history_revision.dart';
 import '../../core/history/session_record.dart';
 import '../../core/history/session_repository.dart';
 import '../../core/metrics/cpr_metrics.dart';
+import '../../core/metrics/session_refinement_engine.dart';
 import '../../core/practice_session_args.dart';
 import '../../core/telemetry/raw_frame.dart';
 import '../../core/telemetry/session_metadata.dart';
@@ -95,11 +97,30 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   /// Consecutive real-time packets that reported an unsteady rhythm.
   int _unsteadyPackets = 0;
 
+  /// Consecutive real-time packets that reported a steady rhythm (for hysteresis).
+  int _steadyPackets = 0;
+
   /// True once the run above lasted long enough to show the warning.
   bool _cadenceWarning = false;
 
+  /// Stabilized live depth (in cm) displayed on the Depth capsule during unsteady rhythm.
+  double? _displayDepthCm;
+
+  /// In-memory 100 Hz raw accelerometer samples buffered for post-session refinement.
+  final List<RawTelemetrySample> _inMemoryRawSamples = <RawTelemetrySample>[];
+  bool _inMemoryRawStreamActive = false;
+  double _activeDepthK = 10.85;
+  String _activeSensitivity = 'BALANCED';
+
   /// Voice cues are on by default; the header toggle mutes them per session.
   bool _muted = false;
+
+  /// App-side dynamic voice coaching engine (suppresses depth cues when unsteady).
+  late final LiveCoachingController _coachingController =
+      LiveCoachingController(clock: widget.cueClock);
+
+  /// Rolling-median depth stabilizer for unsteady live display.
+  final LiveDepthStabilizer _depthStabilizer = LiveDepthStabilizer();
 
   /// Duplicate and overlap guard for the firmware's cue codes.
   late final VoiceCueGate _cueGate = VoiceCueGate(clock: widget.cueClock);
@@ -128,8 +149,11 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     controller.startRecording();
     controller.addListener(_onControllerChanged);
     _packetSub = controller.packets.listen(_onPacket);
+    unawaited(_loadStoredDeviceConfig());
     if (controller.telemetryEnabled) {
       unawaited(_startTelemetry(controller));
+    } else if (controller.supportsRawTelemetry) {
+      unawaited(_startInMemoryRawStream(controller));
     }
 
     // SET_TIME has to be accepted before START: the firmware rejects config
@@ -270,8 +294,43 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     }
   }
 
+  Future<void> _loadStoredDeviceConfig() async {
+    try {
+      final stored = await _repository?.loadDeviceSettings();
+      if (stored != null && mounted) {
+        _activeDepthK = stored.depthK ?? 10.85;
+        _activeSensitivity = stored.profile.name.toUpperCase();
+      }
+    } catch (error) {
+      debugPrint('Device settings load skipped: $error');
+    }
+  }
+
+  Future<void> _startInMemoryRawStream(BleController controller) async {
+    if (!controller.supportsRawTelemetry || _finished) return;
+    _rawSub = controller.rawFrames.listen(_onRawFrame);
+    try {
+      await controller.sendCommand(AppTelemetry.commandOn);
+      _inMemoryRawStreamActive = true;
+    } catch (error) {
+      debugPrint('In-memory TELEM:1 failed: $error');
+      await _rawSub?.cancel();
+      _rawSub = null;
+      return;
+    }
+    if (_finished) {
+      _inMemoryRawStreamActive = false;
+      await _sendTelemetryOff(controller);
+      await _rawSub?.cancel();
+      _rawSub = null;
+    }
+  }
+
   void _onRawFrame(RawTelemetryFrame frame) {
     if (!mounted) return;
+    if (_inMemoryRawSamples.length < 360000) {
+      _inMemoryRawSamples.addAll(frame.samples);
+    }
     _telemetryRecorder?.addFrame(frame);
   }
 
@@ -339,7 +398,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     _stopSessionInternals();
     _controller?.stopRecording();
     _controller?.resetSessionData();
-    if (_telemetryRecorder != null) {
+    if (_telemetryRecorder != null || _inMemoryRawStreamActive) {
+      _inMemoryRawStreamActive = false;
       unawaited(_sendTelemetryOff(_controller));
     }
     unawaited(_abortTelemetry(delete: true));
@@ -452,7 +512,15 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       _startWatchdog?.cancel();
       _startWatchdog = null;
       final bool unsteady = !metrics.isSteadyCadence && !metrics.isFirstStroke;
-      _unsteadyPackets = unsteady ? _unsteadyPackets + 1 : 0;
+      if (unsteady) {
+        _unsteadyPackets += 1;
+        _steadyPackets = 0;
+      } else {
+        _unsteadyPackets = 0;
+        if (!metrics.isFirstStroke && count > 0) {
+          _steadyPackets += 1;
+        }
+      }
 
       // "Begin Session" opens this screen, but the session itself starts on
       // the trainee's first compression.
@@ -471,8 +539,16 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       }
       _lastCount = count;
       if (realtime) {
-        _cadenceWarning =
-            _unsteadyPackets >= AppDurations.liveCadenceWarningPackets;
+        if (_unsteadyPackets >= AppDurations.liveCadenceWarningPackets) {
+          _cadenceWarning = true;
+        } else if (!_cadenceWarning ||
+            _steadyPackets >= AppDurations.liveCadenceClearPackets) {
+          _cadenceWarning = false;
+        }
+        _displayDepthCm = _depthStabilizer.stabilize(
+          metrics,
+          unsteadyActive: _cadenceWarning,
+        );
       }
     });
 
@@ -506,12 +582,27 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       return;
     }
 
-    // The firmware already throttles and prioritizes its prompts; play the cue
-    // it asked for unless the session is ending or the user muted the voice.
+    // Dynamic app-side voice coaching (with fallback to firmware audioPromptCode
+    // for legacy firmware or synthetic test packets). Depth cues are suppressed
+    // while cadence is unsteady so the user stabilizes rhythm first.
     if (realtime) {
-      final int cue = metrics.audioPromptCode;
-      final bool newCue = cue != _previousCueCode;
-      _previousCueCode = cue;
+      final int cue;
+      final bool newCue;
+      if (metrics.audioPromptCode != 0) {
+        final bool suppressLegacyDepth = _cadenceWarning &&
+            (metrics.audioPromptCode == AppBleConfig.cuePushHarder ||
+                metrics.audioPromptCode == AppBleConfig.cuePushShallower);
+        cue = suppressLegacyDepth ? 0 : metrics.audioPromptCode;
+        newCue = cue != 0 && cue != _previousCueCode;
+        _previousCueCode = metrics.audioPromptCode;
+      } else {
+        _previousCueCode = 0;
+        cue = _coachingController.evaluate(
+          metrics,
+          cadenceWarningActive: _cadenceWarning,
+        );
+        newCue = cue != 0;
+      }
       if (newCue && cue != 0 && kDebugMode) {
         debugPrint(
           'Voice cue $cue received at ${DateTime.now().toIso8601String()}',
@@ -610,8 +701,16 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
     final DateTime startedAt =
         _sessionStartAt ?? controller.sessionStartedAt ?? DateTime.now();
-    final int recorded = controller.stopRecording().length;
+    final List<CprMetrics> recordedPackets = controller.stopRecording();
+    final int recorded = recordedPackets.length;
     final DateTime endedAt = controller.sessionEndedAt ?? DateTime.now();
+
+    if (_inMemoryRawStreamActive) {
+      _inMemoryRawStreamActive = false;
+      unawaited(_sendTelemetryOff(controller));
+    } else if (_telemetryRecorder != null) {
+      unawaited(_sendTelemetryOff(controller));
+    }
 
     // A completed result must carry a usable summary. A zero-compression STOP
     // is an accidental early end, not a session worth saving.
@@ -620,8 +719,21 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         (summary == null || summary.totalCompressions <= 0)) {
       finalReason = SessionEndReason.resultsUnavailable;
     }
-    final CprMetrics? finalSummary =
+    CprMetrics? finalSummary =
         finalReason == SessionEndReason.completed ? summary : null;
+
+    if (finalSummary != null) {
+      final SessionRefinementResult refinement =
+          SessionRefinementEngine.refineSession(
+        firmwareSummary: finalSummary,
+        sessionPackets: recordedPackets,
+        rawSamples: _inMemoryRawSamples,
+        depthK: _activeDepthK,
+        sensitivityPreset: _activeSensitivity,
+      );
+      _telemetryRecorder?.setRefinementSnapshot(refinement.toJson());
+      finalSummary = refinement.refinedSummary;
+    }
 
     final (
       TelemetryRecording? telemetryRecording,
@@ -675,8 +787,15 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     final controller = _controller;
     if (controller == null || !controller.isConnected) return null;
 
-    final summary = await _requestResults(controller);
-    if (summary == null || summary.totalCompressions <= 0) return null;
+    final rawSummary = await _requestResults(controller);
+    if (rawSummary == null || rawSummary.totalCompressions <= 0) return null;
+    final summary = SessionRefinementEngine.refineSession(
+      firmwareSummary: rawSummary,
+      sessionPackets: controller.sessionPackets,
+      rawSamples: _inMemoryRawSamples,
+      depthK: _activeDepthK,
+      sensitivityPreset: _activeSensitivity,
+    ).refinedSummary;
 
     final DateTime startedAt =
         _sessionStartAt ?? controller.sessionStartedAt ?? DateTime.now();
@@ -748,7 +867,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   @override
   void dispose() {
     _stopSessionInternals();
-    if (_telemetryRecorder != null) {
+    if (_telemetryRecorder != null || _inMemoryRawStreamActive) {
+      _inMemoryRawStreamActive = false;
       unawaited(_sendTelemetryOff(_controller));
     }
     unawaited(_abortTelemetry());
@@ -878,8 +998,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                           _MetricSection(
                             label: AppStrings.liveDepthLabel,
                             capsule: _capsule(
-                              depthText(latest?.depthCm),
-                              depthRating(latest?.depthCm),
+                              depthText(_displayDepthCm ?? latest?.depthCm),
+                              depthRating(_displayDepthCm ?? latest?.depthCm),
                             ),
                           ),
                           SizedBox(height: AppSpacing.liveSectionStackGap),

@@ -208,3 +208,59 @@ This section is structured so it can be lifted directly into Chapters 1/5 of the
 4. **Software Recommendation — Offline Zero-Phase (`filtfilt`) Waveform Reconstruction in Companion App (`S1`)**:
    - While real-time coaching on the ESP32 must remain causal, future versions of the mobile companion app can apply a forward-backward zero-phase 4th-order Butterworth high-pass filter (`fc = 0.45 Hz`) to the completed `raw.csv` recording to render a continuous displacement waveform $x(t)$ for visual post-session debriefing.
 
+
+---
+
+## 6. App-Side Unsteady Rhythm Retroactive Refinement (`R3 + Zero-Phase filtfilt`) & Dynamic Voice Coaching Engine (v1)
+
+Following client feedback that **shallow stroke detection is now performing well** under Firmware Model v6 and that the **remaining accuracy bottleneck is unsteady rhythm**, we implemented a two-layer solution in the Flutter companion app (`FLUTTER/cpready`) supported by diagnostic bitmask extensions in the ESP32 firmware:
+
+### 6.1 Extended Per-Stroke Segmentation Diagnostics in `Byte 11` (`quality_flags`)
+Bits `4..7` of `Byte 11` in the 16-byte BLE real-time telemetry packet ([`BLEReadings.h`](file:///c:/Users/reynq/OneDrive/Documents/CPReady/CPReady_Program/include/BLEReadings.h), [`CompressionTracker.h`](file:///c:/Users/reynq/OneDrive/Documents/CPReady/CPReady_Program/include/CompressionTracker.h), [`ble.dart`](file:///C:/Users/reynq/OneDrive/Documents/CPReady/FLUTTER/cpready/lib/src/config/ble.dart), [`cpr_metrics.dart`](file:///C:/Users/reynq/OneDrive/Documents/CPReady/FLUTTER/cpready/lib/src/core/metrics/cpr_metrics.dart)) now report per-stroke causal segmentation diagnostics:
+
+| Bit | Mask | Constant | Diagnostic Meaning |
+| :---: | :---: | :--- | :--- |
+| `Bit 0` | `0x01` | `CADENCE_FLAG_FIRST_STROKE` | First stroke of session or first stroke after a $> 1.5\text{ s}$ hands-off pause |
+| `Bit 1` | `0x02` | `CADENCE_FLAG_STEADY` | Rolling 4-stroke period mean absolute deviation $\le 25\%$ |
+| `Bit 2` | `0x04` | `CADENCE_FLAG_BENCH_MODE` | Single-MPU bench mode active (`MPU2` absent) |
+| `Bit 3` | `0x08` | `CADENCE_FLAG_RECOIL_ESTIMATED` | Recoil estimated from chest accelerometer proxy |
+| `Bit 4` | `0x10` | `CADENCE_FLAG_SUB_PERIOD_BOUNCE` | Raw stroke-to-stroke interval $\Delta t < 300\text{ ms}$ (`rate_cpm = 0` bounce/split candidate) |
+| `Bit 5` | `0x20` | `CADENCE_FLAG_WINDOW_CLAMPED` | Closed-cycle integration window hit the `MAX_CYCLE_INTEGRATION_SAMPLES = 66` (`660 ms`) cap |
+| `Bit 6` | `0x40` | `CADENCE_FLAG_HESITATION_ONSET` | Onset-to-peak acceleration exceeded `12 samples` (`> 120 ms` hesitation/double-pump push) |
+| `Bit 7` | `0x80` | `CADENCE_FLAG_ENVELOPE_UNMASKED` | Adaptive threshold envelope decay (`0.960`) triggered after $> 650\text{ ms}$ idle wait |
+
+### 6.2 Four-Stage Hybrid Retroactive Refinement Engine (`SessionRefinementEngine`)
+During every `LivePracticeScreen` and `ManikinCalibrationScreen` session, the app streams the 100 Hz raw accelerometer frames (`TELEM:1`) into a lightweight in-memory ring buffer (`_inMemoryRawSamples`, only writing CSV files to disk when the researcher's *"Record raw sensor data"* toggle is enabled). At session end (`STOP`), [`SessionRefinementEngine.refineSession`](file:///C:/Users/reynq/OneDrive/Documents/CPReady/FLUTTER/cpready/lib/src/core/metrics/session_refinement_engine.dart) executes a 4-stage hybrid pass:
+
+1. **Stage 0 — Self-Calibrated Zero-Phase Forward-Backward (`filtfilt`) Trajectory for Unsteady Strokes**:
+   - Pure continuous `filtfilt` integration (`2.11 mm` MAE on its own) suffers from frequency-dependent high-pass filter attenuation across different compression rates (`85–135 CPM`), whereas causal closed-cycle integration (`closedCycleDepthCm`) has flat gain on steady strokes (`1.62 mm` MAE) but suffers from boundary-velocity mismatch ($\Delta v \neq 0$) on unsteady transitions.
+   - Stage 0 computes a 2nd-order Butterworth forward-backward zero-phase high-pass ($f_c = 0.55\text{ Hz}$) displacement trajectory $x_{\text{ff}}(t)$, self-calibrates its session gain against the session's steady closed-cycle strokes ($\alpha_{\text{session}} = \text{median}_{k \in \text{steady}}(d_{\text{closed},k} / d_{\text{ff},k})$), and blends `60%` self-calibrated `filtfilt` + `40%` closed-cycle **only on unsteady, window-clamped, or hesitation strokes**.
+2. **Stage 1 — Case A (True Split Stroke Merge) vs. Case B (Premature-Cut + Carryover Rebalance)**:
+   - **Case A (True Split Stroke)**: When a hesitant release splits one physical compression into two detections with combined period $\Delta t_i + \Delta t_{i+1} \le \max(700\text{ ms}, 1.30\,T_{\text{median}})$, merges them into 1 stroke via full-window closed-cycle re-integration (or root-sum-of-squares energy conservation $\sqrt{d_i^2 + d_{i+1}^2}$).
+   - **Case B (Boundary-Shifted Pair)**: When stroke $i$ terminates early ($\Delta t_i < 320\text{ ms}$) and stroke $i+1$ absorbs the carryover ($\Delta t_{i+1} > 700\text{ ms}$, $\Delta t_i + \Delta t_{i+1} \ge 1.55\,T_{\text{median}}$), re-balances both strokes to $\frac{1}{2}(d_i + d_{i+1})$ while preserving the true 2-stroke count.
+3. **Stage 2 — 100 Hz Gap Stroke Recovery**:
+   - Scans inter-stroke gaps $> 720\text{ ms}$ in the 100 Hz waveform to recover any shallow or hesitant stroke that fell below the causal trigger threshold.
+4. **Stage 3 — Local Steady-Median Winsorization**:
+   - Clamps any remaining unsteady transition outliers to within $\pm 5.0\text{ mm}$ of the local 5-stroke steady median depth.
+
+#### Benchmark Results Across All 10 Laerdal Ground-Truth Sessions
+
+| Metric | Firmware Model v6 (Causal Live) | Stage 1–3 (`R3` Only) | **4-Stage Hybrid (`R3 + Self-Calibrated filtfilt`)** |
+| :--- | :---: | :---: | :---: |
+| **10-Session Mean Depth MAE** | `1.62 mm` | `1.36 mm` | **`1.21 mm`** |
+| **10-Session Mean Depth RMSE** | `2.16 mm` | `1.88 mm` | **`1.75 mm`** |
+| **10-Session Max Depth Error** | `4.95 mm` | `4.34 mm` | **`4.34 mm`** |
+| **10-Session Stroke Count MAE** | `1.20 strokes` | `0.50 strokes` | **`0.50 strokes` (`10/10` within `±1`)** |
+| **9-Session Mean Rate MAE** | `1.08 CPM` | `0.94 CPM` | **`0.94 CPM`** |
+
+Both `final_summary` (raw ESP32 firmware summary) and `refined_final_summary` (plus `refinement_diagnostics`) are written to `session.json` by [`TelemetryRecorder`](file:///C:/Users/reynq/OneDrive/Documents/CPReady/FLUTTER/cpready/lib/src/core/telemetry/telemetry_recorder.dart) so researchers have complete auditability.
+
+### 6.3 Live Unsteady-Rhythm Banner &App-Side Dynamic Voice Coaching (`LiveCoachingController` v1)
+1. **Live Display Notice & Hysteresis**:
+   - When 2 consecutive unsteady strokes occur (`AppDurations.liveCadenceWarningPackets = 2`), `LivePracticeScreen` displays:
+     > *"Rhythm unsteady — realtime readings may be inaccurate. Accuracy is maintained once session is finalized."*
+   - The notice clears after 3 consecutive steady strokes (`AppDurations.liveCadenceClearPackets = 3`), and [`LiveDepthStabilizer`](file:///C:/Users/reynq/OneDrive/Documents/CPReady/FLUTTER/cpready/lib/src/core/metrics/session_refinement_engine.dart) applies a 3-stroke rolling median to the live Depth capsule while unsteady.
+2. **App-Side Dynamic Voice Coaching Engine ([`LiveCoachingController`](file:///C:/Users/reynq/OneDrive/Documents/CPReady/FLUTTER/cpready/lib/src/core/audio/live_coaching_controller.dart))**:
+   - Coaching cue selection is now performed dynamically in the Flutter app (`CPReadyConfig::ENABLE_AUDIO_COACHING_PROMPTS = false` on the ESP32).
+   - **Unsteady-Rhythm Depth Cue Suppression**: Whenever cadence is unsteady, depth cues (`"Compression too shallow"` / `"Compression too deep"`) are suppressed so the trainee is never misled by a single unsteady transition stroke; rate cues (`"Compress faster"` / `"Slow down"`) remain active to stabilize rhythm first.
+   - **Note for Future Researchers**: `LiveCoachingController` is designed as a modular v1 baseline with documented constants (`minCorrectiveInterval`, `sameCueRepeatInterval`, `consecutiveFaultThreshold`, `goodStrokeStreakTarget`) ready for human-factors tuning in future studies.

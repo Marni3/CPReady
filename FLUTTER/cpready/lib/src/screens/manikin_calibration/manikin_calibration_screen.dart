@@ -25,6 +25,8 @@ import '../../core/app_scope.dart';
 import '../../core/ble/ble_controller.dart';
 import '../../core/feedback/metric_feedback.dart';
 import '../../core/metrics/cpr_metrics.dart';
+import '../../core/metrics/session_refinement_engine.dart';
+import '../../core/telemetry/raw_frame.dart';
 import '../../widgets/widgets.dart';
 
 enum _Stage { intro, zeroing, ready, running, enterTarget, saving, sent, error }
@@ -43,9 +45,14 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
 
   BleController? _controller;
   StreamSubscription<CprMetrics>? _sub;
+  StreamSubscription<RawTelemetryFrame>? _rawSub;
   Timer? _ticker;
   Timer? _summaryTimeout;
   Timer? _calibrationTimeout;
+
+  final List<CprMetrics> _trialPackets = <CprMetrics>[];
+  final List<RawTelemetrySample> _trialRawSamples = <RawTelemetrySample>[];
+  bool _trialRawStreamActive = false;
 
   _Stage _stage = _Stage.intro;
   int _trialRemaining = AppDurations.manikinTrialSeconds;
@@ -166,6 +173,21 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       return;
     }
 
+    _trialPackets.clear();
+    _trialRawSamples.clear();
+    if (controller.supportsRawTelemetry) {
+      await _rawSub?.cancel();
+      _rawSub = controller.rawFrames.listen((RawTelemetryFrame frame) {
+        if (_trialRawSamples.length < 18000) {
+          _trialRawSamples.addAll(frame.samples);
+        }
+      });
+      try {
+        await controller.sendCommand(AppTelemetry.commandOn);
+        _trialRawStreamActive = true;
+      } catch (_) {}
+    }
+
     setState(() {
       _stage = _Stage.running;
       _trialActive = true;
@@ -224,6 +246,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
         }
       case _Stage.running:
         if (metrics.packetType == AppBleConfig.packetRealtime) {
+          _trialPackets.add(metrics);
           setState(() => _latest = metrics);
         } else if (metrics.packetType == AppBleConfig.packetFinalSummary) {
           _complete(metrics);
@@ -239,9 +262,16 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   void _complete(CprMetrics summary) {
     _stopTimers();
     _trialActive = false;
+    unawaited(_stopTrialRawStream());
     unawaited(_restorePracticeDuration());
 
-    if (summary.depthCm <= 0) {
+    final CprMetrics refined = SessionRefinementEngine.refineSession(
+      firmwareSummary: summary,
+      sessionPackets: _trialPackets,
+      rawSamples: _trialRawSamples,
+    ).refinedSummary;
+
+    if (refined.depthCm <= 0) {
       setState(() {
         _stage = _Stage.error;
         _error = AppStrings.manikinNoCompressions;
@@ -251,15 +281,28 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
 
     setState(() {
       _stage = _Stage.enterTarget;
-      _meanDepth = summary.depthCm;
+      _meanDepth = refined.depthCm;
       _latest = null;
       _error = null;
     });
   }
 
+  Future<void> _stopTrialRawStream() async {
+    await _rawSub?.cancel();
+    _rawSub = null;
+    if (!_trialRawStreamActive) return;
+    _trialRawStreamActive = false;
+    final BleController? controller = _controller;
+    if (controller == null || !controller.isConnected) return;
+    try {
+      await controller.sendCommand(AppTelemetry.commandOff);
+    } catch (_) {}
+  }
+
   /// Ends a failed or timed-out trial and records the reason.
   void _fail([String? specificError]) {
     _stopTimers();
+    unawaited(_stopTrialRawStream());
     if (_trialActive) {
       _trialActive = false;
       unawaited(_abortTrial());
@@ -405,6 +448,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   void dispose() {
     _controller?.removeListener(_onConnectionChanged);
     _sub?.cancel();
+    unawaited(_stopTrialRawStream());
     _stopTimers();
     if (_trialActive && _controller != null && _controller!.isConnected) {
       _trialActive = false;

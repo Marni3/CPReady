@@ -103,11 +103,15 @@ class AppDurations {
   // Live cadence warning
   // -----------------------------------------------------------------------
 
-  /// Real-time packets that must report unsteady cadence in a row before the
-  /// warning is shown. The first stroke and the packet after a pause also
+  /// Real-time stroke packets that must report unsteady cadence in a row before
+  /// the warning is shown. The first stroke and the packet after a pause also
   /// report unsteady cadence, so a literal per-packet rule would flash the
   /// warning at the start of every run.
-  static const int liveCadenceWarningPackets = 3;
+  static const int liveCadenceWarningPackets = 2;
+
+  /// Consecutive steady-cadence strokes required to clear an active unsteady
+  /// rhythm warning (prevents flickering during erratic sets).
+  static const int liveCadenceClearPackets = 3;
 
   // -----------------------------------------------------------------------
   // Animations

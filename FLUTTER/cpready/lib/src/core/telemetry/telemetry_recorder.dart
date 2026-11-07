@@ -98,6 +98,7 @@ class TelemetryRecorder {
   int _lastLoggedStrokeCount = 0;
   Map<String, Object?>? _deviceConfigSnapshot;
   Map<String, Object?>? _finalSummarySnapshot;
+  Map<String, Object?>? _refinementSnapshot;
 
   bool get isRecording => _started && !_closed;
   String? get sessionId => _metadata?.sessionId;
@@ -118,6 +119,7 @@ class TelemetryRecorder {
     _lastLoggedStrokeCount = 0;
     _deviceConfigSnapshot = null;
     _finalSummarySnapshot = null;
+    _refinementSnapshot = null;
 
     final Directory root = _rootOverride ?? await _defaultRoot();
     final Directory directory = Directory('${root.path}/${metadata.sessionId}');
@@ -186,6 +188,14 @@ class TelemetryRecorder {
   void setDeviceConfig(Map<String, Object?> config) {
     _deviceConfigSnapshot = config;
     addEvent('device_config', jsonEncode(config));
+  }
+
+  /// Records the app-side retroactive refinement output (firmware summary,
+  /// refined summary, and per-stage diagnostics) in session.json and
+  /// events.csv for researcher auditability.
+  void setRefinementSnapshot(Map<String, Object?> snapshot) {
+    _refinementSnapshot = snapshot;
+    addEvent('session_refined', jsonEncode(snapshot));
   }
 
   void addMetrics(CprMetrics metrics, {DateTime? receivedAt}) {
@@ -312,6 +322,10 @@ class TelemetryRecorder {
       'last_sample_index': _lastSampleIndex,
       if (_deviceConfigSnapshot != null) 'device_config': _deviceConfigSnapshot,
       if (_finalSummarySnapshot != null) 'final_summary': _finalSummarySnapshot,
+      if (_refinementSnapshot != null) ...<String, Object?>{
+        'refined_final_summary': _refinementSnapshot!['refined_summary'],
+        'refinement_diagnostics': _refinementSnapshot,
+      },
       'files': <String>[
         AppTelemetry.rawFileName,
         AppTelemetry.metricsFileName,
