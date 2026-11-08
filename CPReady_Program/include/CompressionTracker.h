@@ -32,6 +32,8 @@ private:
 
     uint32_t sessionStartMillis;
 
+    uint32_t firstCompressionStartMillis;
+
     uint32_t totalActiveCompressionMillis;
 
     uint32_t lastCompressionDetectedMillis;
@@ -214,6 +216,8 @@ public:
 
         sessionStartMillis = 0;
 
+        firstCompressionStartMillis = 0;
+
         totalActiveCompressionMillis = 0;
 
         lastCompressionDetectedMillis = 0;
@@ -354,6 +358,8 @@ public:
 
         sessionStartMillis += pausedMs;
 
+        if (firstCompressionStartMillis > 0) firstCompressionStartMillis += pausedMs;
+
         lastStrokePeakMillis += pausedMs;
 
         lastCompressionDetectedMillis += pausedMs;
@@ -389,6 +395,8 @@ public:
     void endSession() {
 
         sessionStartMillis = 0;
+
+        firstCompressionStartMillis = 0;
 
         pausedAtMillis = 0;
 
@@ -790,15 +798,23 @@ public:
 
 
 
-        // Live CCF is refreshed every sample so it decays during a pause instead of
+        // Live CCF is anchored to the first confirmed compression onset so pre-start waiting
 
-        // freezing at the value of the last completed stroke.
+        // time on the 'Start When Ready' screen does not penalize CCF, while still decaying
 
-        if (totalSessionTime > 0) {
+        // smoothly during any mid-session pause.
 
-            reading.ccf_percentage = ((float)totalActiveCompressionMillis / (float)totalSessionTime) * 100.0f;
+        if (firstCompressionStartMillis > 0 && currentMillis > firstCompressionStartMillis) {
+
+            uint32_t activeSpanMs = currentMillis - firstCompressionStartMillis;
+
+            reading.ccf_percentage = ((float)totalActiveCompressionMillis / (float)activeSpanMs) * 100.0f;
 
             if (reading.ccf_percentage > 100.0f) reading.ccf_percentage = 100.0f;
+
+        } else {
+
+            reading.ccf_percentage = 0.0f;
 
         }
 
@@ -1136,11 +1152,57 @@ public:
 
                         reading.rate_cpm = 60000.0f / medianRecentPeriodMs();
 
-                        totalActiveCompressionMillis += rawPeriodMs;
-
                     } else {
 
                         reading.rate_cpm = 0.0f;
+
+                    }
+
+
+
+                    // Credit active compression time and anchor CCF clock to confirmed compression onset.
+
+                    uint32_t rawStrokeDurationMs = (currentMillis > strokeStartMillis)
+
+                        ? (currentMillis - strokeStartMillis + 150)
+
+                        : CPReadyConfig::NOMINAL_FIRST_STROKE_ACTIVE_MS;
+
+                    uint32_t firstStrokeCreditMs = max(
+
+                        (uint32_t)CPReadyConfig::NOMINAL_FIRST_STROKE_ACTIVE_MS,
+
+                        min((uint32_t)800, rawStrokeDurationMs));
+
+                    if (totalStrokeCount == 0) {
+
+                        // First detected compression: anchor the active CCF clock to this stroke's onset
+
+                        // (matching Laerdal QCPR, which starts the resuscitation timer on the first compression).
+
+                        firstCompressionStartMillis = (currentMillis > sessionStartMillis + firstStrokeCreditMs)
+
+                            ? (currentMillis - firstStrokeCreditMs)
+
+                            : sessionStartMillis;
+
+                        totalActiveCompressionMillis = firstStrokeCreditMs;
+
+                    } else if (!isPostPause) {
+
+                        // Continuous stroke (including sub-300ms bounce fragments): credit elapsed period
+
+                        // capped at MAX_STROKE_ACTIVE_CREDIT_MS (1000 ms) so slow hesitations do not earn 100% credit.
+
+                        totalActiveCompressionMillis += min(rawPeriodMs, CPReadyConfig::MAX_STROKE_ACTIVE_CREDIT_MS);
+
+                    } else {
+
+                        // Resuming stroke after a mid-session pause (>1.5s): credit the stroke's active push
+
+                        // duration while leaving the preceding pause gap uncredited.
+
+                        totalActiveCompressionMillis += firstStrokeCreditMs;
 
                     }
 
@@ -1192,11 +1254,17 @@ public:
 
                     // 5. Update Chest Compression Fraction
 
-                    if (totalSessionTime > 0) {
+                    if (firstCompressionStartMillis > 0 && currentMillis > firstCompressionStartMillis) {
 
-                        reading.ccf_percentage = ((float)totalActiveCompressionMillis / (float)totalSessionTime) * 100.0f;
+                        uint32_t activeSpanMs = currentMillis - firstCompressionStartMillis;
+
+                        reading.ccf_percentage = ((float)totalActiveCompressionMillis / (float)activeSpanMs) * 100.0f;
 
                         if (reading.ccf_percentage > 100.0f) reading.ccf_percentage = 100.0f;
+
+                    } else {
+
+                        reading.ccf_percentage = 100.0f;
 
                     }
 
@@ -1698,13 +1766,27 @@ public:
 
 
 
-        // Recompute CCF using true total session duration at the moment of finalization
+        // Recompute CCF from the first detected compression onset to session end (endMillis),
 
-        uint32_t totalSessionMs = (sessionStartMillis > 0) ? (endMillis - sessionStartMillis) : 0;
+        // matching the Laerdal manikin resuscitation window without erasing trailing idle time.
 
-        s.final_ccf_percent = (totalSessionMs > 0) ?
+        if (totalStrokeCount > 0 && firstCompressionStartMillis > 0) {
 
-            min(100.0f, ((float)totalActiveCompressionMillis / (float)totalSessionMs) * 100.0f) : 0.0f;
+            uint32_t activeSessionMs = (endMillis > firstCompressionStartMillis)
+
+                ? (endMillis - firstCompressionStartMillis) : 0;
+
+            s.final_ccf_percent = (activeSessionMs > 0)
+
+                ? min(100.0f, ((float)totalActiveCompressionMillis / (float)activeSessionMs) * 100.0f)
+
+                : 100.0f;
+
+        } else {
+
+            s.final_ccf_percent = 0.0f;
+
+        }
 
         lastFinalSummary = s;
 

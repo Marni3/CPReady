@@ -13,6 +13,7 @@ CprMetrics _stroke({
   required int count,
   required double depthCm,
   required int rateCpm,
+  int? elapsedSeconds,
   bool steady = true,
   bool firstStroke = false,
   bool bounce = false,
@@ -37,7 +38,7 @@ CprMetrics _stroke({
     ccfPercent: 95,
     audioPromptCode: 0,
     totalCompressions: count,
-    elapsedSeconds: (count * 0.55).round(),
+    elapsedSeconds: elapsedSeconds ?? (count * 0.55).round(),
     qualityFlags: flags,
     sequence: count,
   );
@@ -211,6 +212,104 @@ void main() {
       expect(result.rebalancedCarryoverPairs, 1);
       expect(result.refinedSummary.totalCompressions, 6);
       expect(result.refinedSummary.depthMm, closeTo(45.0, 0.5));
+    });
+
+    test('CCF refinement: excludes pre-start waiting time when compressions run until session end', () {
+      // Simulate 10s wait on 'Start When Ready' before Stroke #1, then continuous 110 CPM until session end (13s)
+      final packets = <CprMetrics>[
+        _stroke(count: 1, depthCm: 5.2, rateCpm: 0, elapsedSeconds: 10, firstStroke: true, steady: false),
+        _stroke(count: 2, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 11),
+        _stroke(count: 3, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 11),
+        _stroke(count: 4, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 12),
+        _stroke(count: 5, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 12),
+        _stroke(count: 6, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 13),
+      ];
+      const fwSummary = CprMetrics(
+        packetType: AppBleConfig.packetFinalSummary,
+        recoilComplete: true,
+        recoilPercentage: 100,
+        rateCpm: 110,
+        depthCm: 5.2,
+        depthMm: 52.0,
+        ccfPercent: 25, // Old firmware summary penalized by 10s wait before Stroke #1
+        audioPromptCode: 0,
+        totalCompressions: 6,
+        elapsedSeconds: 13,
+      );
+
+      final result = SessionRefinementEngine.refineSession(
+        firmwareSummary: fwSummary,
+        sessionPackets: packets,
+        rawSamples: const <RawTelemetrySample>[],
+      );
+
+      expect(result.refinedSummary.ccfPercent, 100);
+    });
+
+    test('CCF refinement: preserves trailing idle time when trainee stops compressing early before STOP', () {
+      // Simulate 10s pre-wait, 6 strokes (3.3s active), and then 2s of trailing hands-off time before STOP (15s)
+      final packets = <CprMetrics>[
+        _stroke(count: 1, depthCm: 5.2, rateCpm: 0, elapsedSeconds: 10, firstStroke: true, steady: false),
+        _stroke(count: 2, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 11),
+        _stroke(count: 3, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 11),
+        _stroke(count: 4, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 12),
+        _stroke(count: 5, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 12),
+        _stroke(count: 6, depthCm: 5.2, rateCpm: 110, elapsedSeconds: 13),
+      ];
+      const fwSummary = CprMetrics(
+        packetType: AppBleConfig.packetFinalSummary,
+        recoilComplete: true,
+        recoilPercentage: 100,
+        rateCpm: 110,
+        depthCm: 5.2,
+        depthMm: 52.0,
+        ccfPercent: 22,
+        audioPromptCode: 0,
+        totalCompressions: 6,
+        elapsedSeconds: 15, // Stopped compressing 2s before STOP
+      );
+
+      final result = SessionRefinementEngine.refineSession(
+        firmwareSummary: fwSummary,
+        sessionPackets: packets,
+        rawSamples: const <RawTelemetrySample>[],
+      );
+
+      // Active = 3280 ms, Window = 3280 + 2000 = 5280 ms -> 62% (NOT 100%)
+      expect(result.refinedSummary.ccfPercent, closeTo(62, 2));
+    });
+
+    test('CCF refinement: preserves genuine mid-session pause penalty on Stroke #3+', () {
+      // Rhythmic compressions on Strokes #1..#3, then a 5s mid-session pause before Stroke #4..#6
+      final packets = <CprMetrics>[
+        _stroke(count: 1, depthCm: 5.2, rateCpm: 0, elapsedSeconds: 1, firstStroke: true, steady: false),
+        _stroke(count: 2, depthCm: 5.2, rateCpm: 109, elapsedSeconds: 2),
+        _stroke(count: 3, depthCm: 5.2, rateCpm: 109, elapsedSeconds: 2),
+        _stroke(count: 4, depthCm: 5.2, rateCpm: 0, elapsedSeconds: 7, firstStroke: true, steady: false),
+        _stroke(count: 5, depthCm: 5.2, rateCpm: 109, elapsedSeconds: 8),
+        _stroke(count: 6, depthCm: 5.2, rateCpm: 109, elapsedSeconds: 8),
+      ];
+      const fwSummary = CprMetrics(
+        packetType: AppBleConfig.packetFinalSummary,
+        recoilComplete: true,
+        recoilPercentage: 100,
+        rateCpm: 109,
+        depthCm: 5.2,
+        depthMm: 52.0,
+        ccfPercent: 45,
+        audioPromptCode: 0,
+        totalCompressions: 6,
+        elapsedSeconds: 9,
+      );
+
+      final result = SessionRefinementEngine.refineSession(
+        firmwareSummary: fwSummary,
+        sessionPackets: packets,
+        rawSamples: const <RawTelemetrySample>[],
+      );
+
+      // Active time = 6 * 550ms = 3300ms; Active window = 3*550 + 5000 + 2*550 = 7750ms -> ~43%
+      expect(result.refinedSummary.ccfPercent, lessThan(60));
     });
   });
 }

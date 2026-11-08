@@ -458,11 +458,20 @@ class SessionRefinementEngine {
       }
     }
 
+    final int refinedCcfPercent = _computeRefinedCcfPercent(
+      stage2: stage2,
+      waveform: waveform,
+      realtimeStrokes: realtimeStrokes,
+      firmwareSummary: firmwareSummary,
+      hasUsableWaveform: hasUsableWaveform,
+    );
+
     final bool anyCorrection = hasUsableWaveform ||
         mergedCount > 0 ||
         rebalancedCount > 0 ||
         recoveredCount > 0 ||
-        winsorizedCount > 0;
+        winsorizedCount > 0 ||
+        refinedCcfPercent != firmwareSummary.ccfPercent;
     if (!anyCorrection) {
       return SessionRefinementResult(
         refinedSummary: firmwareSummary,
@@ -496,7 +505,7 @@ class SessionRefinementEngine {
       rateCpm: refinedRateCpm.clamp(0, AppBleConfig.maxPlausibleRateCpm),
       depthCm: refinedDepthTenthsMm / 100.0,
       depthMm: refinedDepthTenthsMm / 10.0,
-      ccfPercent: firmwareSummary.ccfPercent,
+      ccfPercent: refinedCcfPercent,
       audioPromptCode: 0,
       totalCompressions: refinedCount,
       elapsedSeconds: firmwareSummary.elapsedSeconds,
@@ -784,7 +793,9 @@ class SessionRefinementEngine {
       final CprMetrics m = realtimeStrokes[i];
       int estPeriodMs = 550;
       if (m.isFirstStroke) {
-        estPeriodMs = 1600;
+        final int gapSec =
+            i > 0 ? (m.elapsedSeconds - realtimeStrokes[i - 1].elapsedSeconds) : 0;
+        estPeriodMs = gapSec >= 2 ? gapSec * 1000 : 1600;
       } else if (m.isSubPeriodBounce || m.rateCpm == 0) {
         estPeriodMs = 280;
       } else if (m.rateCpm > 0) {
@@ -985,6 +996,84 @@ class SessionRefinementEngine {
       return 0.5 * (sorted[mid - 1] + sorted[mid]);
     }
     return sorted[mid];
+  }
+
+  static int _computeRefinedCcfPercent({
+    required List<_StrokeEntry> stage2,
+    required List<_ProcessedSample> waveform,
+    required List<CprMetrics> realtimeStrokes,
+    required CprMetrics firmwareSummary,
+    required bool hasUsableWaveform,
+  }) {
+    if (stage2.isEmpty) return firmwareSummary.ccfPercent;
+
+    // 1. 100 Hz Raw Waveform CCF Reconstruction (Manikin-Aligned)
+    // Starts the resuscitation window on the first compression (excluding pre-start
+    // waiting time on 'Start When Ready') and runs to the true session end (sessionEndMs)
+    // so any trailing early-stop idle gap or mid-session pause is preserved.
+    if (hasUsableWaveform && waveform.isNotEmpty) {
+      int firstCompressionStartMs = waveform.first.nowMs;
+      int activeCompressionMs = 0;
+      int prevEndMs = waveform.first.nowMs;
+
+      for (int idx = 0; idx < stage2.length; idx++) {
+        final _StrokeEntry e = stage2[idx];
+        final int onsetSampleIdx = e.onsetIdx.clamp(0, waveform.length - 1);
+        final int endSampleIdx = (e.endIdx - 1).clamp(0, waveform.length - 1);
+        final int onsetMs = waveform[onsetSampleIdx].nowMs;
+        final int endMs = waveform[endSampleIdx].nowMs;
+        final int firstStrokeCreditMs =
+            math.max(550, math.min(800, endMs - onsetMs + 150));
+
+        if (idx == 0) {
+          firstCompressionStartMs =
+              math.max(waveform.first.nowMs, endMs - firstStrokeCreditMs);
+          activeCompressionMs = firstStrokeCreditMs;
+        } else {
+          final int gapMs = math.max(0, endMs - prevEndMs);
+          if (gapMs <= 1500) {
+            activeCompressionMs += math.min(gapMs, 1000);
+          } else {
+            activeCompressionMs += firstStrokeCreditMs;
+          }
+        }
+        prevEndMs = endMs;
+      }
+
+      final int sessionEndMs = waveform.last.nowMs;
+      final int activeWindowMs =
+          math.max(1, sessionEndMs - firstCompressionStartMs);
+      return ((activeCompressionMs / activeWindowMs) * 100.0)
+          .round()
+          .clamp(0, 100);
+    }
+
+    // 2. Packet-Only Fallback CCF Reconstruction (Manikin-Aligned)
+    int activeCompressionMs = 550;
+    int activeWindowMs = 550;
+
+    for (int i = 1; i < stage2.length; i++) {
+      final _StrokeEntry e = stage2[i];
+      if (!e.isFirstStroke && e.rawPeriodMs <= 1500) {
+        activeCompressionMs += math.min(e.rawPeriodMs, 1000);
+        activeWindowMs += e.rawPeriodMs;
+      } else {
+        activeCompressionMs += 550;
+        activeWindowMs += math.max(e.rawPeriodMs, 2000);
+      }
+    }
+
+    if (realtimeStrokes.isNotEmpty) {
+      final int lastStrokeSec = realtimeStrokes.last.elapsedSeconds;
+      final int summaryEndSec = firmwareSummary.elapsedSeconds;
+      final int trailingTailMs =
+          math.max(0, (summaryEndSec - lastStrokeSec) * 1000);
+      activeWindowMs += trailingTailMs;
+    }
+
+    return ((activeCompressionMs / math.max(1, activeWindowMs)) * 100.0)
+        .round()
+        .clamp(0, 100);
   }
 
   static double _medianInt(List<int> values) {

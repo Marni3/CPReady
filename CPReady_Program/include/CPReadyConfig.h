@@ -144,6 +144,8 @@ namespace CPReadyConfig {
     constexpr float       ENVELOPE_DECAY_PER_SAMPLE     = 0.993f;  // Signal-envelope decay at 100 Hz (half-life ~1 s)
     constexpr uint32_t    MIN_VALID_PERIOD_MS           = 300;     // Shortest stroke period accepted as a cadence (200 cpm)
     constexpr uint32_t    PAUSE_DETECTION_TIMEOUT_MS    = 1500;    // A gap longer than this is a pause: no CCF credit, no rate, cue streaks reset
+    constexpr uint32_t    NOMINAL_FIRST_STROKE_ACTIVE_MS = 550;    // Active compression time credit (ms) for the initial stroke or first stroke after a pause
+    constexpr uint32_t    MAX_STROKE_ACTIVE_CREDIT_MS   = 1000;    // Maximum active compression time credit (ms) for any single continuous stroke interval
     constexpr uint32_t    MAX_PRE_ONSET_INTEGRATION_SAMPLES = 22;  // Caps pre-onset idle dwell window (220 ms at 100 Hz) so low-cadence dwell does not inflate closed-cycle depth
     constexpr uint32_t    MAX_CYCLE_INTEGRATION_SAMPLES = 66;    // Caps closed-cycle double integration window (660 ms) to avoid 80-100 mm spikes on dwell
     constexpr uint32_t    MIN_STROKE_DURATION_MS        = 190;   // Minimum duration from onset to finish to reject mid-push double-pump split strokes
