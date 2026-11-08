@@ -1411,7 +1411,7 @@ private:
 
 
         // Update persistence timers and streak counters
-
+  
         if (isLeaning) {
 
             if (leaningStreak == 0) leaningStartTime = currentMillis;
