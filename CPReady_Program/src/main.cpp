@@ -1,3 +1,4 @@
+
 #include <Arduino.h>
 #include <Preferences.h>
 #include "CPRTypes.h"
@@ -105,6 +106,10 @@ void endAndFinalizeSession(uint32_t now) {
     // Transmit finalized results packet (Packet Type 4) to Flutter
     CPRMetricsPacket finalPacket = summary.toPacket(PKT_TYPE_FINAL_SUMMARY);
     ble.sendPacket(finalPacket);
+
+    // Research: report original trial TX attempts after the final packet.
+    ble.printTrialPacketSummary();
+
     Serial.printf("[FINAL TX] Rate: %.0f cpm | Depth: %.2f cm | Recoil: %.0f%% | CCF: %.0f%% | Total: %d\n",
         summary.avg_rate_cpm, summary.avg_depth_cm, summary.recoil_compliance_percent, summary.final_ccf_percent, summary.total_compressions);
     #if !ENABLE_DEMO_MODE
@@ -194,6 +199,10 @@ void onReceiveMessage_BLE(String message) {
                 restoreSavedK();
             }
             Serial.println("[FLOW] Device is calibrated and ready. Starting active CPR session!");
+
+            // Research: reset TX attempts for this accepted CPR trial.
+            ble.resetTrialPacketCount();
+
             tracker.startSession(now);
             telemetry.resetCounters();
             demoSessionStartMillis = now;
@@ -231,7 +240,9 @@ void onReceiveMessage_BLE(String message) {
     else if (message == "GET_RESULTS") {
         Serial.println("[FLOW] Retransmission requested via GET_RESULTS.");
         CPRMetricsPacket finalPacket = tracker.getLastSummary().toPacket(PKT_TYPE_FINAL_SUMMARY);
-        ble.sendPacket(finalPacket);
+
+        // Recovery is transmitted normally, but excluded from research TX.
+        ble.sendPacket(finalPacket, false);
     }
     else if (message == "TELEM:1") {
         telemetry.setEnabled(true);
@@ -319,13 +330,13 @@ void onReceiveMessage_BLE(String message) {
         if (rejectConfigChange(message)) return;
         tracker.setProfile(CPReadyConfig::KinematicProfile::BENCH_TEST);
         prefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::BENCH_TEST);
-        Serial.printf("[NVS] Kinematic profile set to BENCH_TEST (active K=%.2f)\n", tracker.getDepthK());
+        Serial.printf("[CONFIG] Kinematic profile set to BENCH_TEST (active K=%.2f)\n", tracker.getDepthK());
     }
     else if (message == "SET_PROFILE:MANIKIN") {
         if (rejectConfigChange(message)) return;
         tracker.setProfile(CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
         prefs.putUChar("profile", (uint8_t)CPReadyConfig::KinematicProfile::MANIKIN_STANDARD);
-        Serial.printf("[NVS] Kinematic profile set to MANIKIN_STANDARD (active K=%.2f)\n", tracker.getDepthK());
+        Serial.printf("[CONFIG] Kinematic profile set to MANIKIN_STANDARD (active K=%.2f)\n", tracker.getDepthK());
     }
     else if (message.startsWith("SET_SENS:")) {
         if (rejectConfigChange(message)) return;
@@ -611,7 +622,7 @@ void loop() {
 
             CPRReading demoReading;
             demoReading.rate_cpm          = DEMO_RATE_CPM;
-            demoReading.depth_cm          = (float)DEMO_DEPTH_MM / 10.0f; // mm to cm
+            demoReading.depth_cm          = (float)DEMO_DEPTH_MM / 10.0f;
             demoReading.recoil_complete   = DEMO_RECOIL_OK;
             demoReading.ccf_percentage    = DEMO_CCF_PERCENT;
             demoReading.elapsed_seconds   = (now - demoSessionStartMillis) / 1000;
