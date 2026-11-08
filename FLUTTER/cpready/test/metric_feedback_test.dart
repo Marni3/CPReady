@@ -17,11 +17,6 @@ void main() {
     expect(recoilRating(98), MetricRating.good);
   });
 
-  test('estimated recoil is shown but not graded', () {
-    expect(recoilRating(0, estimated: true), isNull);
-    expect(recoilRating(100, estimated: true), isNull);
-  });
-
   test('live recoil capsule is green only for a full release', () {
     expect(liveRecoilRating(0), MetricRating.poor);
     expect(liveRecoilRating(99), MetricRating.poor);

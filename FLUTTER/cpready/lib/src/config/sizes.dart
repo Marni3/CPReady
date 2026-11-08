@@ -283,6 +283,10 @@ class AppSizes {
   static double get liveMuteIconSize => AppScale.w(24.0);
   static double get liveMuteTapSize => AppScale.w(40.0);
 
+  /// Metronome toggle glyph: much smaller than the voice glyph so the two
+  /// toggles read as separate controls, while both keep the same tap box.
+  static double get liveMetronomeIconSize => AppScale.w(24.0);
+
   /// Cadence-warning banner.
   static double get liveNoticeRadius => AppScale.w(10.0);
   static double get liveNoticeBorderWidth => AppScale.w(1.0);

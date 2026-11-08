@@ -22,6 +22,7 @@ import '../../core/ble/kinematic_profile.dart';
 import '../../core/history/session_repository.dart';
 import '../../core/practice_session_args.dart';
 import '../../core/settings/device_settings.dart';
+import '../../core/settings/metronome_preferences.dart';
 import '../../widgets/widgets.dart';
 
 /// Session lengths offered on the setup screen. 0 = unlimited (manual stop).
@@ -53,6 +54,10 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   bool _settingsLoaded = false;
   SessionRepository? _repository;
 
+  int _metronomeTempoBpm = AppMetronome.defaultTempoBpm;
+  final MetronomePreferences _metronomePreferences =
+      const MetronomePreferences();
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -80,8 +85,14 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
   }
 
   /// Restores the last known mode so the selector does not claim MANIKIN when
-  /// the device was last switched to BENCH.
+  /// the device was last switched to BENCH, and the last metronome tempo.
   Future<void> _loadSettings() async {
+    final int tempo = await _metronomePreferences.loadTempoBpm();
+    if (!mounted) return;
+    if (tempo != _metronomeTempoBpm) {
+      setState(() => _metronomeTempoBpm = tempo);
+    }
+
     try {
       final DeviceSettings? settings = await _repository?.loadDeviceSettings();
       if (!mounted || settings == null) return;
@@ -100,6 +111,14 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
     }
   }
 
+  /// Remembers the tempo as soon as it is picked, so it survives a cancelled
+  /// setup as well as a finished one.
+  void _selectMetronomeTempo(int bpm) {
+    if (bpm == _metronomeTempoBpm) return;
+    setState(() => _metronomeTempoBpm = bpm);
+    unawaited(_metronomePreferences.saveTempoBpm(bpm));
+  }
+
   void _continue() {
     if (!_valid) return;
     final controller = AppScope.of(context);
@@ -112,6 +131,7 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
       extra: PracticeSessionArgs(
         traineeName: _name.text.trim(),
         practiceDurationSec: _practiceDurationSec,
+        metronomeTempoBpm: _metronomeTempoBpm,
       ),
     );
   }
@@ -341,6 +361,29 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
                     _practiceDurationSec = value;
                   });
                 },
+              ),
+              SizedBox(height: AppSpacing.setupProfileTopGap),
+              Text(
+                AppStrings.setupMetronomeTitle,
+                style: AppTypography.style(
+                  size: AppTypography.setupProfileLabelSize,
+                  weight: FontWeight.bold,
+                  color: AppColors.flowHeadingText,
+                ),
+              ),
+              SizedBox(height: AppSpacing.flowHelperGap),
+              Text(
+                AppStrings.setupMetronomeHelper,
+                style: AppTypography.style(
+                  size: AppTypography.flowHelperSize,
+                  weight: FontWeight.normal,
+                  color: AppColors.flowHelperText,
+                ),
+              ),
+              SizedBox(height: AppSpacing.flowHelperGap),
+              _MetronomeTempoPicker(
+                value: _metronomeTempoBpm,
+                onChanged: _selectMetronomeTempo,
               ),
               SizedBox(height: AppSpacing.setupProfileTopGap),
               Text(
@@ -602,6 +645,103 @@ class _DurationOption extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// METRONOME TEMPO PICKER
+// ============================================================
+
+/// The three BPM presets, shown as pills rather than full-width rows so the
+/// setup form does not grow by another three rows.
+class _MetronomeTempoPicker extends StatelessWidget {
+  const _MetronomeTempoPicker({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        for (
+          int i = 0;
+          i < AppMetronome.tempoOptionsBpm.length;
+          i++
+        ) ...<Widget>[
+          if (i > 0) SizedBox(width: AppSpacing.small),
+          Expanded(
+            child: _MetronomeTempoOption(
+              bpm: AppMetronome.tempoOptionsBpm[i],
+              selected: value == AppMetronome.tempoOptionsBpm[i],
+              onTap: () => onChanged(AppMetronome.tempoOptionsBpm[i]),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// One tempo pill, styled like a training-mode option.
+class _MetronomeTempoOption extends StatelessWidget {
+  const _MetronomeTempoOption({
+    required this.bpm,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final int bpm;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final String label = AppStrings.setupMetronomeBpm(bpm);
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          constraints: BoxConstraints(
+            minHeight: AppSizes.profileOptionMinHeight,
+          ),
+          alignment: Alignment.center,
+          padding: EdgeInsets.symmetric(
+            horizontal: AppSpacing.profileOptionPaddingH,
+            vertical: AppSpacing.profileOptionPaddingV,
+          ),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppColors.profileOptionSelectedBackground
+                : AppColors.profileOptionBackground,
+            borderRadius: BorderRadius.circular(AppSizes.profileOptionRadius),
+            border: Border.all(
+              color: selected
+                  ? AppColors.profileOptionSelectedBorder
+                  : AppColors.profileOptionBorder,
+              width: AppSizes.profileOptionBorderWidth,
+            ),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            textAlign: TextAlign.center,
+            style: AppTypography.style(
+              size: AppTypography.profileOptionTitleSize,
+              weight: FontWeight.bold,
+              color: AppColors.profileOptionText,
+            ),
           ),
         ),
       ),

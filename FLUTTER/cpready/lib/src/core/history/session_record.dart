@@ -53,6 +53,12 @@ class SessionRecord {
   final int? ccfPercent;
   final int? totalCompressions;
 
+  /// Active compression time and pause time, in whole seconds, derived from
+  /// [ccfPercent] and [durationSeconds]. Null for an interrupted session or a
+  /// row saved before schema v6.
+  final int? compressionSeconds;
+  final int? pauseSeconds;
+
   /// Firmware quality_flags byte. Null for rows saved before schema v2.
   final int? qualityFlags;
 
@@ -75,6 +81,8 @@ class SessionRecord {
     this.recoilPercent,
     this.ccfPercent,
     this.totalCompressions,
+    this.compressionSeconds,
+    this.pauseSeconds,
     this.qualityFlags,
     this.deviceName,
     this.firmwareVersion,
@@ -141,6 +149,8 @@ class SessionRecord {
     AppHistory.columnRecoilPercent: recoilPercent,
     AppHistory.columnCcfPercent: ccfPercent,
     AppHistory.columnTotalCompressions: totalCompressions,
+    AppHistory.columnCompressionSeconds: compressionSeconds,
+    AppHistory.columnPauseSeconds: pauseSeconds,
     AppHistory.columnQualityFlags: qualityFlags,
     AppHistory.columnDeviceName: deviceName,
     AppHistory.columnFirmwareVersion: firmwareVersion,
@@ -167,6 +177,8 @@ class SessionRecord {
       recoilPercent: map[AppHistory.columnRecoilPercent] as int?,
       ccfPercent: map[AppHistory.columnCcfPercent] as int?,
       totalCompressions: map[AppHistory.columnTotalCompressions] as int?,
+      compressionSeconds: map[AppHistory.columnCompressionSeconds] as int?,
+      pauseSeconds: map[AppHistory.columnPauseSeconds] as int?,
       qualityFlags: map[AppHistory.columnQualityFlags] as int?,
       deviceName: map[AppHistory.columnDeviceName] as String?,
       firmwareVersion: map[AppHistory.columnFirmwareVersion] as String?,

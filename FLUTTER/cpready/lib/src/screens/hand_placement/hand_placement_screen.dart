@@ -21,10 +21,14 @@ class HandPlacementScreen extends StatelessWidget {
   /// Session duration in seconds (0 = unlimited/manual stop).
   final int practiceDurationSec;
 
+  /// Metronome pace chosen on Practice Setup, in beats per minute.
+  final int metronomeTempoBpm;
+
   const HandPlacementScreen({
     super.key,
     required this.traineeName,
     required this.practiceDurationSec,
+    this.metronomeTempoBpm = AppMetronome.defaultTempoBpm,
   });
 
   void _begin(BuildContext context) {
@@ -33,6 +37,7 @@ class HandPlacementScreen extends StatelessWidget {
       extra: PracticeSessionArgs(
         traineeName: traineeName,
         practiceDurationSec: practiceDurationSec,
+        metronomeTempoBpm: metronomeTempoBpm,
       ),
     );
   }

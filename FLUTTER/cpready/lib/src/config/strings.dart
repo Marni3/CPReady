@@ -222,6 +222,19 @@ class AppStrings {
   static const String setupDurationUnlimited = 'Unlimited (manual stop)';
 
   // -----------------------------------------------------------------------
+  // Practice setup — metronome tempo
+  // -----------------------------------------------------------------------
+
+  /// Section label above the tempo presets.
+  static const String setupMetronomeTitle = 'Metronome tempo';
+
+  static const String setupMetronomeHelper =
+      'Pace cue played while compressions are active.';
+
+  /// One tempo preset, e.g. "110 BPM".
+  static String setupMetronomeBpm(int bpm) => '$bpm BPM';
+
+  // -----------------------------------------------------------------------
   // Practice setup — raw data recording
   // -----------------------------------------------------------------------
 
@@ -506,6 +519,10 @@ class AppStrings {
   static const String liveMuteCues = 'Mute voice cues';
   static const String liveUnmuteCues = 'Unmute voice cues';
 
+  /// Accessibility labels for the metronome toggle beside it.
+  static const String liveMetronomeEnable = 'Turn metronome on';
+  static const String liveMetronomeDisable = 'Turn metronome off';
+
   /// Shown after consecutive packets report unsteady cadence.
   static const String liveCadenceWarning =
       'Rhythm unsteady — realtime readings may be inaccurate. '
@@ -575,6 +592,8 @@ class AppStrings {
   static const String sessionDepth = 'Mean Depth';
   static const String sessionCcf = 'CCF';
   static const String sessionCompressions = 'Compressions';
+  static const String sessionCompressionTime = 'Compression Time';
+  static const String sessionPauseTime = 'Pause Time';
   static const String sessionDuration = 'Session Duration';
 
   static const String sessionReturnToHome = 'Return to Home';

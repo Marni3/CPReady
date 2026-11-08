@@ -23,6 +23,7 @@ export 'heartbeat_icon.dart';
 export 'hold_fill_button.dart';
 export 'hold_to_confirm_button.dart';
 export 'metric_row.dart';
+export 'metronome_icon.dart';
 export 'metrics_card.dart';
 export 'profile_change_dialog.dart';
 export 'profile_selector.dart';

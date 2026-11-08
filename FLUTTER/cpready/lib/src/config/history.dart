@@ -25,7 +25,9 @@ class AppHistory {
   /// v3 is additive: it only creates the Device Settings table.
   /// v4 is additive: it adds [columnPacketsLost] to the sessions table.
   /// v5 is additive: it creates the raw-telemetry upload queue table.
-  static const int schemaVersion = 5;
+  /// v6 is additive: it adds [columnCompressionSeconds] and
+  /// [columnPauseSeconds] to the sessions table.
+  static const int schemaVersion = 6;
 
   // -----------------------------------------------------------------------
   // Table and columns
@@ -47,6 +49,11 @@ class AppHistory {
   static const String columnRecoilPercent = 'recoil_percent';
   static const String columnCcfPercent = 'ccf_percent';
   static const String columnTotalCompressions = 'total_compressions';
+
+  /// Active compression time and pause time, in whole seconds, derived from
+  /// [columnCcfPercent] and [columnDurationSeconds] when the session is saved.
+  static const String columnCompressionSeconds = 'compression_seconds';
+  static const String columnPauseSeconds = 'pause_seconds';
 
   /// Firmware quality_flags byte (steady/first-stroke/bench mode).
   static const String columnQualityFlags = 'quality_flags';
@@ -181,6 +188,31 @@ CREATE TABLE $tableSessions (
 )
 ''';
 
+  /// Schema v6 DDL: v4 plus the compression/pause split.
+  static const String createSessionsV6 = '''
+CREATE TABLE $tableSessions (
+  $columnId                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  $columnTraineeName        TEXT    NOT NULL,
+  $columnStatus             TEXT    NOT NULL,
+  $columnStartedAt          TEXT    NOT NULL,
+  $columnEndedAt            TEXT    NOT NULL,
+  $columnDurationSeconds    INTEGER NOT NULL,
+  $columnPacketCount        INTEGER NOT NULL,
+  $columnRateCpm            INTEGER,
+  $columnDepthTenthsMm      INTEGER,
+  $columnRecoilPercent      INTEGER,
+  $columnCcfPercent         INTEGER,
+  $columnTotalCompressions  INTEGER,
+  $columnQualityFlags       INTEGER,
+  $columnDeviceName         TEXT,
+  $columnFirmwareVersion    TEXT,
+  $columnAppVersion         TEXT,
+  $columnPacketsLost        INTEGER,
+  $columnCompressionSeconds INTEGER,
+  $columnPauseSeconds       INTEGER
+)
+''';
+
   /// Additive v1 → v2 migration. Existing rows keep all their data and get a
   /// null quality_flags value.
   static const String migrateSessionsV1ToV2 =
@@ -189,6 +221,13 @@ CREATE TABLE $tableSessions (
   /// Additive v3 → v4 migration. Existing rows get a null packets_lost value.
   static const String migrateSessionsV3ToV4 =
       'ALTER TABLE $tableSessions ADD COLUMN $columnPacketsLost INTEGER';
+
+  /// Additive v5 → v6 migration. Existing rows get null compression/pause
+  /// values and the summary screen derives them from CCF when they are absent.
+  static const List<String> migrateSessionsV5ToV6 = <String>[
+    'ALTER TABLE $tableSessions ADD COLUMN $columnCompressionSeconds INTEGER',
+    'ALTER TABLE $tableSessions ADD COLUMN $columnPauseSeconds INTEGER',
+  ];
 
   // -----------------------------------------------------------------------
   // Session status values (stored verbatim in [columnStatus])

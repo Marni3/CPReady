@@ -14,6 +14,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../config/config.dart';
 import '../../core/feedback/metric_feedback.dart';
+import '../../core/metrics/compression_time.dart';
 import '../../core/metrics/cpr_metrics.dart';
 import '../../core/telemetry/telemetry_recorder.dart';
 import '../../core/telemetry/upload_service.dart';
@@ -69,6 +70,14 @@ class SessionCompleteScreen extends StatefulWidget {
   /// app-measured span.
   final int durationSeconds;
 
+  /// Active compression time in seconds, derived from CCF. Null for an
+  /// interrupted session or a row saved before schema v6; the panel then
+  /// derives the split from the summary.
+  final int? compressionSeconds;
+
+  /// Pause time in seconds; null under the same conditions.
+  final int? pauseSeconds;
+
   /// False when the session could not be written to the History database.
   final bool historySaved;
 
@@ -90,6 +99,8 @@ class SessionCompleteScreen extends StatefulWidget {
     required this.reason,
     required this.summary,
     required this.durationSeconds,
+    this.compressionSeconds,
+    this.pauseSeconds,
     this.historySaved = true,
     this.onRetryRetrieval,
     this.telemetryRecording,
@@ -307,6 +318,8 @@ void _startAnotherSession(BuildContext context) {
                     child: _MetricsPanel(
                       metrics: _summary!,
                       durationSeconds: _durationSeconds,
+                      compressionSeconds: widget.compressionSeconds,
+                      pauseSeconds: widget.pauseSeconds,
                     ),
                   ),
                 ],
@@ -572,11 +585,36 @@ class _SavedBanner extends StatelessWidget {
 class _MetricsPanel extends StatelessWidget {
   final CprMetrics metrics;
   final int durationSeconds;
+  final int? compressionSeconds;
+  final int? pauseSeconds;
 
   const _MetricsPanel({
     required this.metrics,
     required this.durationSeconds,
+    this.compressionSeconds,
+    this.pauseSeconds,
   });
+
+  /// Stored split when it is present and adds up to the displayed duration;
+  /// otherwise the CCF-derived split (old rows, or a retried summary).
+  CompressionTimeBreakdown? _resolveTimes() {
+    final int? compression = compressionSeconds;
+    final int? pause = pauseSeconds;
+    if (compression != null &&
+        pause != null &&
+        compression >= 0 &&
+        pause >= 0 &&
+        compression + pause == durationSeconds) {
+      return CompressionTimeBreakdown(
+        compressionSeconds: compression,
+        pauseSeconds: pause,
+      );
+    }
+    return CompressionTimeBreakdown.fromCcf(
+      ccfPercent: metrics.ccfPercent,
+      durationSeconds: durationSeconds,
+    );
+  }
 
   Widget _gradedCapsule(String text, MetricRating? rating) {
     return ValueCapsule(
@@ -605,6 +643,8 @@ class _MetricsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final CompressionTimeBreakdown? times = _resolveTimes();
+
     return FlowPanel(
       background: AppColors.summaryPanelBackground,
       border: AppColors.summaryPanelBorder,
@@ -625,10 +665,7 @@ class _MetricsPanel extends StatelessWidget {
             label: AppStrings.sessionRecoil,
             capsule: _gradedCapsule(
               percentText(metrics.recoilPercentage),
-              recoilRating(
-                metrics.recoilPercentage,
-                estimated: metrics.isRecoilEstimated,
-              ),
+              recoilRating(metrics.recoilPercentage),
             ),
           ),
           SizedBox(height: AppSpacing.summaryRowGap),
@@ -649,17 +686,33 @@ class _MetricsPanel extends StatelessWidget {
           ),
           SizedBox(height: AppSpacing.summaryRowGap),
           _MetricRow(
+            label: AppStrings.sessionCompressions,
+            capsule: _valueCapsule(
+              '${metrics.totalCompressions}',
+            ),
+          ),
+          if (times != null) ...<Widget>[
+            SizedBox(height: AppSpacing.summaryRowGap),
+            _MetricRow(
+              label: AppStrings.sessionCompressionTime,
+              capsule: _valueCapsule(
+                durationText(times.compressionSeconds),
+              ),
+            ),
+            SizedBox(height: AppSpacing.summaryRowGap),
+            _MetricRow(
+              label: AppStrings.sessionPauseTime,
+              capsule: _valueCapsule(
+                durationText(times.pauseSeconds),
+              ),
+            ),
+          ],
+          SizedBox(height: AppSpacing.summaryRowGap),
+          _MetricRow(
             label: AppStrings.sessionCcf,
             capsule: _gradedCapsule(
               percentText(metrics.ccfPercent),
               ccfRating(metrics.ccfPercent),
-            ),
-          ),
-          SizedBox(height: AppSpacing.summaryRowGap),
-          _MetricRow(
-            label: AppStrings.sessionCompressions,
-            capsule: _valueCapsule(
-              '${metrics.totalCompressions}',
             ),
           ),
           SizedBox(height: AppSpacing.summaryDurationGap),

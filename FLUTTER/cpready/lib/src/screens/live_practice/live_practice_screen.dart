@@ -22,6 +22,7 @@ import 'package:go_router/go_router.dart';
 import '../../config/config.dart';
 import '../../core/app_scope.dart';
 import '../../core/audio/live_coaching_controller.dart';
+import '../../core/audio/metronome.dart';
 import '../../core/audio/voice_coach.dart';
 import '../../core/audio/voice_cue_gate.dart';
 import '../../core/ble/ble_controller.dart';
@@ -29,9 +30,11 @@ import '../../core/feedback/metric_feedback.dart';
 import '../../core/history/history_revision.dart';
 import '../../core/history/session_record.dart';
 import '../../core/history/session_repository.dart';
+import '../../core/metrics/compression_time.dart';
 import '../../core/metrics/cpr_metrics.dart';
 import '../../core/metrics/session_refinement_engine.dart';
 import '../../core/practice_session_args.dart';
+import '../../core/settings/metronome_preferences.dart';
 import '../../core/telemetry/raw_frame.dart';
 import '../../core/telemetry/session_metadata.dart';
 import '../../core/telemetry/telemetry_recorder.dart';
@@ -48,16 +51,26 @@ class LivePracticeScreen extends StatefulWidget {
   /// Session duration in seconds (0 = unlimited/manual stop).
   final int practiceDurationSec;
 
+  /// Metronome pace chosen on Practice Setup, in beats per minute.
+  final int metronomeTempoBpm;
+
   /// Clock for the voice-cue gate. Widget tests pass one that follows the
   /// pumped time; the app leaves it null and uses the wall clock.
   @visibleForTesting
   final DateTime Function()? cueClock;
 
+  /// Test hook: replaces the asset metronome so widget tests never touch a
+  /// platform audio channel.
+  @visibleForTesting
+  final Metronome? metronome;
+
   const LivePracticeScreen({
     super.key,
     required this.traineeName,
     required this.practiceDurationSec,
+    this.metronomeTempoBpm = AppMetronome.defaultTempoBpm,
     this.cueClock,
+    this.metronome,
   });
 
   @override
@@ -115,6 +128,19 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   /// Voice cues are on by default; the header toggle mutes them per session.
   bool _muted = false;
 
+  /// Metronome on by default; the header toggle silences it and the choice is
+  /// remembered for the next session.
+  bool _metronomeEnabled = AppMetronome.defaultEnabled;
+
+  final MetronomePreferences _metronomePreferences =
+      const MetronomePreferences();
+
+  late final Metronome _metronome = widget.metronome ?? AssetMetronome();
+
+  Timer? _beatTimer;
+  DateTime? _beatAnchor;
+  bool _metronomeRunning = false;
+
   /// App-side dynamic voice coaching engine (suppresses depth cues when unsteady).
   late final LiveCoachingController _coachingController =
       LiveCoachingController(clock: widget.cueClock);
@@ -145,6 +171,12 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         debugPrint('Voice cue preload failed: $error');
       }),
     );
+    unawaited(_loadMetronomePreferences());
+    unawaited(
+      _metronome.preload().catchError((Object error) {
+        debugPrint('Metronome preload failed: $error');
+      }),
+    );
 
     controller.startRecording();
     controller.addListener(_onControllerChanged);
@@ -165,6 +197,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     _tick = Timer.periodic(AppDurations.liveTick, (_) {
       if (mounted && !_finished) {
         setState(() {});
+        _syncMetronome();
       }
     });
   }
@@ -440,6 +473,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         extra: PracticeSessionArgs(
           traineeName: widget.traineeName,
           practiceDurationSec: widget.practiceDurationSec,
+          metronomeTempoBpm: widget.metronomeTempoBpm,
         ),
       );
     } else {
@@ -457,6 +491,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     _startWatchdog?.cancel();
     _startWatchdog = null;
     _controller?.removeListener(_onControllerChanged);
+    _stopMetronome();
     unawaited(_coach?.stop());
   }
 
@@ -556,6 +591,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       }
     });
 
+    _syncMetronome();
+
     // The firmware's limit counts from START, before the first compression, so
     // the app stops the session itself once the chosen length has elapsed
     // since that first compression. Unlimited (0) relies on the manual stop.
@@ -626,6 +663,84 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   void _toggleMute() {
     setState(() => _muted = !_muted);
     if (_muted) unawaited(_coach?.stop());
+  }
+
+  /// Applies the remembered on/off choice. The first frame already shows the
+  /// default (on), so this only ever corrects it.
+  Future<void> _loadMetronomePreferences() async {
+    final bool enabled = await _metronomePreferences.loadEnabled();
+    if (!mounted || _finished || enabled == _metronomeEnabled) return;
+    setState(() => _metronomeEnabled = enabled);
+    _syncMetronome();
+  }
+
+  void _toggleMetronome() {
+    final bool enabled = !_metronomeEnabled;
+    setState(() => _metronomeEnabled = enabled);
+    unawaited(_metronomePreferences.saveEnabled(enabled));
+    _syncMetronome();
+  }
+
+  /// Runs the beat only while: enabled, past the first compression, and
+  /// compressing right now. A voice cue plays over the beat, so it never
+  /// pauses the metronome.
+  void _syncMetronome() {
+    if (!mounted || _finished || _ending) {
+      _stopMetronome();
+      return;
+    }
+
+    final bool shouldRun =
+        _metronomeEnabled && _firstCompressionSeen && _compressing;
+
+    if (shouldRun == _metronomeRunning) return;
+    if (shouldRun) {
+      _startMetronome();
+    } else {
+      _stopMetronome();
+    }
+  }
+
+  void _startMetronome() {
+    _beatTimer?.cancel();
+    _metronomeRunning = true;
+    _beatAnchor = DateTime.now();
+    unawaited(_metronome.tick());
+    _scheduleNextBeat();
+  }
+
+  /// Schedules the next beat from [_beatAnchor] rather than from the previous
+  /// callback, so timer overhead never accumulates into a slower tempo.
+  void _scheduleNextBeat() {
+    _beatTimer?.cancel();
+    final DateTime? anchor = _beatAnchor;
+    if (!mounted || !_metronomeRunning || anchor == null) return;
+
+    final int intervalUs =
+        AppMetronome.beatInterval(widget.metronomeTempoBpm).inMicroseconds;
+    if (intervalUs <= 0) return;
+
+    final int elapsedUs = DateTime.now().difference(anchor).inMicroseconds;
+    final Duration wait =
+        Duration(microseconds: intervalUs - (elapsedUs % intervalUs));
+
+    _beatTimer = Timer(wait, () {
+      if (!mounted || !_metronomeRunning) return;
+      // A pause or a voice cue may have started since this beat was scheduled.
+      _syncMetronome();
+      if (!mounted || !_metronomeRunning) return;
+      unawaited(_metronome.tick());
+      _scheduleNextBeat();
+    });
+  }
+
+  void _stopMetronome() {
+    _beatTimer?.cancel();
+    _beatTimer = null;
+    _beatAnchor = null;
+    if (!_metronomeRunning) return;
+    _metronomeRunning = false;
+    unawaited(_metronome.stop());
   }
 
   void _onControllerChanged() {
@@ -755,6 +870,14 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
           )
         : math.max(0, endedAt.difference(startedAt).inSeconds);
 
+    // Compression and pause time are the CCF split over that same duration.
+    final CompressionTimeBreakdown? times = finalSummary == null
+        ? null
+        : CompressionTimeBreakdown.fromCcf(
+            ccfPercent: finalSummary.ccfPercent,
+            durationSeconds: durationSeconds,
+          );
+
     bool historySaved = true;
     if (finalReason == SessionEndReason.completed) {
       historySaved = await _persistSession(
@@ -764,6 +887,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
         startedAt,
         endedAt,
         durationSeconds,
+        times,
       );
     }
 
@@ -776,6 +900,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
           reason: finalReason,
           summary: finalSummary,
           durationSeconds: durationSeconds,
+          compressionSeconds: times?.compressionSeconds,
+          pauseSeconds: times?.pauseSeconds,
           historySaved: historySaved,
           telemetryRecording: telemetryRecording,
           telemetryUpload: telemetryUpload,
@@ -805,13 +931,21 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     final DateTime startedAt =
         _sessionStartAt ?? controller.sessionStartedAt ?? DateTime.now();
     final DateTime endedAt = controller.sessionEndedAt ?? DateTime.now();
+    final int durationSeconds =
+        math.max(0, summary.elapsedSeconds - _firstCompressionElapsedSec);
+    final CompressionTimeBreakdown? times =
+        CompressionTimeBreakdown.fromCcf(
+      ccfPercent: summary.ccfPercent,
+      durationSeconds: durationSeconds,
+    );
     final bool historySaved = await _persistSession(
       controller,
       summary,
       controller.sessionPackets.length,
       startedAt,
       endedAt,
-      math.max(0, summary.elapsedSeconds - _firstCompressionElapsedSec),
+      durationSeconds,
+      times,
     );
 
     return SessionResultData(
@@ -832,6 +966,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     DateTime startedAt,
     DateTime endedAt,
     int durationSeconds,
+    CompressionTimeBreakdown? times,
   ) async {
     final repository = _repository;
     if (repository == null) return false;
@@ -854,6 +989,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       recoilPercent: summary.recoilPercentage,
       ccfPercent: summary.ccfPercent,
       totalCompressions: summary.totalCompressions,
+      compressionSeconds: times?.compressionSeconds,
+      pauseSeconds: times?.pauseSeconds,
       qualityFlags: summary.qualityFlags,
       deviceName: controller.deviceName,
       appVersion: AppIdentity.version,
@@ -872,6 +1009,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   @override
   void dispose() {
     _stopSessionInternals();
+    unawaited(_metronome.dispose());
     if (_telemetryRecorder != null || _inMemoryRawStreamActive) {
       _inMemoryRawStreamActive = false;
       unawaited(_sendTelemetryOff(_controller));
@@ -927,6 +1065,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                               controller: controller,
                               muted: _muted,
                               onToggleMute: _toggleMute,
+                              metronomeEnabled: _metronomeEnabled,
+                              onToggleMetronome: _toggleMetronome,
                             ),
                           SizedBox(height: AppSpacing.liveTimerTopGap),
                           _TimerBlock(startedAt: _sessionStartAt),
@@ -1154,11 +1294,15 @@ class _StatusHeader extends StatelessWidget {
   final BleController controller;
   final bool muted;
   final VoidCallback onToggleMute;
+  final bool metronomeEnabled;
+  final VoidCallback onToggleMetronome;
 
   const _StatusHeader({
     required this.controller,
     required this.muted,
     required this.onToggleMute,
+    required this.metronomeEnabled,
+    required this.onToggleMetronome,
   });
 
   @override
@@ -1194,6 +1338,31 @@ class _StatusHeader extends StatelessWidget {
                       muted ? Icons.volume_off : Icons.volume_up,
                       size: AppSizes.liveMuteIconSize,
                       color: AppColors.liveLabelText,
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(width: AppSpacing.small),
+              Semantics(
+                button: true,
+                label: metronomeEnabled
+                    ? AppStrings.liveMetronomeDisable
+                    : AppStrings.liveMetronomeEnable,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onToggleMetronome,
+                  child: SizedBox(
+                    width: AppSizes.liveMuteTapSize,
+                    height: AppSizes.liveMuteTapSize,
+                    // The tap box sets the touch target only. Centering keeps its
+                    // tight constraints off the glyph, which otherwise filled
+                    // the box and ignored its own size.
+                    child: Center(
+                      child: MetronomeIcon(
+                        enabled: metronomeEnabled,
+                        size: AppSizes.liveMetronomeIconSize,
+                        color: AppColors.liveLabelText,
+                      ),
                     ),
                   ),
                 ),

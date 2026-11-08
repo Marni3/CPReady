@@ -16,6 +16,7 @@ import 'package:sqflite/sqflite.dart';
 
 import 'package:cpready/src/config/config.dart';
 import 'package:cpready/src/core/app_scope.dart';
+import 'package:cpready/src/core/audio/metronome.dart';
 import 'package:cpready/src/core/audio/voice_coach.dart';
 import 'package:cpready/src/core/ble/ble_controller.dart';
 import 'package:cpready/src/core/history/session_repository.dart';
@@ -113,6 +114,7 @@ final List<_Case> _cases = <_Case>[
     () => const LivePracticeScreen(
       traineeName: 'Alexandra Konstantinopoulos',
       practiceDurationSec: 120,
+      metronome: SilentMetronome(),
     ),
   ),
   _Case('ManikinCalibration', ManikinCalibrationScreen.new),

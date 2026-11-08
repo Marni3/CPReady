@@ -41,6 +41,8 @@ class SessionRepository {
     AppHistory.columnRecoilPercent,
     AppHistory.columnCcfPercent,
     AppHistory.columnTotalCompressions,
+    AppHistory.columnCompressionSeconds,
+    AppHistory.columnPauseSeconds,
     AppHistory.columnQualityFlags,
     AppHistory.columnDeviceName,
     AppHistory.columnFirmwareVersion,
@@ -83,7 +85,7 @@ class SessionRepository {
       options: OpenDatabaseOptions(
         version: AppHistory.schemaVersion,
         onCreate: (Database db, int version) async {
-          await db.execute(AppHistory.createSessionsV4);
+          await db.execute(AppHistory.createSessionsV6);
           await db.execute(AppDeviceSettings.createTable);
           await db.execute(AppHistory.createTelemetryV5);
         },
@@ -112,6 +114,11 @@ class SessionRepository {
     }
     if (oldVersion < 5) {
       await db.execute(AppHistory.createTelemetryV5);
+    }
+    if (oldVersion < 6) {
+      for (final String statement in AppHistory.migrateSessionsV5ToV6) {
+        await db.execute(statement);
+      }
     }
   }
 

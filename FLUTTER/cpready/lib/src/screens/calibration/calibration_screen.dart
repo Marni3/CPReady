@@ -24,11 +24,13 @@ import '../../widgets/widgets.dart';
 class CalibrationScreen extends StatefulWidget {
   final String traineeName;
   final int practiceDurationSec;
+  final int metronomeTempoBpm;
 
   const CalibrationScreen({
     super.key,
     required this.traineeName,
     required this.practiceDurationSec,
+    this.metronomeTempoBpm = AppMetronome.defaultTempoBpm,
   });
 
   @override
@@ -229,6 +231,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
               extra: PracticeSessionArgs(
                 traineeName: widget.traineeName,
                 practiceDurationSec: widget.practiceDurationSec,
+                metronomeTempoBpm: widget.metronomeTempoBpm,
               ),
             );
           },

@@ -41,6 +41,7 @@ PracticeSessionArgs _sessionArgs(BuildContext context) {
   return PracticeSessionArgs(
     traineeName: extra as String? ?? '',
     practiceDurationSec: AppDeviceSettings.defaultPracticeDurationSec,
+    metronomeTempoBpm: AppMetronome.defaultTempoBpm,
   );
 }
 
@@ -97,6 +98,7 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
             child: HandPlacementScreen(
               traineeName: args.traineeName,
               practiceDurationSec: args.practiceDurationSec,
+              metronomeTempoBpm: args.metronomeTempoBpm,
             ),
           );
         },
@@ -106,6 +108,7 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
             child: CalibrationScreen(
               traineeName: args.traineeName,
               practiceDurationSec: args.practiceDurationSec,
+              metronomeTempoBpm: args.metronomeTempoBpm,
             ),
           );
         },
@@ -114,6 +117,7 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
           return LivePracticeScreen(
             traineeName: args.traineeName,
             practiceDurationSec: args.practiceDurationSec,
+            metronomeTempoBpm: args.metronomeTempoBpm,
           );
         },
         AppRoutes.manikinCalibration: (_) => const ManikinCalibrationScreen(),
@@ -133,6 +137,8 @@ class _CpReadyAppState extends State<CpReadyApp> with WidgetsBindingObserver {
             reason: reason,
             summary: extra['summary'] as CprMetrics?,
             durationSeconds: extra['durationSeconds'] as int? ?? 0,
+            compressionSeconds: extra['compressionSeconds'] as int?,
+            pauseSeconds: extra['pauseSeconds'] as int?,
             historySaved: extra['historySaved'] as bool? ?? true,
           );
         },

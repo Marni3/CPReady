@@ -10,6 +10,7 @@ export 'gradients.dart';
 export 'guide_steps.dart';
 export 'history.dart';
 export 'layout.dart';
+export 'metronome.dart';
 export 'scale.dart';
 export 'spacing.dart';
 export 'strings.dart';

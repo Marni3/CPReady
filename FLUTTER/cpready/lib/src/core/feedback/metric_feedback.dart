@@ -37,10 +37,11 @@ MetricRating? depthRating(double? cm) {
 /// Grade for recoil, or null when there is no value yet.
 ///
 /// 0 is a real value (no full release), so it grades poor rather than neutral.
-/// Pass [estimated] for firmware that marks recoil as an acceleration estimate:
-/// that value cannot see leaning, so it is shown but not graded.
-MetricRating? recoilRating(int? percent, {bool estimated = false}) {
-  if (percent == null || estimated) return null;
+/// The value is graded the same way whether the firmware measured the release
+/// with a force sensor or estimated it from acceleration, so the Session
+/// Summary recoil capsule always reads green or red like the other metrics.
+MetricRating? recoilRating(int? percent) {
+  if (percent == null) return null;
   return percent >= AppTargets.recoilGoodPercent
       ? MetricRating.good
       : MetricRating.poor;

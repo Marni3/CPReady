@@ -1,4 +1,4 @@
-/// History schema v5 and quality-flag / packet-loss provenance.
+/// History schema and quality-flag / packet-loss / timing provenance.
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,8 +6,8 @@ import 'package:cpready/src/config/config.dart';
 import 'package:cpready/src/core/history/session_record.dart';
 
 void main() {
-  test('schema v5 keeps v4 fields and adds the telemetry queue', () {
-    expect(AppHistory.schemaVersion, 5);
+  test('schema v6 keeps the older fields and adds the session tables', () {
+    expect(AppHistory.schemaVersion, 6);
     expect(AppHistory.columnQualityFlags, 'quality_flags');
     expect(AppHistory.createSessionsV2, contains('quality_flags'));
     expect(
@@ -25,6 +25,15 @@ void main() {
       AppHistory.createTelemetryV5,
       contains(AppHistory.columnTelemetryLocalPath),
     );
+    expect(
+      AppHistory.createSessionsV6,
+      contains(AppHistory.columnCompressionSeconds),
+    );
+    expect(
+      AppHistory.createSessionsV6,
+      contains(AppHistory.columnPauseSeconds),
+    );
+    expect(AppHistory.migrateSessionsV5ToV6, hasLength(2));
     expect(AppDeviceSettings.createTable, contains(AppDeviceSettings.table));
     expect(
       AppDeviceSettings.createTable,
@@ -53,6 +62,29 @@ void main() {
     expect(loaded.packetCount, 598);
     expect(loaded.packetsLost, 2);
     expect(loaded.totalCompressions, 230);
+  });
+
+  test('record round-trips compression and pause time', () {
+    final record = SessionRecord(
+      traineeName: 'Alexandra',
+      status: SessionStatus.completed,
+      startedAt: DateTime(2026, 10, 26, 10),
+      endedAt: DateTime(2026, 10, 26, 10, 2),
+      durationSeconds: 110,
+      packetCount: 240,
+      rateCpm: 110,
+      depthTenthsMm: 550,
+      recoilPercent: 100,
+      ccfPercent: 88,
+      totalCompressions: 200,
+      compressionSeconds: 97,
+      pauseSeconds: 13,
+    );
+
+    final loaded = SessionRecord.fromMap(record.toMap());
+
+    expect(loaded.compressionSeconds, 97);
+    expect(loaded.pauseSeconds, 13);
   });
 
   test('record round-trips quality flags and bench provenance', () {

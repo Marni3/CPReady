@@ -95,6 +95,8 @@ class _HistoryDetailScreenState extends State<HistoryDetailScreen> {
           : SessionEndReason.interrupted,
       summary: record.summary,
       durationSeconds: record.durationSeconds,
+      compressionSeconds: record.compressionSeconds,
+      pauseSeconds: record.pauseSeconds,
       historySaved: true,
 
       // Tells SessionCompleteScreen it was opened from History.

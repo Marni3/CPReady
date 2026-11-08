@@ -8,6 +8,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../config/config.dart';
+import 'audio_context.dart';
 
 /// One voice-cue player, addressed by the firmware's `audio_prompt_code`.
 abstract class VoiceCoach {
@@ -71,22 +72,6 @@ class AssetVoiceCoach implements VoiceCoach {
           ? bundlePath.substring(_bundlePrefix.length)
           : bundlePath;
 
-  /// Spoken coaching, tagged as speech on the media stream.
-  ///
-  /// The usage has to be `media`, not `assistanceSonification`: Android maps
-  /// sonification to `STREAM_SYSTEM`, and that stream is muted whenever the
-  /// phone is on silent/vibrate, so every cue would be inaudible with no error.
-  /// The media stream is never muted by the ringer mode and is the one the
-  /// user controls with the volume keys. Transient focus keeps the cue from
-  /// talking over music the listener started.
-  static final AudioContext _context = AudioContext(
-    android: const AudioContextAndroid(
-      contentType: AndroidContentType.speech,
-      usageType: AndroidUsageType.media,
-      audioFocus: AndroidAudioFocus.gainTransient,
-    ),
-  );
-
   @override
   Future<void> preload() {
     if (_disposed) return Future<void>.value();
@@ -123,7 +108,7 @@ class AssetVoiceCoach implements VoiceCoach {
         debugPrint('Voice cue $cueCode loading');
       }
       player = AudioPlayer();
-      await player.setAudioContext(_context);
+      await player.setAudioContext(AppAudioContext.voiceCues);
       await player.setReleaseMode(ReleaseMode.stop);
       await player.setSource(AssetSource(_sourcePath(bundlePath)));
 
@@ -133,6 +118,11 @@ class AssetVoiceCoach implements VoiceCoach {
       }
 
       _players[cueCode] = player;
+      player.onPlayerComplete.listen((_) {
+        if (_disposed) return;
+        if (!identical(_activePlayer, player)) return;
+        _activePlayer = null;
+      });
       if (kDebugMode) {
         debugPrint('Voice cue $cueCode preloaded');
       }
@@ -186,6 +176,7 @@ class AssetVoiceCoach implements VoiceCoach {
       await player.seek(Duration.zero);
       if (_disposed || generation != _playGeneration) return;
       await player.resume();
+      if (_disposed || generation != _playGeneration) return;
 
       if (kDebugMode) {
         debugPrint(
@@ -195,6 +186,9 @@ class AssetVoiceCoach implements VoiceCoach {
       }
     } catch (error) {
       debugPrint('Voice cue playback failed for code $cueCode: $error');
+      if (identical(_activePlayer, player)) {
+        _activePlayer = null;
+      }
     }
   }
 

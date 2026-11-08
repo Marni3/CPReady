@@ -45,6 +45,17 @@ class AppAssets {
   /// Open-book glyph — "Step-by-step Guide" option card.
   static const String iconBook = 'assets/images/book.png';
 
+  /// Metronome glyph — live-header metronome toggle. Kept in its own colors
+  /// (navy body, white ticks), so it is not tinted like the glyphs above.
+  static const String iconMetronome = 'assets/images/metronome.png';
+
+  // -----------------------------------------------------------------------
+  // Metronome
+  // -----------------------------------------------------------------------
+
+  /// Tick played once per beat while compressions are active.
+  static const String metronomeClick = 'assets/audio/metronome_tick.mp3';
+
   // -----------------------------------------------------------------------
   // Voice coaching cues
   // -----------------------------------------------------------------------

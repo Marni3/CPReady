@@ -2,9 +2,11 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:cpready/src/config/config.dart';
 import 'package:cpready/src/core/app_scope.dart';
+import 'package:cpready/src/core/audio/metronome.dart';
 import 'package:cpready/src/core/audio/voice_coach.dart';
 import 'package:cpready/src/core/metrics/cpr_metrics.dart';
 import 'package:cpready/src/screens/live_practice/live_practice_screen.dart';
@@ -81,6 +83,7 @@ Widget _harness(
         traineeName: 'Alexandra',
         practiceDurationSec: 120,
         cueClock: cueClock,
+        metronome: const SilentMetronome(),
       ),
     ),
   );
@@ -120,6 +123,10 @@ Future<void> _holdEnd(WidgetTester tester) async {
 }
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
   testWidgets('STOP + Type 4 saves one completed session', (
     WidgetTester tester,
   ) async {
@@ -136,7 +143,18 @@ void main() {
     expect(find.text(AppStrings.sessionSaved), findsOneWidget);
     expect(repository.inserted, hasLength(1));
     expect(repository.inserted.single.qualityFlags, 0x05);
+    // 120 s summary minus the 10 s before the first compression, 88% CCF.
+    expect(repository.inserted.single.durationSeconds, 110);
+    expect(repository.inserted.single.compressionSeconds, 97);
+    expect(repository.inserted.single.pauseSeconds, 13);
     expect(find.text(AppStrings.liveBenchBadge), findsOneWidget);
+
+    // The summary shows the stored split as neutral capsules under
+    // Compressions: 97 s and 13 s in the shared clock format.
+    expect(find.text(AppStrings.sessionCompressionTime), findsOneWidget);
+    expect(find.text(AppStrings.sessionPauseTime), findsOneWidget);
+    expect(find.text('01:37'), findsOneWidget);
+    expect(find.text('00:13'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());

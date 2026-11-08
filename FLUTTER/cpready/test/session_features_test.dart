@@ -2,10 +2,12 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'package:cpready/src/config/config.dart';
 import 'package:cpready/src/core/app_scope.dart';
+import 'package:cpready/src/core/audio/metronome.dart';
 import 'package:cpready/src/core/audio/voice_coach.dart';
 import 'package:cpready/src/core/ble/ble_controller.dart';
 import 'package:cpready/src/core/ble/kinematic_profile.dart';
@@ -13,9 +15,11 @@ import 'package:cpready/src/core/history/session_repository.dart';
 import 'package:cpready/src/core/metrics/cpr_metrics.dart';
 import 'package:cpready/src/core/settings/device_settings.dart';
 import 'package:cpready/src/screens/live_practice/live_practice_screen.dart';
+import 'package:cpready/src/screens/session_complete/session_complete_screen.dart';
 import 'package:cpready/src/screens/setup/practice_setup_screen.dart';
 import 'package:cpready/src/theme/app_theme.dart';
 import 'package:cpready/src/widgets/profile_selector.dart';
+import 'package:cpready/src/widgets/value_capsule.dart';
 
 import 'support/fake_ble_controller.dart';
 import 'support/fake_session_repository.dart';
@@ -64,6 +68,10 @@ CprMetrics _packet({int qualityFlags = 0, int totalCompressions = 1}) {
 }
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
   testWidgets('setup offers both training modes', (WidgetTester tester) async {
     final BleController controller = BleController();
     await tester.pumpWidget(_harness(const PracticeSetupScreen(), controller));
@@ -139,6 +147,7 @@ void main() {
           const LivePracticeScreen(
             traineeName: 'Alexandra',
             practiceDurationSec: 120,
+            metronome: SilentMetronome(),
           ),
           controller),
     );
@@ -157,6 +166,75 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('setup offers three tempos and remembers the choice', (
+    WidgetTester tester,
+  ) async {
+    final BleController controller = BleController();
+    await tester.pumpWidget(_harness(const PracticeSetupScreen(), controller));
+    await tester.pumpAndSettle();
+
+    expect(find.text(AppStrings.setupMetronomeTitle), findsOneWidget);
+    expect(find.text('100 BPM'), findsOneWidget);
+    expect(find.text('110 BPM'), findsOneWidget);
+    expect(find.text('120 BPM'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('120 BPM'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('120 BPM'));
+    await tester.pump();
+
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    expect(prefs.getInt(AppMetronome.tempoKey), 120);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('summary grades recoil even when the firmware estimates it', (
+    WidgetTester tester,
+  ) async {
+    // A 1200 x 2400 surface keeps the whole summary panel on screen.
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final CprMetrics summary = CprMetrics(
+      packetType: AppBleConfig.packetFinalSummary,
+      recoilComplete: false,
+      recoilPercentage: 95,
+      rateCpm: 110,
+      depthCm: 5.4,
+      depthMm: 54,
+      ccfPercent: 88,
+      audioPromptCode: 0,
+      totalCompressions: 120,
+      elapsedSeconds: 120,
+      qualityFlags: AppBleConfig.qualityRecoilEstimated,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: appThemeData().theme,
+        home: SessionCompleteScreen(
+          traineeName: 'Alexandra',
+          reason: SessionEndReason.completed,
+          summary: summary,
+          durationSeconds: 120,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final ValueCapsule recoil = tester.widget<ValueCapsule>(
+      find.ancestor(
+        of: find.text('95%'),
+        matching: find.byType(ValueCapsule),
+      ),
+    );
+    expect(recoil.background, AppColors.liveCapsulePositive);
+  });
+
   testWidgets('cadence warning needs a sustained unsteady run', (
     WidgetTester tester,
   ) async {
@@ -166,6 +244,7 @@ void main() {
           const LivePracticeScreen(
             traineeName: 'Alexandra',
             practiceDurationSec: 120,
+            metronome: SilentMetronome(),
           ),
           controller),
     );
