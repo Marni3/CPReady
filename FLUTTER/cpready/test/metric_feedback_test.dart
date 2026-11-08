@@ -22,6 +22,13 @@ void main() {
     expect(recoilRating(100, estimated: true), isNull);
   });
 
+  test('live recoil capsule is green only for a full release', () {
+    expect(liveRecoilRating(0), MetricRating.poor);
+    expect(liveRecoilRating(99), MetricRating.poor);
+    expect(liveRecoilRating(100), MetricRating.good);
+    expect(liveRecoilRating(null), isNull);
+  });
+
   test('CCF is graded against the AHA minimum of 60 %', () {
     expect(ccfRating(59), MetricRating.poor);
     expect(ccfRating(60), MetricRating.good);

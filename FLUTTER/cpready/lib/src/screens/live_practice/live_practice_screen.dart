@@ -963,10 +963,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                                             label: AppStrings.liveRecoilLabel,
                                             capsule: _capsule(
                                               recoilText(latest?.recoilPercentage),
-                                              recoilRating(
+                                              liveRecoilRating(
                                                 latest?.recoilPercentage,
-                                                estimated:
-                                                    latest?.isRecoilEstimated ?? false,
                                               ),
                                             ),
                                           );

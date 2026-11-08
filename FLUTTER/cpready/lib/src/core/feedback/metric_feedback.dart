@@ -46,6 +46,20 @@ MetricRating? recoilRating(int? percent, {bool estimated = false}) {
       : MetricRating.poor;
 }
 
+/// Grade for the live recoil capsule: green only for a full release, red
+/// otherwise (including the 0 that means "not full").
+///
+/// Live packets encode recoil as a per-stroke flag (100 for full, 0 for not),
+/// and the capsule label uses [AppTargets.recoilFullPercent] for "Full". The
+/// capsule mirrors that label even on 1-MPU firmware, where [recoilRating]
+/// would leave the estimated value ungraded.
+MetricRating? liveRecoilRating(int? percent) {
+  if (percent == null) return null;
+  return percent >= AppTargets.recoilFullPercent
+      ? MetricRating.good
+      : MetricRating.poor;
+}
+
 /// Grade for chest compression fraction against the AHA minimum, or null when
 /// there is no value.
 MetricRating? ccfRating(int? percent) {
