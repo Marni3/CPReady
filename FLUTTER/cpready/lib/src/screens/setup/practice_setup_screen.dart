@@ -244,7 +244,15 @@ class _PracticeSetupScreenState extends State<PracticeSetupScreen> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: <Widget>[
-                  const FlowBackButton(),
+                  FlowBackButton(
+                  onPressed: () {
+                    if (context.canPop()) {
+                      context.pop();
+                    } else {
+                      context.go(AppRoutes.home);
+                    }
+                  },
+                ),
                   SizedBox(width: AppSpacing.flowBackTitleGap),
                   Expanded(
                     child: Text(

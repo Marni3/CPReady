@@ -3,6 +3,7 @@
 /// Used by the practice flow screens (Practice Setup, Hand Placement,
 /// Calibration); tapping it returns to the screen that opened it.
 
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -10,12 +11,14 @@ import '../config/config.dart';
 
 /// Back arrow for the practice flow screens.
 class FlowBackButton extends StatelessWidget {
-  const FlowBackButton({super.key});
+  const FlowBackButton({super.key, this.onPressed});
+
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => context.pop(),
+      onTap: onPressed ?? () => context.pop(),
       behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: EdgeInsets.only(
