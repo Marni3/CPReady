@@ -106,12 +106,14 @@ class AppDurations {
   /// Real-time stroke packets that must report unsteady cadence in a row before
   /// the warning is shown. The first stroke and the packet after a pause also
   /// report unsteady cadence, so a literal per-packet rule would flash the
-  /// warning at the start of every run.
-  static const int liveCadenceWarningPackets = 2;
+  /// warning at the start of every run. Counted per new compression stroke, not
+  /// per 5 Hz heartbeat repeat (see live_practice_screen.dart).
+  static const int liveCadenceWarningPackets = 3;
 
   /// Consecutive steady-cadence strokes required to clear an active unsteady
-  /// rhythm warning (prevents flickering during erratic sets).
-  static const int liveCadenceClearPackets = 3;
+  /// rhythm warning (prevents flickering during erratic sets). Counted per new
+  /// compression stroke.
+  static const int liveCadenceClearPackets = 2;
 
   // -----------------------------------------------------------------------
   // Animations

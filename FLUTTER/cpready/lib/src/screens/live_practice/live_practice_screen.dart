@@ -512,12 +512,16 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       _startWatchdog?.cancel();
       _startWatchdog = null;
       final bool unsteady = !metrics.isSteadyCadence && !metrics.isFirstStroke;
-      if (unsteady) {
+      // Count cadence per new compression stroke, not per 5 Hz heartbeat
+      // repeat. A repeated packet carries the same totalCompressions, so it
+      // must not flip-flop the warning counters or extend an unsteady run.
+      final bool newStroke = count > (_lastCount ?? 0);
+      if (unsteady && newStroke) {
         _unsteadyPackets += 1;
         _steadyPackets = 0;
-      } else {
+      } else if (!unsteady) {
         _unsteadyPackets = 0;
-        if (!metrics.isFirstStroke && count > 0) {
+        if (newStroke && !metrics.isFirstStroke) {
           _steadyPackets += 1;
         }
       }
