@@ -88,6 +88,13 @@ class BleController extends ChangeNotifier {
   int sessionPacketsLost = 0;
   int? _lastSequence;
 
+  // RQ2.2: Unique BLE packet tracking.
+  final Set<int> _trialUniqueSequences = <int>{};
+  int trialDuplicatePackets = 0;
+  int? trialFirstSequence;
+  int? trialLastSequence;
+bool _excludeRecoveryPackets = false;
+
   /// Timestamp of the most recent telemetry packet (null before first one).
   DateTime? lastPacketAt;
 
@@ -213,16 +220,54 @@ class BleController extends ChangeNotifier {
     }
   }
 
+  void beginResultsRecovery() {
+  _excludeRecoveryPackets = true;
+}
+
   void _onPacket(CprMetrics metrics) {
     lastPacketAt = DateTime.now();
+
     if (recording) {
-      sessionPackets.add(metrics);
-      _countLostPackets(metrics.sequence);
+  sessionPackets.add(metrics);
+
+  final bool researchPacket =
+      metrics.packetType == AppBleConfig.packetRealtime ||
+      metrics.packetType == AppBleConfig.packetFinalSummary;
+
+  final bool countForResearch =
+      researchPacket && !_excludeRecoveryPackets;
+
+      final int? sequence = metrics.sequence;
+
+      if (sequence != null && countForResearch) {
+        final bool isNew = _trialUniqueSequences.add(sequence);
+
+        if (isNew) {
+          trialFirstSequence ??= sequence;
+          trialLastSequence = sequence;
+          _countLostPackets(sequence);
+        } else {
+          trialDuplicatePackets++;
+        }
+      }
+
+      if (sessionPackets.length % 10 == 0) {
+        debugPrint(
+          '[BLE RX] Received: ${sessionPackets.length} '
+          '| Unique: ${_trialUniqueSequences.length} '
+          '| Duplicates: $trialDuplicatePackets '
+          '| Detected Lost: $sessionPacketsLost '
+          '| Sequence: ${metrics.sequence}',
+        );
+      }
     }
+
     if (!_packets.isClosed) {
       _packets.add(metrics);
     }
   }
+
+
 
   /// Adds the gap since the previous sequence number to [sessionPacketsLost].
   /// A very large jump is a firmware restart, not loss, and only re-anchors.
@@ -338,6 +383,12 @@ class BleController extends ChangeNotifier {
     sessionEndedAt = null;
     sessionPacketsLost = 0;
     _lastSequence = null;
+    _excludeRecoveryPackets = false;
+    
+    _trialUniqueSequences.clear();
+    trialDuplicatePackets = 0;
+    trialFirstSequence = null;
+    trialLastSequence = null;
   }
 
   /// Runs a packet through the normal fan-out without a device, so widget
@@ -354,14 +405,35 @@ class BleController extends ChangeNotifier {
     sessionEndedAt = null;
     sessionPacketsLost = 0;
     _lastSequence = null;
+    _excludeRecoveryPackets = false;
+
+    _trialUniqueSequences.clear();
+    trialDuplicatePackets = 0;
+    trialFirstSequence = null;
+    trialLastSequence = null;
+
   }
 
   /// Stop recording; returns the recorded packets.
+
+
   List<CprMetrics> stopRecording() {
     recording = false;
     sessionEndedAt = DateTime.now();
+
+    debugPrint(
+      '[BLE RX FINAL] Received: ${sessionPackets.length} '
+      '| Unique: ${_trialUniqueSequences.length} '
+      '| Duplicates: $trialDuplicatePackets '
+      '| Detected Lost: $sessionPacketsLost '
+      '| First Sequence: $trialFirstSequence '
+      '| Last Sequence: $trialLastSequence',
+    );
+
     return List<CprMetrics>.unmodifiable(sessionPackets);
   }
+
+
 
   Future<void> disconnect() async {
     _commandQueue.clear();

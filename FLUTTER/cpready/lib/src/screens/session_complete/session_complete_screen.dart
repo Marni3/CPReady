@@ -116,6 +116,10 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
     context.go(AppRoutes.home);
   }
 
+void _startAnotherSession(BuildContext context) {
+  context.push(AppRoutes.setup);
+}
+
   void _returnToHistory(BuildContext context) {
     if (context.canPop()) {
       context.pop();
@@ -327,6 +331,14 @@ class _SessionCompleteScreenState extends State<SessionCompleteScreen> {
                         onPressed: _retrying
                             ? null
                             : () => unawaited(_retryRetrieval()),
+                      ),
+                      SizedBox(height: AppSpacing.flowActionStackGap),
+                    ],
+                    if (_reason == SessionEndReason.completed &&
+                        _historySaved) ...<Widget>[
+                      FlatActionButton(
+                        label: 'Start Another Session',
+                        onPressed: () => _startAnotherSession(context),
                       ),
                       SizedBox(height: AppSpacing.flowActionStackGap),
                     ],

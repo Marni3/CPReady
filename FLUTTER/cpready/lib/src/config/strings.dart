@@ -570,9 +570,9 @@ class AppStrings {
   static const String sessionTrainee = 'Trainee Name';
 
   /// Labels for the summary metric rows.
-  static const String sessionRecoil = 'Recoil';
-  static const String sessionRate = 'Rate';
-  static const String sessionDepth = 'Depth';
+  static const String sessionRecoil = 'Average Recoil';
+  static const String sessionRate = 'Average Rate';
+  static const String sessionDepth = 'Mean Depth';
   static const String sessionCcf = 'CCF';
   static const String sessionCompressions = 'Compressions';
   static const String sessionDuration = 'Session Duration';

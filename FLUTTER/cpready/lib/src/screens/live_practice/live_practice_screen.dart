@@ -674,6 +674,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
   /// Sends GET_RESULTS and waits for a Type 4 summary.
   Future<CprMetrics?> _requestResults(BleController controller) async {
+    controller.beginResultsRecovery();
     final summaryFuture = controller.awaitPacketWhere(
       (m) => m.packetType == AppBleConfig.packetFinalSummary,
       timeout: AppDurations.getResultsTimeout,
@@ -925,18 +926,6 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                             ),
                           SizedBox(height: AppSpacing.liveTimerTopGap),
                           _TimerBlock(startedAt: _sessionStartAt),
-                          if (!_firstCompressionSeen) ...<Widget>[
-                            SizedBox(height: AppSpacing.liveNoticeTopGap),
-                            Text(
-                              AppStrings.liveWaitingForCompression,
-                              textAlign: TextAlign.center,
-                              style: AppTypography.style(
-                                size: AppTypography.liveTimerLabelSize,
-                                weight: FontWeight.normal,
-                                color: AppColors.liveLabelText,
-                              ),
-                            ),
-                          ],
                           if (latest?.isBenchMode ?? false) ...<Widget>[
                             SizedBox(height: AppSpacing.liveBenchBadgeTopGap),
                             const Center(child: BenchBadge()),
@@ -946,68 +935,195 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                             const _CadenceWarning(),
                           ],
                           SizedBox(height: AppSpacing.liveSectionTopGap),
-                          LayoutBuilder(
-                            builder:
-                                (BuildContext context, BoxConstraints bounds) {
-                              final Widget rate = _MetricSection(
-                                label: AppStrings.liveRateLabel,
-                                capsule: _capsule(
-                                  rateText(latest?.rateCpm),
-                                  rateRating(latest?.rateCpm),
-                                ),
-                              );
-                              final Widget recoil = _MetricSection(
-                                label: AppStrings.liveRecoilLabel,
-                                capsule: _capsule(
-                                  recoilText(latest?.recoilPercentage),
-                                  recoilRating(
-                                    latest?.recoilPercentage,
-                                    estimated:
-                                        latest?.isRecoilEstimated ?? false,
+                          Stack(
+                            alignment: Alignment.center,
+                            children: <Widget>[
+                              AnimatedOpacity(
+                                opacity: _firstCompressionSeen ? 1.0 : 0.30,
+                                duration: const Duration(milliseconds: 250),
+                                curve: Curves.easeInOut,
+                                child: IgnorePointer(
+                                  ignoring: !_firstCompressionSeen,
+                                  child: Column(
+                                    children: <Widget>[
+                                      LayoutBuilder(
+                                        builder: (
+                                          BuildContext context,
+                                          BoxConstraints bounds,
+                                        ) {
+                                          final Widget rate = _MetricSection(
+                                            label: AppStrings.liveRateLabel,
+                                            capsule: _capsule(
+                                              rateText(latest?.rateCpm),
+                                              rateRating(latest?.rateCpm),
+                                            ),
+                                          );
+
+                                          final Widget recoil = _MetricSection(
+                                            label: AppStrings.liveRecoilLabel,
+                                            capsule: _capsule(
+                                              recoilText(latest?.recoilPercentage),
+                                              recoilRating(
+                                                latest?.recoilPercentage,
+                                                estimated:
+                                                    latest?.isRecoilEstimated ?? false,
+                                              ),
+                                            ),
+                                          );
+
+                                          final double each =
+                                              (bounds.maxWidth -
+                                                  AppSpacing.liveSectionGap) /
+                                              2;
+
+                                          if (each < AppLayout.minSectionWidth) {
+                                            return Column(
+                                              children: <Widget>[
+                                                rate,
+                                                SizedBox(
+                                                  height:
+                                                      AppSpacing.liveSectionStackGap,
+                                                ),
+                                                recoil,
+                                              ],
+                                            );
+                                          }
+
+                                          return Row(
+                                            children: <Widget>[
+                                              Expanded(child: rate),
+                                              SizedBox(
+                                                width: AppSpacing.liveSectionGap,
+                                              ),
+                                              Expanded(child: recoil),
+                                            ],
+                                          );
+                                        },
+                                      ),
+
+                                      SizedBox(
+                                        height: AppSpacing.liveSectionStackGap,
+                                      ),
+
+                                      _MetricSection(
+                                        label: AppStrings.liveDepthLabel,
+                                        capsule: _capsule(
+                                          depthText(latest?.depthCm),
+                                          depthRating(latest?.depthCm),
+                                        ),
+                                      ),
+
+                                      SizedBox(
+                                        height: AppSpacing.liveSectionStackGap,
+                                      ),
+
+                                      Center(
+                                        child: _CompressionCounter(
+                                          count:
+                                              latest?.totalCompressions ?? 0,
+                                          active: _compressing,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                              );
-                              final double each = (bounds.maxWidth -
-                                      AppSpacing.liveSectionGap) /
-                                  2;
+                              ),
 
-                              if (each < AppLayout.minSectionWidth) {
-                                return Column(
-                                  children: <Widget>[
-                                    rate,
-                                    SizedBox(
-                                      height: AppSpacing.liveSectionStackGap,
+                              if (!_firstCompressionSeen)
+                                Positioned.fill(
+                                  child: Center(
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 18,
+                                      ),
+                                      child: Container(
+                                        width: double.infinity,
+                                        constraints: const BoxConstraints(
+                                          maxWidth: 340,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 22,
+                                          vertical: 26,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF174477),
+                                          borderRadius:
+                                              BorderRadius.circular(20),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black
+                                                  .withValues(alpha: 0.16),
+                                              blurRadius: 18,
+                                              offset: const Offset(0, 6),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: <Widget>[
+                                            const Icon(
+                                              Icons.pan_tool_alt_rounded,
+                                              size: 36,
+                                              color: Colors.white,
+                                            ),
+
+                                            const SizedBox(height: 14),
+
+                                            const Text(
+                                              'Start When Ready',
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 21,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+
+                                            const SizedBox(height: 10),
+
+                                            const Text(
+                                              'Begin chest compressions whenever '
+                                              "you're ready. The session timer "
+                                              'will start automatically.',
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                color: Color(0xFFE4F0FF),
+                                                fontSize: 13,
+                                                height: 1.5,
+                                              ),
+                                            ),
+
+                                            const SizedBox(height: 18),
+
+                                            const Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: <Widget>[
+                                                Icon(
+                                                  Icons.circle,
+                                                  size: 8,
+                                                  color: Color(0xFF9DD4FF),
+                                                ),
+                                                SizedBox(width: 8),
+                                                Flexible(
+                                                  child: Text(
+                                                    'Waiting for first compression',
+                                                    textAlign: TextAlign.center,
+                                                    style: TextStyle(
+                                                      color: Color(0xFFBEDFFF),
+                                                      fontSize: 11,
+                                                      fontWeight: FontWeight.w500,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
-                                    recoil,
-                                  ],
-                                );
-                              }
-
-                              return Row(
-                                children: <Widget>[
-                                  Expanded(child: rate),
-                                  SizedBox(
-                                    width: AppSpacing.liveSectionGap,
                                   ),
-                                  Expanded(child: recoil),
-                                ],
-                              );
-                            },
-                          ),
-                          SizedBox(height: AppSpacing.liveSectionStackGap),
-                          _MetricSection(
-                            label: AppStrings.liveDepthLabel,
-                            capsule: _capsule(
-                              depthText(_displayDepthCm ?? latest?.depthCm),
-                              depthRating(_displayDepthCm ?? latest?.depthCm),
-                            ),
-                          ),
-                          SizedBox(height: AppSpacing.liveSectionStackGap),
-                          Center(
-                            child: _CompressionCounter(
-                              count: latest?.totalCompressions ?? 0,
-                              active: _compressing,
-                            ),
+                                ),
+                            ],
                           ),
                         ],
                       ),
