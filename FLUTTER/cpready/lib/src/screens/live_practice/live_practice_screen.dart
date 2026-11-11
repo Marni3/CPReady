@@ -128,6 +128,12 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   /// Voice cues are on by default; the header toggle mutes them per session.
   bool _muted = false;
 
+  /// Consecutive real-time readings that are below the minimum target depth
+  /// ("red" depth). Once two are already in sequence, the next red reading
+  /// plays the audio helper so the trainee hears coaching sooner than the
+  /// sustained-error rule alone would allow.
+  int _consecutiveRedDepth = 0;
+
   /// Metronome on by default; the header toggle silences it and the choice is
   /// remembered for the next session.
   bool _metronomeEnabled = AppMetronome.defaultEnabled;
@@ -656,6 +662,30 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
           );
         }
         unawaited(_coach?.play(cue));
+      }
+
+      // Consecutive red-depth helper: once two red readings are already in
+      // sequence, the next red depth reading plays the audio helper so the
+      // trainee hears coaching sooner than the sustained-error rule allows.
+      final bool depthRed =
+          metrics.depthCm > 0 && metrics.depthCm < AppTargets.depthMinCm;
+      if (depthRed) {
+        _consecutiveRedDepth += 1;
+      } else {
+        _consecutiveRedDepth = 0;
+      }
+      if (_consecutiveRedDepth >= 3 &&
+          !_muted &&
+          !_ending &&
+          !_finished &&
+          _cueGate.allows(AppBleConfig.cuePushHarder)) {
+        if (kDebugMode) {
+          debugPrint(
+            'Consecutive red depth ($_consecutiveRedDepth) plays push_harder at '
+            '${DateTime.now().toIso8601String()}',
+          );
+        }
+        unawaited(_coach?.play(AppBleConfig.cuePushHarder));
       }
     }
   }

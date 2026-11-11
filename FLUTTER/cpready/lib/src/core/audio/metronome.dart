@@ -13,6 +13,10 @@ import 'package:flutter/foundation.dart';
 import '../../config/config.dart';
 import 'audio_context.dart';
 
+/// Volume applied to every metronome tick so it stays consistent and is never
+/// lowered when a coaching cue plays.
+const double kMetronomeVolume = AppMetronome.volume;
+
 /// Plays one metronome beat on demand.
 abstract class Metronome {
   /// Loads the tick so the first beat starts without decode delay.
@@ -72,6 +76,7 @@ class AssetMetronome implements Metronome {
       player = AudioPlayer();
       await player.setAudioContext(AppAudioContext.metronome);
       await player.setReleaseMode(ReleaseMode.stop);
+      await player.setVolume(kMetronomeVolume);
       await player.setSource(
         AssetSource(_sourcePath(AppAssets.metronomeClick)),
       );
@@ -106,6 +111,7 @@ class AssetMetronome implements Metronome {
     final int generation = ++_generation;
     try {
       await player.seek(Duration.zero);
+      await player.setVolume(kMetronomeVolume);
       if (_disposed || generation != _generation) return;
       await player.resume();
     } catch (error) {

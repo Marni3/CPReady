@@ -110,6 +110,7 @@ class AssetVoiceCoach implements VoiceCoach {
       player = AudioPlayer();
       await player.setAudioContext(AppAudioContext.voiceCues);
       await player.setReleaseMode(ReleaseMode.stop);
+      await player.setVolume(1.0);
       await player.setSource(AssetSource(_sourcePath(bundlePath)));
 
       if (_disposed) {

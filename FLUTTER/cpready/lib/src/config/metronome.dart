@@ -23,4 +23,8 @@ class AppMetronome {
   /// Time between two beats at [bpm].
   static Duration beatInterval(int bpm) =>
       Duration(milliseconds: (60000 / bpm).round());
+
+  /// Metronome tick volume, kept consistent and never lowered for voice cues.
+  /// Range 0.0 (silent) to 1.0 (full).
+  static const double volume = 1.0;
 }
