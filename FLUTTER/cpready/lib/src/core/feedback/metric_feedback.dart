@@ -78,7 +78,7 @@ String rateText(int? cpm) =>
 /// resolution the firmware sends.
 String depthText(double? cm) => (cm == null || cm <= 0.0)
     ? AppStrings.liveNoValue
-    : '${cm.toStringAsFixed(1)}${AppStrings.liveDepthUnit}';
+    : '${cm.toStringAsFixed(2)}${AppStrings.liveDepthUnit}';
 
 /// "Full" / "Partial", or the placeholder.
 String recoilText(int? percent) {
