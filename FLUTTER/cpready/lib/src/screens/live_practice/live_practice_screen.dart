@@ -1090,58 +1090,29 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                                   ignoring: !_firstCompressionSeen,
                                   child: Column(
                                     children: <Widget>[
-                                      LayoutBuilder(
-                                        builder: (
-                                          BuildContext context,
-                                          BoxConstraints bounds,
-                                        ) {
-                                          final Widget rate = _MetricSection(
-                                            label: AppStrings.liveRateLabel,
-                                            capsule: _capsule(
-                                              rateText(latest?.rateCpm),
-                                              rateRating(latest?.rateCpm),
-                                            ),
-                                          );
-
-                                          final Widget recoil = _MetricSection(
-                                            label: AppStrings.liveRecoilLabel,
-                                            capsule: _capsule(
-                                              recoilText(latest?.recoilPercentage),
-                                              liveRecoilRating(
-                                                latest?.recoilPercentage,
-                                              ),
-                                            ),
-                                          );
-
-                                          final double each =
-                                              (bounds.maxWidth -
-                                                  AppSpacing.liveSectionGap) /
-                                              2;
-
-                                          if (each < AppLayout.minSectionWidth) {
-                                            return Column(
-                                              children: <Widget>[
-                                                rate,
-                                                SizedBox(
-                                                  height:
-                                                      AppSpacing.liveSectionStackGap,
-                                                ),
-                                                recoil,
-                                              ],
-                                            );
-                                          }
-
-                                          return Row(
-                                            children: <Widget>[
-                                              Expanded(child: rate),
-                                              SizedBox(
-                                                width: AppSpacing.liveSectionGap,
-                                              ),
-                                              Expanded(child: recoil),
-                                            ],
-                                          );
-                                        },
+                                Row(
+                                  children: <Widget>[
+                                    Expanded(
+                                      child: _MetricSection(
+                                        label: AppStrings.liveRateLabel,
+                                        capsule: _capsule(
+                                          rateText(latest?.rateCpm),
+                                          rateRating(latest?.rateCpm),
+                                        ),
                                       ),
+                                    ),
+                                    SizedBox(width: AppSpacing.liveSectionGap),
+                                    Expanded(
+                                      child: _MetricSection(
+                                        label: AppStrings.liveRecoilLabel,
+                                        capsule: _capsule(
+                                          recoilText(latest?.recoilPercentage),
+                                          liveRecoilRating(latest?.recoilPercentage),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
 
                                       SizedBox(
                                         height: AppSpacing.liveSectionStackGap,
@@ -1272,11 +1243,17 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                     ),
                   ),
                   SizedBox(height: AppSpacing.liveSectionStackGap),
-                  HoldFillButton(
-                    label: AppStrings.liveHoldEndSession,
-                    duration: AppDurations.holdSession,
-                    enabled: !_ending,
-                    onComplete: _endSession,
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _ending ? null : _endSession,
+                    child: IgnorePointer(
+                      child: HoldFillButton(
+                        label: 'Tap to End Session',
+                        duration: AppDurations.holdSession,
+                        enabled: !_ending,
+                        onComplete: _endSession,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1314,9 +1291,14 @@ class _StatusHeader extends StatelessWidget {
         children: <Widget>[
           Row(
             children: <Widget>[
-              Expanded(
+            Expanded(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
                 child: Text(
                   AppStrings.livePracticeTitle,
+                  maxLines: 1,
+                  softWrap: false,
                   style: AppTypography.style(
                     size: AppTypography.liveTitleSize,
                     weight: AppTypography.headingWeight,
@@ -1324,51 +1306,59 @@ class _StatusHeader extends StatelessWidget {
                   ),
                 ),
               ),
-              Semantics(
-                button: true,
-                label:
-                    muted ? AppStrings.liveUnmuteCues : AppStrings.liveMuteCues,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: onToggleMute,
-                  child: SizedBox(
-                    width: AppSizes.liveMuteTapSize,
-                    height: AppSizes.liveMuteTapSize,
-                    child: Icon(
-                      muted ? Icons.volume_off : Icons.volume_up,
-                      size: AppSizes.liveMuteIconSize,
-                      color: AppColors.liveLabelText,
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(width: AppSpacing.small),
-              Semantics(
-                button: true,
-                label: metronomeEnabled
-                    ? AppStrings.liveMetronomeDisable
-                    : AppStrings.liveMetronomeEnable,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: onToggleMetronome,
-                  child: SizedBox(
-                    width: AppSizes.liveMuteTapSize,
-                    height: AppSizes.liveMuteTapSize,
-                    // The tap box sets the touch target only. Centering keeps its
-                    // tight constraints off the glyph, which otherwise filled
-                    // the box and ignored its own size.
-                    child: Center(
-                      child: MetronomeIcon(
-                        enabled: metronomeEnabled,
-                        size: AppSizes.liveMetronomeIconSize,
-                        color: AppColors.liveLabelText,
+            ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+                      Semantics(
+                        button: true,
+                        label:
+                            muted ? AppStrings.liveUnmuteCues : AppStrings.liveMuteCues,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onToggleMute,
+                          child: SizedBox(
+                            width: 20,
+                            height: AppSizes.liveMuteTapSize,
+                            child: Center(
+                              child: Icon(
+                                muted ? Icons.volume_off : Icons.volume_up,
+                                size: AppSizes.liveMuteIconSize,
+                                color: AppColors.liveLabelText,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                ),
-              ),
+                      const SizedBox(width: 4),
+                      Semantics(
+                        button: true,
+                        label: metronomeEnabled
+                            ? AppStrings.liveMetronomeDisable
+                            : AppStrings.liveMetronomeEnable,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onToggleMetronome,
+                          child: SizedBox(
+                            width: 36,
+                            height: AppSizes.liveMuteTapSize,
+                            // The tap box sets the touch target only. Centering keeps its
+                            // tight constraints off the glyph, which otherwise filled
+                            // the box and ignored its own size.
+                            child: Center(
+                              child: MetronomeIcon(
+                                enabled: metronomeEnabled,
+                                size: AppSizes.liveMetronomeIconSize,
+                                color: AppColors.liveLabelText,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ), // Closes the new icon group
             ],
-          ),
+          ), // Closes the main header Row
           SizedBox(height: AppSpacing.liveStatusGap),
           _StatusLine(controller: controller),
         ],

@@ -106,23 +106,22 @@ class _HoldFillButtonState extends State<HoldFillButton>
                     ),
                   ),
                 ),
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: AppSpacing.flowActionLabelInsetH,
-                    vertical: AppSpacing.flowActionLabelInsetV,
-                  ),
-                  child: Center(
-                    child: Text(
-                      widget.label,
-                      textAlign: TextAlign.center,
-                      style: AppTypography.style(
-                        size: AppTypography.flowActionSize,
-                        weight: AppTypography.headingWeight,
-                        color: AppColors.homeWelcomeText,
-                      ),
-                    ),
-                  ),
-                ),
+Center(
+  child: SizedBox(
+    height: AppSizes.liveHoldButtonHeight,
+    child: Center(
+      child: Text(
+        widget.label,
+        textAlign: TextAlign.center,
+        style: AppTypography.style(
+          size: AppTypography.flowActionSize,
+          weight: AppTypography.headingWeight,
+          color: AppColors.homeWelcomeText,
+        ),
+      ),
+    ),
+  ),
+),
               ],
             ),
           ),
