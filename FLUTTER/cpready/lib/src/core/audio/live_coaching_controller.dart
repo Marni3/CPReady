@@ -144,8 +144,9 @@ class LiveCoachingController {
   /// cues are suppressed and depth streaks are cleared so unsteady transition
   /// spikes/dips never trigger false depth coaching.
   int evaluate(
-    CprMetrics metrics, {
-    bool cadenceWarningActive = false,
+  CprMetrics metrics, {
+  bool cadenceWarningActive = false,
+  bool allowPrompt = true,
   }) {
     if (metrics.packetType != AppBleConfig.packetRealtime) return 0;
 
@@ -248,6 +249,10 @@ class LiveCoachingController {
     } else {
       _targetStartAt = null;
     }
+
+    // Keep tracking errors while audio is busy or muted,
+    // but do not consume the cooldown or reset error streaks.
+    if (!allowPrompt) return 0;
 
     // 3. Enforce minimum cooldown window between any two spoken prompts
     if (now.difference(_lastPromptAt!).inMilliseconds <

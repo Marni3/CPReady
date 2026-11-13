@@ -18,4 +18,7 @@ class RecordingVoiceCoach implements VoiceCoach {
 
   @override
   Future<void> dispose() async {}
+
+  @override
+  bool get isBusy => false;
 }

@@ -128,11 +128,7 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   /// Voice cues are on by default; the header toggle mutes them per session.
   bool _muted = false;
 
-  /// Consecutive real-time readings that are below the minimum target depth
-  /// ("red" depth). Once two are already in sequence, the next red reading
-  /// plays the audio helper so the trainee hears coaching sooner than the
-  /// sustained-error rule alone would allow.
-  int _consecutiveRedDepth = 0;
+
 
   /// Metronome on by default; the header toggle silences it and the choice is
   /// remembered for the next session.
@@ -144,7 +140,8 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   late final Metronome _metronome = widget.metronome ?? AssetMetronome();
 
   Timer? _beatTimer;
-  DateTime? _beatAnchor;
+  Stopwatch? _beatClock;
+  int _nextBeatNumber = 0;
   bool _metronomeRunning = false;
 
   /// App-side dynamic voice coaching engine (suppresses depth cues when unsteady).
@@ -629,63 +626,66 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
       return;
     }
 
-    // Dynamic app-side voice coaching (with fallback to firmware audioPromptCode
-    // for legacy firmware or synthetic test packets). Depth cues are suppressed
-    // while cadence is unsteady so the user stabilizes rhythm first.
+   
+    // Dynamic app-side voice coaching.
+    // Only one instruction may play at a time.
+    // Continue tracking errors while audio is busy.
     if (realtime) {
-      final int cue;
-      final bool newCue;
-      if (metrics.audioPromptCode != 0) {
-        final bool suppressLegacyDepth = _cadenceWarning &&
-            (metrics.audioPromptCode == AppBleConfig.cuePushHarder ||
-                metrics.audioPromptCode == AppBleConfig.cuePushShallower);
-        cue = suppressLegacyDepth ? 0 : metrics.audioPromptCode;
-        newCue = cue != 0 && cue != _previousCueCode;
-        _previousCueCode = metrics.audioPromptCode;
-      } else {
-        _previousCueCode = 0;
-        cue = _coachingController.evaluate(
-          metrics,
-          cadenceWarningActive: _cadenceWarning,
-        );
-        newCue = cue != 0;
-      }
-      if (newCue && cue != 0 && kDebugMode) {
-        debugPrint(
-          'Voice cue $cue received at ${DateTime.now().toIso8601String()}',
-        );
-      }
-      if (newCue && !_muted && !_ending && !_finished && _cueGate.allows(cue)) {
-        if (kDebugMode) {
-          debugPrint(
-            'Voice cue $cue accepted at ${DateTime.now().toIso8601String()}',
-          );
-        }
-        unawaited(_coach?.play(cue));
-      }
-
-      // Consecutive red-depth helper: once two red readings are already in
-      // sequence, the next red depth reading plays the audio helper so the
-      // trainee hears coaching sooner than the sustained-error rule allows.
-      final bool depthRed =
-          metrics.depthCm > 0 && metrics.depthCm < AppTargets.depthMinCm;
-      if (depthRed) {
-        _consecutiveRedDepth += 1;
-      } else {
-        _consecutiveRedDepth = 0;
-      }
-      if (_consecutiveRedDepth >= 3 &&
+      final bool canSpeak =
           !_muted &&
           !_ending &&
           !_finished &&
-          _cueGate.allows(AppBleConfig.cuePushHarder)) {
+          _coach != null &&
+          !_coach!.isBusy;
+
+      final int cue;
+      final bool newCue;
+
+      if (metrics.audioPromptCode != 0) {
+        final bool suppressLegacyDepth = _cadenceWarning &&
+            (metrics.audioPromptCode ==
+                    AppBleConfig.cuePushHarder ||
+                metrics.audioPromptCode ==
+                    AppBleConfig.cuePushShallower);
+
+        cue = suppressLegacyDepth
+            ? 0
+            : metrics.audioPromptCode;
+
+        newCue = cue != 0 &&
+            cue != _previousCueCode;
+
+        _previousCueCode = metrics.audioPromptCode;
+      } else {
+        _previousCueCode = 0;
+
+        cue = _coachingController.evaluate(
+          metrics,
+          cadenceWarningActive: _cadenceWarning,
+          allowPrompt: canSpeak,
+        );
+
+        newCue = cue != 0;
+      }
+
+      if (newCue && cue != 0 && kDebugMode) {
+        debugPrint(
+          'Voice cue $cue received at '
+          '${DateTime.now().toIso8601String()}',
+        );
+      }
+
+      if (newCue &&
+          canSpeak &&
+          _cueGate.allows(cue)) {
         if (kDebugMode) {
           debugPrint(
-            'Consecutive red depth ($_consecutiveRedDepth) plays push_harder at '
+            'Voice cue $cue accepted at '
             '${DateTime.now().toIso8601String()}',
           );
         }
-        unawaited(_coach?.play(AppBleConfig.cuePushHarder));
+
+       unawaited(_coach!.play(cue));
       }
     }
   }
@@ -711,9 +711,9 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     _syncMetronome();
   }
 
-  /// Runs the beat only while: enabled, past the first compression, and
-  /// compressing right now. A voice cue plays over the beat, so it never
-  /// pauses the metronome.
+  /// Runs the metronome continuously after the first compression.
+  /// It stops when disabled or when the session ends.
+  /// Voice coaching does not interrupt the beat.
   void _syncMetronome() {
     if (!mounted || _finished || _ending) {
       _stopMetronome();
@@ -721,9 +721,10 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     }
 
     final bool shouldRun =
-        _metronomeEnabled && _firstCompressionSeen && _compressing;
+        _metronomeEnabled && _firstCompressionSeen;
 
     if (shouldRun == _metronomeRunning) return;
+
     if (shouldRun) {
       _startMetronome();
     } else {
@@ -731,47 +732,72 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     }
   }
 
-  void _startMetronome() {
-    _beatTimer?.cancel();
-    _metronomeRunning = true;
-    _beatAnchor = DateTime.now();
-    unawaited(_metronome.tick());
-    _scheduleNextBeat();
+ 
+void _startMetronome() {
+  _beatTimer?.cancel();
+
+  _metronomeRunning = true;
+  _beatClock = Stopwatch()..start();
+  _nextBeatNumber = 1;
+
+  unawaited(_metronome.tick());
+  _scheduleNextBeat();
+}
+
+void _scheduleNextBeat() {
+  _beatTimer?.cancel();
+
+  final Stopwatch? clock = _beatClock;
+  if (!mounted || !_metronomeRunning || clock == null) return;
+
+  final int intervalUs =
+      AppMetronome.beatInterval(widget.metronomeTempoBpm).inMicroseconds;
+  if (intervalUs <= 0) return;
+
+  final int elapsedUs = clock.elapsedMicroseconds;
+
+  while (_nextBeatNumber * intervalUs <= elapsedUs) {
+    _nextBeatNumber++;
   }
 
-  /// Schedules the next beat from [_beatAnchor] rather than from the previous
-  /// callback, so timer overhead never accumulates into a slower tempo.
-  void _scheduleNextBeat() {
-    _beatTimer?.cancel();
-    final DateTime? anchor = _beatAnchor;
-    if (!mounted || !_metronomeRunning || anchor == null) return;
+  final int targetUs = _nextBeatNumber * intervalUs;
+  final int waitUs = targetUs - elapsedUs;
 
-    final int intervalUs =
-        AppMetronome.beatInterval(widget.metronomeTempoBpm).inMicroseconds;
-    if (intervalUs <= 0) return;
+  _beatTimer = Timer(Duration(microseconds: waitUs), () {
+    if (!mounted || !_metronomeRunning) return;
 
-    final int elapsedUs = DateTime.now().difference(anchor).inMicroseconds;
-    final Duration wait =
-        Duration(microseconds: intervalUs - (elapsedUs % intervalUs));
+    _syncMetronome();
+    if (!mounted || !_metronomeRunning) return;
 
-    _beatTimer = Timer(wait, () {
-      if (!mounted || !_metronomeRunning) return;
-      // A pause or a voice cue may have started since this beat was scheduled.
-      _syncMetronome();
-      if (!mounted || !_metronomeRunning) return;
+    final Stopwatch? activeClock = _beatClock;
+    if (activeClock == null) return;
+
+    final int actualUs = activeClock.elapsedMicroseconds;
+    final int latenessUs =
+        actualUs - (_nextBeatNumber * intervalUs);
+
+    if (latenessUs < intervalUs ~/ 4) {
       unawaited(_metronome.tick());
-      _scheduleNextBeat();
-    });
-  }
+    }
 
-  void _stopMetronome() {
-    _beatTimer?.cancel();
-    _beatTimer = null;
-    _beatAnchor = null;
-    if (!_metronomeRunning) return;
-    _metronomeRunning = false;
-    unawaited(_metronome.stop());
-  }
+    _nextBeatNumber++;
+    _scheduleNextBeat();
+  });
+}
+
+void _stopMetronome() {
+  _beatTimer?.cancel();
+  _beatTimer = null;
+
+  _beatClock?.stop();
+  _beatClock = null;
+  _nextBeatNumber = 0;
+
+  if (!_metronomeRunning) return;
+
+  _metronomeRunning = false;
+  unawaited(_metronome.stop());
+}
 
   void _onControllerChanged() {
     if (!mounted || _finished) return;
