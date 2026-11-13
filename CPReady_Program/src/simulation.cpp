@@ -71,6 +71,16 @@ static String      simSerialLine     = "";
 // True while the running K is the temporary default of a 15 s calibration trial.
 static bool        simKTrialOverride = false;
 
+// --- Test mode ----------------------------------------------------------------
+
+// Test mode runs specific input values through the production tracker so
+// classification, color, and audio feedback can be observed. Each value
+// appears three times per testing session.
+static bool        simTestMode       = false;
+static uint8_t     simTestPhaseIndex = 0;
+static const SimConfig::Phase* simTestPhases = SimConfig::TEST_PHASES;
+static uint8_t     simTestPhaseCount = SimConfig::TEST_PHASE_COUNT;
+
 static void simBeginKTrialOverride() {
     simTracker.resetCalibrationToDefault();   // RAM only
     simKTrialOverride = true;
@@ -213,7 +223,24 @@ static void startSimSession(uint32_t now) {
         simRestoreSavedK();
     }
     simTracker.startSession(now);
-    simVest.begin(now, steadyTrial);
+
+    if (simTestMode) {
+        // Test mode: run through all test phases. Duration covers every phase.
+        uint32_t totalSec = 0;
+        for (uint8_t i = 0; i < simTestPhaseCount; i++) {
+            totalSec += simTestPhases[i].durationMs / 1000;
+        }
+        simPracticeDurationSec = totalSec;
+        simVest.begin(now, false, simTestPhases, simTestPhaseCount);
+        Serial.printf("[FLOW] Test session started: %u phases | %u s\n",
+                      (unsigned)simTestPhaseCount, (unsigned)simPracticeDurationSec);
+    } else {
+        simVest.begin(now, steadyTrial);
+        Serial.printf("[FLOW] Session started: %s | depth K %.2f | duration %u s\n",
+                      steadyTrial ? "steady depth trial" : "cue scenario",
+                      simTracker.getDepthK(), (unsigned)simPracticeDurationSec);
+    }
+
     simTelemetry.resetCounters();
 
     simLastNotifyMs     = now;
@@ -222,10 +249,6 @@ static void startSimSession(uint32_t now) {
     simLastPhase        = -1;
     simLastLoggedCue    = PROMPT_NONE;
     simState            = DeviceState::ACTIVE_SESSION;
-
-    Serial.printf("[FLOW] Session started: %s | depth K %.2f | duration %u s\n",
-                  steadyTrial ? "steady depth trial" : "cue scenario",
-                  simTracker.getDepthK(), (unsigned)simPracticeDurationSec);
 }
 
 /** Finalises the tracker and publishes the session summary. */
@@ -565,9 +588,57 @@ static void handleSerialCommand(String line) {
             Serial.println("[SIM] Cue code must be 1..6.");
         }
     }
+    else if (line == "SIM:TEST:DEPTH") {
+        simTestMode = true;
+        simTestPhases = &SimConfig::TEST_PHASES[0];
+        simTestPhaseCount = 12;
+        simTestPhaseIndex = 0;
+        Serial.println("[TEST] Depth test mode: 4.99cm / 5.00cm / 5.50cm / 6.50cm (3x each). Send SIM:START.");
+    }
+    else if (line == "SIM:TEST:RATE") {
+        simTestMode = true;
+        simTestPhases = &SimConfig::TEST_PHASES[12];
+        simTestPhaseCount = 12;
+        simTestPhaseIndex = 0;
+        Serial.println("[TEST] Rate test mode: 80 / 100 / 110 / 130 cpm (3x each). Send SIM:START.");
+    }
+    else if (line == "SIM:TEST:RECOIL") {
+        simTestMode = true;
+        simTestPhases = &SimConfig::TEST_PHASES[24];
+        simTestPhaseCount = 6;
+        simTestPhaseIndex = 0;
+        Serial.println("[TEST] Recoil test mode: Full / Partial (3x each). Send SIM:START.");
+    }
+    else if (line == "SIM:TEST:CCF") {
+        simTestMode = true;
+        simTestPhases = &SimConfig::TEST_PHASES[30];
+        simTestPhaseCount = 9;
+        simTestPhaseIndex = 0;
+        Serial.println("[TEST] CCF test mode: 50% / 70% / 85% (3x each). Send SIM:START.");
+    }
+    else if (line == "SIM:TEST:ALL") {
+        simTestMode = true;
+        simTestPhases = SimConfig::TEST_PHASES;
+        simTestPhaseCount = SimConfig::TEST_PHASE_COUNT;
+        simTestPhaseIndex = 0;
+        Serial.println("[TEST] All test mode: depth / rate / recoil / CCF (3x each). Send SIM:START.");
+    }
+    else if (line == "SIM:TEST:INVALID") {
+        simCalibrationMotion = true;
+        Serial.println("[TEST] Invalid sensor mode: calibration motion injection enabled. Send SIM:CALIB to trigger failure.");
+    }
+    else if (line == "SIM:TEST:STOP") {
+        simTestMode = false;
+        simTestPhases = SimConfig::TEST_PHASES;
+        simTestPhaseCount = SimConfig::TEST_PHASE_COUNT;
+        simTestPhaseIndex = 0;
+        Serial.println("[TEST] Test mode disabled.");
+    }
     else {
         Serial.println("[SIM] Commands: SIM:STATUS | SIM:CALIB | SIM:START | SIM:STOP | "
-                       "SIM:CUE:<1-6> | SIM:CALIB:FAIL | SIM:CALIB:OK");
+                       "SIM:CUE:<1-6> | SIM:CALIB:FAIL | SIM:CALIB:OK | "
+                       "SIM:TEST:DEPTH | SIM:TEST:RATE | SIM:TEST:RECOIL | "
+                       "SIM:TEST:CCF | SIM:TEST:ALL | SIM:TEST:INVALID | SIM:TEST:STOP");
     }
 }
 
@@ -646,13 +717,24 @@ static void updateActiveSession(uint32_t now, uint32_t nowMicros) {
     const uint8_t phaseIndex = simVest.phaseIndexAt(now);
     if ((int8_t)phaseIndex != simLastPhase) {
         simLastPhase = (int8_t)phaseIndex;
-        const SimConfig::Phase& phase = SimConfig::PHASES[phaseIndex];
-        Serial.printf("[SIM] Phase %u/%u: %s (%u cpm, %.1f cm)\n",
-                      (unsigned)(phaseIndex + 1),
-                      (unsigned)SimConfig::PHASE_COUNT,
-                      phase.label,
-                      (unsigned)phase.rateCpm,
-                      phase.depthCm);
+        if (simTestMode) {
+            const SimConfig::Phase& phase = simTestPhases[phaseIndex];
+            Serial.printf("[TEST] Phase %u/%u: %s (%u cpm, %.1f cm, recoil %.0f%%)\n",
+                          (unsigned)(phaseIndex + 1),
+                          (unsigned)simTestPhaseCount,
+                          phase.label,
+                          (unsigned)phase.rateCpm,
+                          phase.depthCm,
+                          (double)(phase.recoilFraction * 100.0f));
+        } else {
+            const SimConfig::Phase& phase = SimConfig::PHASES[phaseIndex];
+            Serial.printf("[SIM] Phase %u/%u: %s (%u cpm, %.1f cm)\n",
+                          (unsigned)(phaseIndex + 1),
+                          (unsigned)SimConfig::PHASE_COUNT,
+                          phase.label,
+                          (unsigned)phase.rateCpm,
+                          phase.depthCm);
+        }
     }
 
     const float rawNetG = simVest.netAccelAt(now);
@@ -753,7 +835,9 @@ void setup() {
     Serial.printf("[OK] BLE GATT server advertising as '%s'.\n", CPReadyConfig::BLE_DEVICE_NAME);
     Serial.println("[SIM] No sensors required.");
     Serial.println("[SIM] Console: SIM:STATUS | SIM:CALIB | SIM:START | SIM:STOP | "
-                   "SIM:CUE:<1-6> | SIM:CALIB:FAIL | SIM:CALIB:OK");
+                   "SIM:CUE:<1-6> | SIM:CALIB:FAIL | SIM:CALIB:OK | "
+                   "SIM:TEST:DEPTH | SIM:TEST:RATE | SIM:TEST:RECOIL | "
+                   "SIM:TEST:CCF | SIM:TEST:ALL | SIM:TEST:INVALID | SIM:TEST:STOP");
 }
 
 void loop() {

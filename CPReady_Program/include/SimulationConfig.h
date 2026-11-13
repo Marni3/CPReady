@@ -24,6 +24,9 @@ struct Phase {
     float       depthCm;     // Chest displacement of each stroke.
     uint16_t    durationMs;  // Time this phase is held.
     const char* label;
+    float       pushFraction;     // Fraction of cycle spent pushing down (default 0.35).
+    float       releaseFraction;  // Fraction of cycle spent releasing (default 0.35).
+    float       recoilFraction;   // 1.0 = full release to baseline, <1.0 = partial release (default 1.0).
 };
 
 /**
@@ -44,15 +47,75 @@ struct Phase {
  * expired before the next phase begins, so each error produces one prompt.
  */
 constexpr Phase PHASES[] = {
-    {110, 5.5f,  5000, "warm-up"},
-    {110, 4.0f,  7000, "shallow"},
-    {110, 7.0f,  7000, "deep"},
-    { 85, 5.5f,  7000, "slow"},
-    {145, 5.5f,  7000, "fast"},
-    {110, 5.5f, 20000, "good"},
+    {110, 5.5f,  5000, "warm-up",    0.35f, 0.35f, 1.0f},
+    {110, 4.0f,  7000, "shallow",    0.35f, 0.35f, 1.0f},
+    {110, 7.0f,  7000, "deep",       0.35f, 0.35f, 1.0f},
+    { 85, 5.5f,  7000, "slow",       0.35f, 0.35f, 1.0f},
+    {145, 5.5f,  7000, "fast",       0.35f, 0.35f, 1.0f},
+    {110, 5.5f, 20000, "good",       0.35f, 0.35f, 1.0f},
+};
+
+/**
+ * Test phases for validating specific input values through the production
+ * CompressionTracker algorithm. Each phase runs long enough to observe
+ * classification, corresponding color, and audio feedback. Each value appears
+ * three times per testing session.
+ *
+ * Values are not hardcoded: the synthetic acceleration signal is processed by
+ * the same tracker logic that runs on the vest, so classification, color, and
+ * audio feedback are genuinely computed, not printed.
+ */
+constexpr Phase TEST_PHASES[] = {
+    // Depth tests - each value 3x per session
+    {110, 4.99f, 4000, "Depth 4.99cm (Shallow)", 0.35f, 0.35f, 1.0f},
+    {110, 4.99f, 4000, "Depth 4.99cm (Shallow)", 0.35f, 0.35f, 1.0f},
+    {110, 4.99f, 4000, "Depth 4.99cm (Shallow)", 0.35f, 0.35f, 1.0f},
+    {110, 5.00f, 4000, "Depth 5.00cm (Target)", 0.35f, 0.35f, 1.0f},
+    {110, 5.00f, 4000, "Depth 5.00cm (Target)", 0.35f, 0.35f, 1.0f},
+    {110, 5.00f, 4000, "Depth 5.00cm (Target)", 0.35f, 0.35f, 1.0f},
+    {110, 5.50f, 4000, "Depth 5.50cm (Target)", 0.35f, 0.35f, 1.0f},
+    {110, 5.50f, 4000, "Depth 5.50cm (Target)", 0.35f, 0.35f, 1.0f},
+    {110, 5.50f, 4000, "Depth 5.50cm (Target)", 0.35f, 0.35f, 1.0f},
+    {110, 6.50f, 4000, "Depth 6.50cm (Deep)", 0.35f, 0.35f, 1.0f},
+    {110, 6.50f, 4000, "Depth 6.50cm (Deep)", 0.35f, 0.35f, 1.0f},
+    {110, 6.50f, 4000, "Depth 6.50cm (Deep)", 0.35f, 0.35f, 1.0f},
+
+    // Rate tests - each value 3x per session
+    {80, 5.5f, 4000, "Rate 80cpm (Slow)", 0.35f, 0.35f, 1.0f},
+    {80, 5.5f, 4000, "Rate 80cpm (Slow)", 0.35f, 0.35f, 1.0f},
+    {80, 5.5f, 4000, "Rate 80cpm (Slow)", 0.35f, 0.35f, 1.0f},
+    {100, 5.5f, 4000, "Rate 100cpm (Target)", 0.35f, 0.35f, 1.0f},
+    {100, 5.5f, 4000, "Rate 100cpm (Target)", 0.35f, 0.35f, 1.0f},
+    {100, 5.5f, 4000, "Rate 100cpm (Target)", 0.35f, 0.35f, 1.0f},
+    {110, 5.5f, 4000, "Rate 110cpm (Target)", 0.35f, 0.35f, 1.0f},
+    {110, 5.5f, 4000, "Rate 110cpm (Target)", 0.35f, 0.35f, 1.0f},
+    {110, 5.5f, 4000, "Rate 110cpm (Target)", 0.35f, 0.35f, 1.0f},
+    {130, 5.5f, 4000, "Rate 130cpm (Fast)", 0.35f, 0.35f, 1.0f},
+    {130, 5.5f, 4000, "Rate 130cpm (Fast)", 0.35f, 0.35f, 1.0f},
+    {130, 5.5f, 4000, "Rate 130cpm (Fast)", 0.35f, 0.35f, 1.0f},
+
+    // Recoil tests - each value 3x per session
+    {110, 5.5f, 4000, "Recoil Full (OK)", 0.35f, 0.35f, 1.0f},
+    {110, 5.5f, 4000, "Recoil Full (OK)", 0.35f, 0.35f, 1.0f},
+    {110, 5.5f, 4000, "Recoil Full (OK)", 0.35f, 0.35f, 1.0f},
+    {110, 5.5f, 4000, "Recoil Partial (Bad)", 0.35f, 0.35f, 0.3f},
+    {110, 5.5f, 4000, "Recoil Partial (Bad)", 0.35f, 0.35f, 0.3f},
+    {110, 5.5f, 4000, "Recoil Partial (Bad)", 0.35f, 0.35f, 0.3f},
+
+    // CCF tests - each value 3x per session
+    {100, 5.5f, 4000, "CCF 50% (Low)", 0.25f, 0.25f, 1.0f},
+    {100, 5.5f, 4000, "CCF 50% (Low)", 0.25f, 0.25f, 1.0f},
+    {100, 5.5f, 4000, "CCF 50% (Low)", 0.25f, 0.25f, 1.0f},
+    {100, 5.5f, 4000, "CCF 70% (Target)", 0.35f, 0.35f, 1.0f},
+    {100, 5.5f, 4000, "CCF 70% (Target)", 0.35f, 0.35f, 1.0f},
+    {100, 5.5f, 4000, "CCF 70% (Target)", 0.35f, 0.35f, 1.0f},
+    {100, 5.5f, 4000, "CCF 85% (High)", 0.50f, 0.35f, 1.0f},
+    {100, 5.5f, 4000, "CCF 85% (High)", 0.50f, 0.35f, 1.0f},
+    {100, 5.5f, 4000, "CCF 85% (High)", 0.50f, 0.35f, 1.0f},
 };
 
 constexpr uint8_t PHASE_COUNT = sizeof(PHASES) / sizeof(PHASES[0]);
+constexpr uint8_t TEST_PHASE_COUNT = sizeof(TEST_PHASES) / sizeof(TEST_PHASES[0]);
 
 /**
  * Shape of one stroke cycle, as fractions of the period: push down, release, then
