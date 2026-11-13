@@ -576,6 +576,9 @@ public:
         lastChestZ = -999.0f;
         lastBaseZ = -999.0f;
         lastSampleSuccessMicros = 0;
+        // Reset the sample-rate grid so calibration starts on a clean 100 Hz boundary,
+        // preventing carry-over timing from previous sessions from skewing the sample count.
+        lastSampleMicros = 0;
     }
 
     // True once reads have failed SENSOR_FAULT_CONSECUTIVE_FAILS times in a row or the

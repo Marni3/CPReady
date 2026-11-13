@@ -102,6 +102,11 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   /// True once a real-time packet has reported at least one compression.
   bool _firstCompressionSeen = false;
 
+  /// True once the first real-time packet has arrived, even if it carries
+  /// zero compressions. Used to fade in the metrics display as soon as the
+  /// session stream starts, instead of waiting for the first compression.
+  bool _firstRealtimePacketSeen = false;
+
   /// Firmware elapsed time when the first compression was reported. Used to
   /// turn the firmware's own clock (which starts at START) into a duration
   /// measured from the first compression.
@@ -197,10 +202,11 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     unawaited(_sendStartCommands(controller));
 
     // Keeps the elapsed timer and the compression-activity window current.
+    // The metronome is self-scheduling via _scheduleNextBeat(), so the tick
+    // timer only refreshes the UI clock and does not reschedule beats.
     _tick = Timer.periodic(AppDurations.liveTick, (_) {
       if (mounted && !_finished) {
         setState(() {});
-        _syncMetronome();
       }
     });
   }
@@ -566,6 +572,9 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
       // "Begin Session" opens this screen, but the session itself starts on
       // the trainee's first compression.
+      if (!_firstRealtimePacketSeen) {
+        _firstRealtimePacketSeen = true;
+      }
       if (!_firstCompressionSeen && count > 0) {
         _firstCompressionSeen = true;
         _firstCompressionElapsedSec = metrics.elapsedSeconds;
@@ -750,35 +759,26 @@ void _scheduleNextBeat() {
   final Stopwatch? clock = _beatClock;
   if (!mounted || !_metronomeRunning || clock == null) return;
 
-  final int intervalUs =
-      AppMetronome.beatInterval(widget.metronomeTempoBpm).inMicroseconds;
-  if (intervalUs <= 0) return;
+  final int intervalMs =
+      AppMetronome.beatInterval(widget.metronomeTempoBpm).inMilliseconds;
+  if (intervalMs <= 0) return;
 
-  final int elapsedUs = clock.elapsedMicroseconds;
+  final int elapsedMs = clock.elapsedMilliseconds;
 
-  while (_nextBeatNumber * intervalUs <= elapsedUs) {
+  while (_nextBeatNumber * intervalMs <= elapsedMs) {
     _nextBeatNumber++;
   }
 
-  final int targetUs = _nextBeatNumber * intervalUs;
-  final int waitUs = targetUs - elapsedUs;
+  final int targetMs = _nextBeatNumber * intervalMs;
+  final int waitMs = targetMs - elapsedMs;
 
-  _beatTimer = Timer(Duration(microseconds: waitUs), () {
+  _beatTimer = Timer(Duration(milliseconds: waitMs), () {
     if (!mounted || !_metronomeRunning) return;
 
     _syncMetronome();
     if (!mounted || !_metronomeRunning) return;
 
-    final Stopwatch? activeClock = _beatClock;
-    if (activeClock == null) return;
-
-    final int actualUs = activeClock.elapsedMicroseconds;
-    final int latenessUs =
-        actualUs - (_nextBeatNumber * intervalUs);
-
-    if (latenessUs < intervalUs ~/ 4) {
-      unawaited(_metronome.tick());
-    }
+    unawaited(_metronome.tick());
 
     _nextBeatNumber++;
     _scheduleNextBeat();
@@ -1139,7 +1139,7 @@ void _stopMetronome() {
                             alignment: Alignment.center,
                             children: <Widget>[
                               AnimatedOpacity(
-                                opacity: _firstCompressionSeen ? 1.0 : 0.30,
+                                opacity: _firstRealtimePacketSeen ? 1.0 : 0.30,
                                 duration: const Duration(milliseconds: 250),
                                 curve: Curves.easeInOut,
                                 child: IgnorePointer(

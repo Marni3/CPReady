@@ -591,30 +591,30 @@ static void handleSerialCommand(String line) {
     else if (line == "SIM:TEST:DEPTH") {
         simTestMode = true;
         simTestPhases = &SimConfig::TEST_PHASES[0];
-        simTestPhaseCount = 12;
+        simTestPhaseCount = 15;
         simTestPhaseIndex = 0;
-        Serial.println("[TEST] Depth test mode: 4.99cm / 5.00cm / 5.50cm / 6.50cm (3x each). Send SIM:START.");
+        Serial.println("[TEST] Depth test mode: 4.99 / 5.00 / 5.50 / 6.00 / 6.01 cm (3x each). Send SIM:START.");
     }
     else if (line == "SIM:TEST:RATE") {
         simTestMode = true;
-        simTestPhases = &SimConfig::TEST_PHASES[12];
-        simTestPhaseCount = 12;
+        simTestPhases = &SimConfig::TEST_PHASES[15];
+        simTestPhaseCount = 15;
         simTestPhaseIndex = 0;
-        Serial.println("[TEST] Rate test mode: 80 / 100 / 110 / 130 cpm (3x each). Send SIM:START.");
+        Serial.println("[TEST] Rate test mode: 99 / 100 / 110 / 120 / 121 cpm (3x each). Send SIM:START.");
     }
     else if (line == "SIM:TEST:RECOIL") {
         simTestMode = true;
-        simTestPhases = &SimConfig::TEST_PHASES[24];
+        simTestPhases = &SimConfig::TEST_PHASES[30];
         simTestPhaseCount = 6;
         simTestPhaseIndex = 0;
-        Serial.println("[TEST] Recoil test mode: Full / Partial (3x each). Send SIM:START.");
+        Serial.println("[TEST] Recoil test mode: 89.9% / 90% (3x each). Send SIM:START.");
     }
     else if (line == "SIM:TEST:CCF") {
         simTestMode = true;
-        simTestPhases = &SimConfig::TEST_PHASES[30];
-        simTestPhaseCount = 9;
+        simTestPhases = &SimConfig::TEST_PHASES[36];
+        simTestPhaseCount = 6;
         simTestPhaseIndex = 0;
-        Serial.println("[TEST] CCF test mode: 50% / 70% / 85% (3x each). Send SIM:START.");
+        Serial.println("[TEST] CCF test mode: 59.9% / 60% (3x each). Send SIM:START.");
     }
     else if (line == "SIM:TEST:ALL") {
         simTestMode = true;
