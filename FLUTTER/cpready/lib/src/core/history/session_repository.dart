@@ -116,8 +116,26 @@ class SessionRepository {
       await db.execute(AppHistory.createTelemetryV5);
     }
     if (oldVersion < 6) {
+      final columns = await db.rawQuery(
+        'PRAGMA table_info(${AppHistory.tableSessions})',
+      );
+
+      final existingColumns = columns
+          .map((column) => column['name'] as String)
+          .toSet();
+
       for (final String statement in AppHistory.migrateSessionsV5ToV6) {
-        await db.execute(statement);
+        final match = RegExp(
+          r'ADD COLUMN\s+(\w+)',
+          caseSensitive: false,
+        ).firstMatch(statement);
+
+        final columnName = match?.group(1);
+
+        if (columnName != null && !existingColumns.contains(columnName)) {
+          await db.execute(statement);
+          existingColumns.add(columnName);
+        }
       }
     }
   }
