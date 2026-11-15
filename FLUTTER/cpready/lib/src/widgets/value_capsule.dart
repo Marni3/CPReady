@@ -51,12 +51,12 @@ class ValueCapsule extends StatelessWidget {
   /// so all five capsules share a left edge.
   final double minWidth;
 
-  /// Fill for a graded capsule: green in range, red out of range, grey when
-  /// there is no value yet.
+  /// Fill for a graded capsule: green in range, red out of range, green when
+  /// there is no value yet (never grey during a live session).
   static Color gradedBackground(MetricRating? rating) => switch (rating) {
     MetricRating.good => AppColors.liveCapsulePositive,
     MetricRating.poor => AppColors.liveCapsuleNegative,
-    null => AppColors.liveCapsuleNeutral,
+    null => AppColors.liveCapsulePositive,
   };
 
   @override

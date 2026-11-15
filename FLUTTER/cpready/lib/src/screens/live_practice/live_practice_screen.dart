@@ -102,10 +102,9 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   /// True once a real-time packet has reported at least one compression.
   bool _firstCompressionSeen = false;
 
-  /// True once the first real-time packet has arrived, even if it carries
-  /// zero compressions. Used to fade in the metrics display as soon as the
-  /// session stream starts, instead of waiting for the first compression.
-  bool _firstRealtimePacketSeen = false;
+  /// True when the BLE link has dropped during a live session. Used to grey
+  /// out the metrics display only while disconnected.
+  bool _deviceDisconnected = false;
 
   /// Firmware elapsed time when the first compression was reported. Used to
   /// turn the firmware's own clock (which starts at START) into a duration
@@ -572,9 +571,6 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
       // "Begin Session" opens this screen, but the session itself starts on
       // the trainee's first compression.
-      if (!_firstRealtimePacketSeen) {
-        _firstRealtimePacketSeen = true;
-      }
       if (!_firstCompressionSeen && count > 0) {
         _firstCompressionSeen = true;
         _firstCompressionElapsedSec = metrics.elapsedSeconds;
@@ -803,6 +799,9 @@ void _stopMetronome() {
     if (!mounted || _finished) return;
     final BleStatus? status = _controller?.status;
     if (status != BleStatus.error && status != BleStatus.disconnected) return;
+
+    // Grey out the metrics while disconnected.
+    setState(() => _deviceDisconnected = true);
 
     // A dropped link abandons the session. Show the interrupted result rather
     // than returning silently to Home, and never write an interrupted row.
@@ -1139,7 +1138,7 @@ void _stopMetronome() {
                             alignment: Alignment.center,
                             children: <Widget>[
                               AnimatedOpacity(
-                                opacity: _firstRealtimePacketSeen ? 1.0 : 0.30,
+                                opacity: _deviceDisconnected ? 0.30 : 1.0,
                                 duration: const Duration(milliseconds: 250),
                                 curve: Curves.easeInOut,
                                 child: IgnorePointer(
