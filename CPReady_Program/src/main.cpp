@@ -74,6 +74,7 @@ void startCalibration(uint32_t now) {
     // later GET_RESULTS can never return another trainee's results.
     tracker.reset();
     sensors.resetCalibration();
+    sensors.fullReset();  // Full MPU6050 device reset for clean calibration start
     telemetry.resetCounters();
     calibrationStartMillis = now;
     lastCalibProgressNotifyMillis = now;

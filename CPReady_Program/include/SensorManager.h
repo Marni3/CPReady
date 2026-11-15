@@ -593,6 +593,7 @@ public:
         sensorFault = false;
         lastChestZ = -999.0f;
         lastBaseZ = -999.0f;
+        fullReset();  // Full MPU6050 device reset to clear all internal state
         return begin();
     }
 
@@ -724,6 +725,92 @@ public:
     }
 
     uint8_t getCalibrationFailureReason() const { return lastCalibrationFailureReason; }
+
+    // Performs a full MPU6050 device reset via I2C, clearing all internal state
+    // (FIFO, signal path, interrupt flags, gyro bias, DMP state, etc.) to match
+    // a hardware power cycle. Called before calibration and reinitialization.
+    bool fullReset() {
+        if (chestI2CAddr == 0) return false;
+
+        // Select chest sensor channel
+        #if USE_DUAL_MPU
+        if (hasMultiplexer) selectMuxChannel(chestMuxChannel);
+        #endif
+
+        // 1. Full device reset (PWR_MGMT_1 bit 7)
+        Wire.beginTransmission(chestI2CAddr);
+        Wire.write(0x6B);  // PWR_MGMT_1
+        Wire.write(0x80);  // DEVICE_RESET bit
+        Wire.endTransmission();
+        delay(100);  // Wait for reset to complete
+
+        // 2. Signal path reset (clears filters, temp sensor)
+        Wire.beginTransmission(chestI2CAddr);
+        Wire.write(0x68);  // SIGNAL_PATH_RESET
+        Wire.write(0x07);  // Reset gyro, accel, temp
+        Wire.endTransmission();
+        delay(10);
+
+        // 3. Disable FIFO, clear FIFO
+        Wire.beginTransmission(chestI2CAddr);
+        Wire.write(0x23);  // FIFO_EN
+        Wire.write(0x00);
+        Wire.endTransmission();
+
+        Wire.beginTransmission(chestI2CAddr);
+        Wire.write(0x6A);  // USER_CTRL
+        Wire.write(0x04);  // FIFO_RESET
+        Wire.endTransmission();
+        delay(10);
+
+        // 4. Wake up with PLL reference
+        Wire.beginTransmission(chestI2CAddr);
+        Wire.write(0x6B);  // PWR_MGMT_1
+        Wire.write(0x01);  // CLKSEL = PLL with X gyro reference
+        Wire.endTransmission();
+        delay(10);
+
+        // If dual MPU, also reset base sensor
+        #if USE_DUAL_MPU
+        if (useDualMpu && baseSensorOnline && baseI2CAddr != 0) {
+            if (hasMultiplexer) selectMuxChannel(baseMuxChannel);
+
+            Wire.beginTransmission(baseI2CAddr);
+            Wire.write(0x6B);
+            Wire.write(0x80);
+            Wire.endTransmission();
+            delay(100);
+
+            Wire.beginTransmission(baseI2CAddr);
+            Wire.write(0x68);
+            Wire.write(0x07);
+            Wire.endTransmission();
+            delay(10);
+
+            Wire.beginTransmission(baseI2CAddr);
+            Wire.write(0x23);
+            Wire.write(0x00);
+            Wire.endTransmission();
+
+            Wire.beginTransmission(baseI2CAddr);
+            Wire.write(0x6A);
+            Wire.write(0x04);
+            Wire.endTransmission();
+            delay(10);
+
+            Wire.beginTransmission(baseI2CAddr);
+            Wire.write(0x6B);
+            Wire.write(0x01);
+            Wire.endTransmission();
+            delay(10);
+
+            if (hasMultiplexer) disableMux();
+        }
+        #endif
+
+        if (hasMultiplexer) disableMux();
+        return true;
+    }
 
     // Primary sampling function intended to run at configured rate (default 100 Hz).
     // Returns false when no sample is due or the sensor read failed.
