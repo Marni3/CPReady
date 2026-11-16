@@ -6,6 +6,12 @@ class RecordingVoiceCoach implements VoiceCoach {
   final List<int> played = <int>[];
 
   @override
+  void Function(int cueCode)? onCueStart;
+
+  @override
+  void Function(int cueCode)? onCueComplete;
+
+  @override
   Future<void> preload() async {}
 
   @override

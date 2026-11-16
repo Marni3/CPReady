@@ -46,7 +46,7 @@ Widget _harness(
           factory: const _FailingDatabaseFactory(),
           databasePath: 'session-features-test.db',
         ),
-    voiceCoach: const SilentVoiceCoach(),
+    voiceCoach: SilentVoiceCoach(),
     child: MaterialApp(theme: appThemeData().theme, home: screen),
   );
 }

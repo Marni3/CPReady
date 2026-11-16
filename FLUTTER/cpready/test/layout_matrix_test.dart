@@ -301,7 +301,7 @@ Widget _harness(
   return AppScope(
     controller: controller,
     repository: repository,
-    voiceCoach: const SilentVoiceCoach(),
+    voiceCoach: SilentVoiceCoach(),
     child: MaterialApp(
       theme: appThemeData().theme,
       debugShowCheckedModeBanner: false,

@@ -44,7 +44,7 @@ Widget _harness() {
   return AppScope(
     controller: controller,
     repository: FakeSessionRepository(),
-    voiceCoach: const SilentVoiceCoach(),
+    voiceCoach: SilentVoiceCoach(),
     child: MaterialApp(
       theme: appThemeData().theme,
       home: const ManikinCalibrationScreen(),

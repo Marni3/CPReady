@@ -64,7 +64,7 @@ class _Fixture {
       AppScope(
         controller: controller,
         repository: repository,
-        voiceCoach: const SilentVoiceCoach(),
+        voiceCoach: SilentVoiceCoach(),
         child: MaterialApp(
           theme: appThemeData().theme,
           home: const DeviceSettingsScreen(),

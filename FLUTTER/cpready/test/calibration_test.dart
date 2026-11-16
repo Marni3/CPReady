@@ -45,7 +45,7 @@ Future<FakeBleController> _pumpScreen(WidgetTester tester) async {
     AppScope(
       controller: controller,
       repository: FakeSessionRepository(),
-      voiceCoach: const SilentVoiceCoach(),
+      voiceCoach: SilentVoiceCoach(),
       child: MaterialApp(
         theme: appThemeData().theme,
         home: const CalibrationScreen(
@@ -147,7 +147,7 @@ void main() {
       AppScope(
         controller: controller,
         repository: FakeSessionRepository(),
-        voiceCoach: const SilentVoiceCoach(),
+        voiceCoach: SilentVoiceCoach(),
         child: MaterialApp(
           theme: appThemeData().theme,
           home: const CalibrationScreen(

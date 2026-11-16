@@ -46,7 +46,7 @@ Future<FakeSessionRepository> _pumpHome(WidgetTester tester) async {
     AppScope(
       controller: controller,
       repository: repository,
-      voiceCoach: const SilentVoiceCoach(),
+      voiceCoach: SilentVoiceCoach(),
       child: MaterialApp.router(
         theme: appThemeData().theme,
         routerConfig: router,

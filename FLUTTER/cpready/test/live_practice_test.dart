@@ -70,7 +70,7 @@ CprMetrics _status(int type, {int code = 0}) => CprMetrics(
 Widget _harness(
   FakeBleController controller,
   FakeSessionRepository repository, {
-  VoiceCoach voiceCoach = const SilentVoiceCoach(),
+  VoiceCoach voiceCoach = SilentVoiceCoach(),
   DateTime Function()? cueClock,
 }) {
   return AppScope(
