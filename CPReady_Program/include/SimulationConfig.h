@@ -6,27 +6,32 @@
 #include "CPReadyConfig.h"
 
 /**
- * Parameters for the synthetic stroke signal used by the `simulation`
- * PlatformIO environment.
+ * Pause length for the burst profile, in milliseconds.
  *
- * Each phase describes the physical stroke the simulated vest performs: the
- * cadence and the chest displacement per stroke. SyntheticVest turns that
- * motion into the acceleration the sensors would measure, so the production
- * tracker measures depth exactly as it does on the vest.
- *
- * Phases run back to back. The last phase repeats until the session ends, which
- * keeps a session that outlasts the table producing valid target-range strokes.
+ * Each CCF demo env sets this to a different value. The burst profile runs
+ * compressions for (BURST_CYCLE_MS - SIM_PAUSE_MS), then holds the chest at
+ * baseline (a real hands-off pause) for SIM_PAUSE_MS, and repeats. The tracker
+ * needs a gap above PAUSE_DETECTION_TIMEOUT_MS (1500 ms) to treat it as a pause,
+ * which every CCF env satisfies.
  */
+#ifndef SIM_PAUSE_MS
+#define SIM_PAUSE_MS 0
+#endif
+
 namespace SimConfig {
 
 struct Phase {
     uint16_t    rateCpm;     // Cadence the tracker should measure.
     float       depthCm;     // Chest displacement of each stroke.
-    uint16_t    durationMs;  // Time this phase is held.
+    uint32_t    durationMs;  // Time this phase is held.
     const char* label;
-    float       pushFraction;     // Fraction of cycle spent pushing down (default 0.35).
-    float       releaseFraction;  // Fraction of cycle spent releasing (default 0.35).
-    float       recoilFraction;   // 1.0 = full release to baseline, <1.0 = partial release (default 1.0).
+    float       pushFraction;     // Fraction of cycle spent pushing down.
+    float       releaseFraction;  // Fraction of cycle spent releasing.
+    float       recoilFraction;   // 1.0 = full release, <1.0 = partial release.
+    float       pauseMs;          // Reserved; hands-off time is a separate phase.
+    float       altRateCpm;       // Alternate rate for inconsistent rhythm (0 = same).
+    float       altDepthCm;       // Alternate depth for inconsistent depth (0 = same).
+    float       altRecoilFraction;// Alternate recoil fraction (<0 = same as recoilFraction).
 };
 
 /**
@@ -47,83 +52,126 @@ struct Phase {
  * expired before the next phase begins, so each error produces one prompt.
  */
 constexpr Phase PHASES[] = {
-    {110, 5.5f,  5000, "warm-up",    0.35f, 0.35f, 1.0f},
-    {110, 4.0f,  7000, "shallow",    0.35f, 0.35f, 1.0f},
-    {110, 7.0f,  7000, "deep",       0.35f, 0.35f, 1.0f},
-    { 85, 5.5f,  7000, "slow",       0.35f, 0.35f, 1.0f},
-    {145, 5.5f,  7000, "fast",       0.35f, 0.35f, 1.0f},
-    {110, 5.5f, 20000, "good",       0.35f, 0.35f, 1.0f},
+    {110, 5.5f,  5000, "warm-up",    0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 4.0f,  7000, "shallow",    0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 7.0f,  7000, "deep",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    { 85, 5.5f,  7000, "slow",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {145, 5.5f,  7000, "fast",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 20000, "good",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
 };
+
+constexpr uint8_t PHASE_COUNT = sizeof(PHASES) / sizeof(PHASES[0]);
+
+/**
+ * Continuous target profile: 110 cpm, 5.5 cm, no pause. CCF computes to ~100%.
+ * Used by the `simulation_ccf_100` env and by the 15 s manikin depth trial.
+ */
+constexpr Phase CONTINUOUS_PHASE = {
+    110, 5.5f, 3600000, "Continuous target", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f,
+};
+
+/** First cycle of the random profile: a valid target stroke burst. */
+constexpr Phase RANDOM_FIRST_PHASE = {
+    110, 5.5f, 0, "Random", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f,
+};
+
+/**
+ * Burst profile used by the `simulation_ccf_*` envs.
+ *
+ * One 15 s cycle: compressions for BURST_ON_MS, then the chest sits at baseline
+ * with no motion for SIM_PAUSE_MS. 15 s divides 30 s, 60 s and 120 s evenly, so
+ * every app duration ends on a cycle boundary. The final CCF is computed from
+ * the pauses by the tracker and by the app's refinement - it is not sent as a
+ * constant.
+ *
+ * The rest phase has depthCm = 0, so it emits no stroke signal at all.
+ */
+constexpr uint32_t BURST_CYCLE_MS = 15000;
+constexpr uint32_t BURST_PAUSE_MS = SIM_PAUSE_MS;
+constexpr uint32_t BURST_ON_MS    = BURST_CYCLE_MS - BURST_PAUSE_MS;
+
+static_assert(SIM_PAUSE_MS < BURST_CYCLE_MS, "SIM_PAUSE_MS must be shorter than the 15 s cycle");
+
+constexpr Phase BURST_PHASES[] = {
+    {110, 5.5f, BURST_ON_MS,    "Compressions", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+    {110, 0.0f, BURST_PAUSE_MS, "Hands off",    0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+};
+constexpr uint8_t BURST_PHASE_COUNT = sizeof(BURST_PHASES) / sizeof(BURST_PHASES[0]);
 
 /**
  * Test phases for validating specific input values through the production
  * CompressionTracker algorithm. Each phase runs long enough to observe
- * classification, corresponding color, and audio feedback. Each value appears
- * three times per testing session.
+ * classification, corresponding color, and audio feedback.
  *
- * Values are not hardcoded: the synthetic acceleration signal is processed by
- * the same tracker logic that runs on the vest, so classification, color, and
- * audio feedback are genuinely computed, not printed.
+ * These are bench checks driven by the SIM:TEST:* serial commands, not the
+ * demo mechanism. The CCF demo envs use BURST_PHASES above.
  */
 constexpr Phase TEST_PHASES[] = {
-    // Depth tests - each value 3x per session
-    {110, 4.99f, 4000, "Depth 4.99cm (Too Shallow)", 0.35f, 0.35f, 1.0f},
-    {110, 4.99f, 4000, "Depth 4.99cm (Too Shallow)", 0.35f, 0.35f, 1.0f},
-    {110, 4.99f, 4000, "Depth 4.99cm (Too Shallow)", 0.35f, 0.35f, 1.0f},
-    {110, 5.00f, 4000, "Depth 5.00cm (Target)",     0.35f, 0.35f, 1.0f},
-    {110, 5.00f, 4000, "Depth 5.00cm (Target)",     0.35f, 0.35f, 1.0f},
-    {110, 5.00f, 4000, "Depth 5.00cm (Target)",     0.35f, 0.35f, 1.0f},
-    {110, 5.50f, 4000, "Depth 5.50cm (Target)",     0.35f, 0.35f, 1.0f},
-    {110, 5.50f, 4000, "Depth 5.50cm (Target)",     0.35f, 0.35f, 1.0f},
-    {110, 5.50f, 4000, "Depth 5.50cm (Target)",     0.35f, 0.35f, 1.0f},
-    {110, 6.00f, 4000, "Depth 6.00cm (Target)",     0.35f, 0.35f, 1.0f},
-    {110, 6.00f, 4000, "Depth 6.00cm (Target)",     0.35f, 0.35f, 1.0f},
-    {110, 6.00f, 4000, "Depth 6.00cm (Target)",     0.35f, 0.35f, 1.0f},
-    {110, 6.01f, 4000, "Depth 6.01cm (Too Deep)",   0.35f, 0.35f, 1.0f},
-    {110, 6.01f, 4000, "Depth 6.01cm (Too Deep)",   0.35f, 0.35f, 1.0f},
-    {110, 6.01f, 4000, "Depth 6.01cm (Too Deep)",   0.35f, 0.35f, 1.0f},
+    // Depth tests
+    {110, 4.95f, 4000, "Depth 4.95cm (Too Shallow)", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 4.99f, 4000, "Depth 4.99cm (Too Shallow)", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 5.00f, 4000, "Depth 5.00cm (Target)",     0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 5.05f, 4000, "Depth 5.05cm (Target)",     0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 5.50f, 4000, "Depth 5.50cm (Target)",     0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 5.95f, 4000, "Depth 5.95cm (Target)",     0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 6.00f, 4000, "Depth 6.00cm (Target)",     0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 6.05f, 4000, "Depth 6.05cm (Too Deep)",   0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110, 6.01f, 4000, "Depth 6.01cm (Too Deep)",   0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
 
-    // Rate tests - each value 3x per session
-    { 99, 5.5f, 4000, "Rate 99cpm (Slow)",          0.35f, 0.35f, 1.0f},
-    { 99, 5.5f, 4000, "Rate 99cpm (Slow)",          0.35f, 0.35f, 1.0f},
-    { 99, 5.5f, 4000, "Rate 99cpm (Slow)",          0.35f, 0.35f, 1.0f},
-    {100, 5.5f, 4000, "Rate 100cpm (Target)",       0.35f, 0.35f, 1.0f},
-    {100, 5.5f, 4000, "Rate 100cpm (Target)",       0.35f, 0.35f, 1.0f},
-    {100, 5.5f, 4000, "Rate 100cpm (Target)",       0.35f, 0.35f, 1.0f},
-    {110, 5.5f, 4000, "Rate 110cpm (Target)",       0.35f, 0.35f, 1.0f},
-    {110, 5.5f, 4000, "Rate 110cpm (Target)",       0.35f, 0.35f, 1.0f},
-    {110, 5.5f, 4000, "Rate 110cpm (Target)",       0.35f, 0.35f, 1.0f},
-    {120, 5.5f, 4000, "Rate 120cpm (Target)",       0.35f, 0.35f, 1.0f},
-    {120, 5.5f, 4000, "Rate 120cpm (Target)",       0.35f, 0.35f, 1.0f},
-    {120, 5.5f, 4000, "Rate 120cpm (Target)",       0.35f, 0.35f, 1.0f},
-    {121, 5.5f, 4000, "Rate 121cpm (Fast)",         0.35f, 0.35f, 1.0f},
-    {121, 5.5f, 4000, "Rate 121cpm (Fast)",         0.35f, 0.35f, 1.0f},
-    {121, 5.5f, 4000, "Rate 121cpm (Fast)",         0.35f, 0.35f, 1.0f},
+    // Rate tests
+    { 99,  5.5f, 4000, "Rate  99cpm (Slow)",          0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {100,  5.5f, 4000, "Rate 100cpm (Target)",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {110,  5.5f, 4000, "Rate 110cpm (Target)",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {120,  5.5f, 4000, "Rate 120cpm (Target)",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+    {121,  5.5f, 4000, "Rate 121cpm (Fast)",         0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
 
-    // Recoil tests - each value 3x per session
-    {110, 5.5f, 4000, "Recoil 89.9% (Bad)",         0.35f, 0.35f, 0.899f},
-    {110, 5.5f, 4000, "Recoil 89.9% (Bad)",         0.35f, 0.35f, 0.899f},
-    {110, 5.5f, 4000, "Recoil 89.9% (Bad)",         0.35f, 0.35f, 0.899f},
-    {110, 5.5f, 4000, "Recoil 90% (OK)",            0.35f, 0.35f, 0.90f},
-    {110, 5.5f, 4000, "Recoil 90% (OK)",            0.35f, 0.35f, 0.90f},
-    {110, 5.5f, 4000, "Recoil 90% (OK)",            0.35f, 0.35f, 0.90f},
+    // Recoil tests
+    {110, 5.5f, 4000, "Recoil 30% (Very Poor)",    0.35f, 0.35f, 0.30f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 50% (Poor)",         0.35f, 0.35f, 0.50f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 70% (Marginal)",     0.35f, 0.35f, 0.70f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 80% (Marginal)",     0.35f, 0.35f, 0.80f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 85% (Borderline)",   0.35f, 0.35f, 0.85f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 89% (Just Below)",   0.35f, 0.35f, 0.89f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 89.9% (Bad)",        0.35f, 0.35f, 0.899f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 90% (OK)",           0.35f, 0.35f, 0.90f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 91% (Just Above)",   0.35f, 0.35f, 0.91f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 95% (Good)",         0.35f, 0.35f, 0.95f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 100% (Perfect)",     0.35f, 0.35f, 1.00f, 0.0f, 0.0f, -1.0f},
+};
+constexpr uint8_t TEST_PHASE_COUNT = sizeof(TEST_PHASES) / sizeof(TEST_PHASES[0]);
 
-    // CCF tests - each value 3x per session
-    {100, 5.5f, 4000, "CCF 59.9% (Low)",            0.2995f, 0.2995f, 1.0f},
-    {100, 5.5f, 4000, "CCF 59.9% (Low)",            0.2995f, 0.2995f, 1.0f},
-    {100, 5.5f, 4000, "CCF 59.9% (Low)",            0.2995f, 0.2995f, 1.0f},
-    {100, 5.5f, 4000, "CCF 60% (Target)",           0.30f,   0.30f,   1.0f},
-    {100, 5.5f, 4000, "CCF 60% (Target)",           0.30f,   0.30f,   1.0f},
-    {100, 5.5f, 4000, "CCF 60% (Target)",           0.30f,   0.30f,   1.0f},
+/**
+ * Fixed alternation used by the SIM:TEST:INCONSISTENT bench command. The
+ * `simulation_inconsistent` env uses the random profile instead.
+ */
+constexpr Phase INCONSISTENT_PHASES[] = {
+    // Depth alternates 4.0 cm / 6.0 cm on consecutive phases.
+    {110, 4.0f, 800, "Inconsistent Depth 4.0/6.0cm", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+    {110, 6.0f, 800, "Inconsistent Depth 4.0/6.0cm", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+    {110, 4.0f, 800, "Inconsistent Depth 4.0/6.0cm", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+    {110, 6.0f, 800, "Inconsistent Depth 4.0/6.0cm", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+    {110, 4.0f, 800, "Inconsistent Depth 4.0/6.0cm", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+    {110, 6.0f, 800, "Inconsistent Depth 4.0/6.0cm", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+
+    // Rate alternates 80 / 120 cpm on consecutive phases.
+    { 80, 5.5f, 750, "Inconsistent Rate 80/120cpm", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+    {120, 5.5f, 500, "Inconsistent Rate 80/120cpm", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+
+    // Recoil alternates full / partial on consecutive phases.
+    {110, 5.5f, 700, "Inconsistent Recoil Full/Partial", 0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 700, "Inconsistent Recoil Full/Partial", 0.35f, 0.35f, 0.5f, 0.0f, 0.0f, 0.0f, -1.0f},
 };
 
-constexpr uint8_t PHASE_COUNT = sizeof(PHASES) / sizeof(PHASES[0]);
-constexpr uint8_t TEST_PHASE_COUNT = sizeof(TEST_PHASES) / sizeof(TEST_PHASES[0]);
+constexpr uint8_t INCONSISTENT_PHASE_COUNT = sizeof(INCONSISTENT_PHASES) / sizeof(INCONSISTENT_PHASES[0]);
 
 /**
  * Shape of one stroke cycle, as fractions of the period: push down, release, then
  * hands still at the top. A dwell at the top is typical of trained rescuers and
  * keeps consecutive strokes clearly separated.
+ *
+ * recoilFraction controls how far the chest releases toward baseline:
+ *   1.0 = full release (x returns to 0), <1.0 = partial release (leaning).
+ * Hands-off time is a separate phase (depth 0) in BURST_PHASES, not this field.
  */
 constexpr float PUSH_FRACTION    = 0.35f;
 constexpr float RELEASE_FRACTION = 0.35f;

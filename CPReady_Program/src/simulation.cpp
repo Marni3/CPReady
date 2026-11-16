@@ -225,20 +225,36 @@ static void startSimSession(uint32_t now) {
     simTracker.startSession(now);
 
     if (simTestMode) {
-        // Test mode: run through all test phases. Duration covers every phase.
-        uint32_t totalSec = 0;
-        for (uint8_t i = 0; i < simTestPhaseCount; i++) {
-            totalSec += simTestPhases[i].durationMs / 1000;
-        }
-        simPracticeDurationSec = totalSec;
+        // Bench mode: run through the selected test phases. SET_TIME still owns
+        // the session length, so 30 s / 1 min / 2 min / unlimited are not
+        // overwritten here.
         simVest.begin(now, false, simTestPhases, simTestPhaseCount);
-        Serial.printf("[FLOW] Test session started: %u phases | %u s\n",
+        Serial.printf("[FLOW] Test session started: %u phases | duration %u s\n",
                       (unsigned)simTestPhaseCount, (unsigned)simPracticeDurationSec);
-    } else {
-        simVest.begin(now, steadyTrial);
-        Serial.printf("[FLOW] Session started: %s | depth K %.2f | duration %u s\n",
-                      steadyTrial ? "steady depth trial" : "cue scenario",
+    } else if (steadyTrial) {
+        // 15 s manikin depth trial: hold the target-depth phase so
+        // CALIBRATE_TARGET still measures a stable depth.
+        simVest.begin(now, true);
+        Serial.printf("[FLOW] Session started: steady depth trial | depth K %.2f | duration %u s\n",
                       simTracker.getDepthK(), (unsigned)simPracticeDurationSec);
+    } else {
+#if defined(SIM_PROFILE_RANDOM)
+        simVest.beginRandom(now);
+        Serial.println("[FLOW] Session started: random inconsistent profile");
+#elif defined(SIM_PROFILE_CONTINUOUS)
+        simVest.begin(now, false, &SimConfig::CONTINUOUS_PHASE, 1);
+        Serial.println("[FLOW] Session started: continuous target profile");
+#elif SIM_PAUSE_MS > 0
+        simVest.begin(now, false, SimConfig::BURST_PHASES, SimConfig::BURST_PHASE_COUNT);
+        Serial.printf("[FLOW] Session started: burst profile (%u ms compressions / %u ms hands-off) | duration %u s\n",
+                      (unsigned)SimConfig::BURST_ON_MS,
+                      (unsigned)SimConfig::BURST_PAUSE_MS,
+                      (unsigned)simPracticeDurationSec);
+#else
+        simVest.begin(now, false);
+        Serial.printf("[FLOW] Session started: cue scenario | depth K %.2f | duration %u s\n",
+                      simTracker.getDepthK(), (unsigned)simPracticeDurationSec);
+#endif
     }
 
     simTelemetry.resetCounters();
@@ -595,37 +611,37 @@ static void handleSerialCommand(String line) {
     else if (line == "SIM:TEST:DEPTH") {
         simTestMode = true;
         simTestPhases = &SimConfig::TEST_PHASES[0];
-        simTestPhaseCount = 15;
+        simTestPhaseCount = 9;
         simTestPhaseIndex = 0;
-        Serial.println("[TEST] Depth test mode: 4.99 / 5.00 / 5.50 / 6.00 / 6.01 cm (3x each). Send SIM:START.");
+        Serial.println("[TEST] Depth test mode: 4.95 / 4.99 / 5.00 / 5.05 / 5.50 / 5.95 / 6.00 / 6.05 / 6.01 cm (3x each). Send SIM:START.");
     }
     else if (line == "SIM:TEST:RATE") {
         simTestMode = true;
-        simTestPhases = &SimConfig::TEST_PHASES[15];
-        simTestPhaseCount = 15;
+        simTestPhases = &SimConfig::TEST_PHASES[9];
+        simTestPhaseCount = 5;
         simTestPhaseIndex = 0;
         Serial.println("[TEST] Rate test mode: 99 / 100 / 110 / 120 / 121 cpm (3x each). Send SIM:START.");
     }
     else if (line == "SIM:TEST:RECOIL") {
         simTestMode = true;
-        simTestPhases = &SimConfig::TEST_PHASES[30];
-        simTestPhaseCount = 6;
+        simTestPhases = &SimConfig::TEST_PHASES[14];
+        simTestPhaseCount = 11;
         simTestPhaseIndex = 0;
-        Serial.println("[TEST] Recoil test mode: 89.9% / 90% (3x each). Send SIM:START.");
+        Serial.println("[TEST] Recoil test mode: 30% / 50% / 70% / 80% / 85% / 89% / 89.9% / 90% / 91% / 95% / 100% (3x each). Send SIM:START.");
     }
-    else if (line == "SIM:TEST:CCF") {
+    else if (line == "SIM:TEST:INCONSISTENT") {
         simTestMode = true;
-        simTestPhases = &SimConfig::TEST_PHASES[36];
-        simTestPhaseCount = 6;
+        simTestPhases = SimConfig::INCONSISTENT_PHASES;
+        simTestPhaseCount = SimConfig::INCONSISTENT_PHASE_COUNT;
         simTestPhaseIndex = 0;
-        Serial.println("[TEST] CCF test mode: 59.9% / 60% (3x each). Send SIM:START.");
+        Serial.println("[TEST] Inconsistent session mode: depth/rate/recoil vary stroke-to-stroke. Send SIM:START.");
     }
     else if (line == "SIM:TEST:ALL") {
         simTestMode = true;
         simTestPhases = SimConfig::TEST_PHASES;
         simTestPhaseCount = SimConfig::TEST_PHASE_COUNT;
         simTestPhaseIndex = 0;
-        Serial.println("[TEST] All test mode: depth / rate / recoil / CCF (3x each). Send SIM:START.");
+        Serial.println("[TEST] All test mode: depth / rate / recoil. Send SIM:START.");
     }
     else if (line == "SIM:TEST:INVALID") {
         simCalibrationMotion = true;
@@ -642,7 +658,8 @@ static void handleSerialCommand(String line) {
         Serial.println("[SIM] Commands: SIM:STATUS | SIM:CALIB | SIM:START | SIM:STOP | "
                        "SIM:CUE:<1-6> | SIM:CALIB:FAIL | SIM:CALIB:OK | "
                        "SIM:TEST:DEPTH | SIM:TEST:RATE | SIM:TEST:RECOIL | "
-                       "SIM:TEST:CCF | SIM:TEST:ALL | SIM:TEST:INVALID | SIM:TEST:STOP");
+                       "SIM:TEST:ALL | SIM:TEST:INVALID | SIM:TEST:STOP | "
+                       "SIM:TEST:INCONSISTENT");
     }
 }
 
@@ -731,10 +748,8 @@ static void updateActiveSession(uint32_t now, uint32_t nowMicros) {
                           phase.depthCm,
                           (double)(phase.recoilFraction * 100.0f));
         } else {
-            const SimConfig::Phase& phase = SimConfig::PHASES[phaseIndex];
-            Serial.printf("[SIM] Phase %u/%u: %s (%u cpm, %.1f cm)\n",
-                          (unsigned)(phaseIndex + 1),
-                          (unsigned)SimConfig::PHASE_COUNT,
+            const SimConfig::Phase& phase = simVest.currentPhase();
+            Serial.printf("[SIM] Phase: %s (%u cpm, %.1f cm)\n",
                           phase.label,
                           (unsigned)phase.rateCpm,
                           phase.depthCm);
@@ -841,7 +856,8 @@ void setup() {
     Serial.println("[SIM] Console: SIM:STATUS | SIM:CALIB | SIM:START | SIM:STOP | "
                    "SIM:CUE:<1-6> | SIM:CALIB:FAIL | SIM:CALIB:OK | "
                    "SIM:TEST:DEPTH | SIM:TEST:RATE | SIM:TEST:RECOIL | "
-                   "SIM:TEST:CCF | SIM:TEST:ALL | SIM:TEST:INVALID | SIM:TEST:STOP");
+                   "SIM:TEST:ALL | SIM:TEST:INVALID | SIM:TEST:STOP | "
+                   "SIM:TEST:INCONSISTENT");
 }
 
 void loop() {
