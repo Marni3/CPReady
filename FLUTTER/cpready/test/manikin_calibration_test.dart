@@ -204,4 +204,86 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });
+
+  testWidgets('subjective feel mode rescales 10-stroke burst live without compounding and saves K', (
+    WidgetTester tester,
+  ) async {
+    final FakeBleController controller = await _controllerInTree(tester);
+
+    // Switch to Live Feel Calibration (Instructor)
+    await tester.tap(find.text(AppStrings.manikinModeFeelTitle));
+    await tester.pump();
+
+    await tester.tap(find.text(AppStrings.manikinStartZeroing));
+    await tester.pump();
+
+    expect(controller.commands, contains(AppBleConfig.commandSetTime(0)));
+    expect(controller.commands, contains(AppBleConfig.commandCalibrate));
+
+    await _deliver(
+      tester,
+      controller,
+      _packet(AppBleConfig.packetCalibrationDone),
+    );
+    expect(find.text(AppStrings.manikinFeelStart), findsOneWidget);
+
+    await tester.tap(find.text(AppStrings.manikinFeelStart));
+    await tester.pump();
+    expect(controller.commands, contains(AppBleConfig.commandStart));
+    expect(find.text(AppStrings.manikinFeelStatusWaiting), findsOneWidget);
+
+    // Deliver 10 steady shallow compressions (4.00 cm at default K = 10.85)
+    for (int i = 1; i <= 10; i++) {
+      await _deliver(
+        tester,
+        controller,
+        CprMetrics(
+          packetType: AppBleConfig.packetRealtime,
+          recoilComplete: true,
+          recoilPercentage: 100,
+          rateCpm: 110,
+          depthCm: 4.0,
+          depthMm: 40.0,
+          ccfPercent: 100,
+          audioPromptCode: 0,
+          totalCompressions: i,
+          elapsedSeconds: (i * 0.55).round(),
+          qualityFlags: AppBleConfig.qualitySteadyCadence,
+        ),
+      );
+    }
+
+    expect(find.text('10 / 10'), findsOneWidget);
+    expect(find.text('4.00cm'), findsWidgets);
+    expect(find.text(AppStrings.manikinFeelStatusShallow), findsOneWidget);
+
+    // Stop pushing and tap +0.50 six times: K moves 10.85 -> 13.85.
+    // Scaled depth must be 4.00 * (13.85 / 10.85) = 5.11 cm (no compounding!).
+    final Finder plusHalf = find.text('+0.50');
+    await tester.ensureVisible(plusHalf);
+    for (int n = 0; n < 6; n++) {
+      await tester.tap(plusHalf);
+      await tester.pump();
+    }
+
+    expect(find.text('K = 13.85'), findsOneWidget);
+    expect(find.text('5.11cm'), findsWidgets);
+    expect(find.text(AppStrings.manikinFeelStatusGood), findsOneWidget);
+    expect(controller.commands.last, 'SET_K:13.85');
+
+    // Tap Save Calibration & Finish -> STOP, SET_K:13.85, SET_TIME:120
+    await tester.tap(find.text(AppStrings.manikinFeelFinishSave));
+    await tester.pumpAndSettle();
+
+    expect(controller.commands, contains(AppBleConfig.commandStop));
+    expect(
+      controller.commands,
+      contains(AppBleConfig.commandSetTime(AppDurations.practiceSessionSeconds)),
+    );
+    expect(find.text(AppStrings.manikinSentTitle), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
 }

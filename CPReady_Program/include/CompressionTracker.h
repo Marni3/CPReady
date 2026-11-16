@@ -126,6 +126,8 @@ private:
 
     float    lastUnclampedDepthCm;
 
+    float    lastPhysicalDepthCm;
+
     uint16_t clampedStrokeCount;
 
     CPRSessionSummary lastFinalSummary;
@@ -269,6 +271,8 @@ public:
         summaryAlreadyCalibrated = false;
 
         lastUnclampedDepthCm = 0.0f;
+
+        lastPhysicalDepthCm = 0.0f;
 
         clampedStrokeCount = 0;
 
@@ -427,6 +431,26 @@ public:
             } else {
 
                 manikinDepthK = k;
+
+            }
+
+            if (sessionStartMillis != 0 && lastPhysicalDepthCm > 0.0f) {
+
+                lastUnclampedDepthCm = lastPhysicalDepthCm * depthScale();
+
+                reading.depth_cm = lastUnclampedDepthCm;
+
+                if (reading.depth_cm < CPReadyConfig::DEPTH_MIN_LIMIT_CM) {
+
+                    reading.depth_cm = CPReadyConfig::DEPTH_MIN_LIMIT_CM;
+
+                }
+
+                if (reading.depth_cm >= CPReadyConfig::DEPTH_MAX_LIMIT_CM) {
+
+                    reading.depth_cm = CPReadyConfig::DEPTH_MAX_LIMIT_CM;
+
+                }
 
             }
 
@@ -1218,6 +1242,8 @@ public:
 
                     if (depthKnown) {
 
+                        lastPhysicalDepthCm = physicalDepthCm;
+
                         lastUnclampedDepthCm = physicalDepthCm * depthScale();
 
                         reading.depth_cm = lastUnclampedDepthCm;
@@ -1237,6 +1263,8 @@ public:
                         }
 
                     } else {
+
+                        lastPhysicalDepthCm = 0.0f;
 
                         lastUnclampedDepthCm = 0.0f;
 

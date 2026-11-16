@@ -286,11 +286,16 @@ void onReceiveMessage_BLE(String message) {
         }
     }
     else if (message.startsWith("SET_K:")) {
-        if (rejectConfigChange(message)) return;
+        if (state == DeviceState::CALIBRATING) {
+            Serial.println("[FLOW WARN] SET_K rejected: baseline calibration in progress.");
+            sendError(ERR_WRONG_STATE);
+            return;
+        }
         float k = message.substring(6).toFloat();
         if (k >= CPReadyConfig::DEPTH_K_MIN && k <= CPReadyConfig::DEPTH_K_MAX) {
             tracker.setDepthK(k);
             saveDepthK(k);
+            kTrialOverrideActive = false;
             Serial.printf("[NVS] Depth calibration scalar K updated to %.2f (persisted to flash)\n", k);
         }
     }

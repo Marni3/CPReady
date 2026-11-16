@@ -437,12 +437,16 @@ static void handleBleCommand(String message) {
         }
     }
     else if (message.startsWith("SET_K:")) {
-        if (simRejectConfigChange(message)) return;
+        if (simState == DeviceState::CALIBRATING) {
+            simBle.sendPacket(makeErrorPacket(ERR_WRONG_STATE));
+            return;
+        }
         const float k = message.substring(6).toFloat();
         if (k >= CPReadyConfig::DEPTH_K_MIN && k <= CPReadyConfig::DEPTH_K_MAX) {
             simTracker.setDepthK(k);
             simPrefs.putFloat(simTracker.getProfile() == CPReadyConfig::KinematicProfile::BENCH_TEST
                                   ? "k_bench" : "k_manikin", k);
+            simKTrialOverride = false;
             Serial.printf("[NVS] Depth scalar K set to %.2f.\n", k);
         }
     }

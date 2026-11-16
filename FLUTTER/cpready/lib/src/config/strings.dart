@@ -472,6 +472,33 @@ class AppStrings {
       'It will be used from the next session.';
   static const String manikinDone = 'Done';
 
+  // Subjective ("Feel") live calibration mode
+  static const String manikinModeSelectorTitle = 'Calibration method';
+  static const String manikinModeReferenceTitle = '15s Reference Manikin Trial';
+  static const String manikinModeReferenceBody =
+      'Compare a 15-second run against a digital reference manikin.';
+  static const String manikinModeFeelTitle = 'Live Feel Calibration (Instructor)';
+  static const String manikinModeFeelBody =
+      'Do ~10 compressions at a time and manually adjust K until the depth reading matches instructor feel.';
+  static const String manikinFeelReadyBody =
+      'Tap Start Live Feel Tuning, then perform ~10 compressions at the depth that feels right.';
+  static const String manikinFeelStart = 'Start Live Feel Tuning';
+  static const String manikinFeelInstruction =
+      'Do ~10 compressions, stop, and manually adjust K until a good push reads 5.0–6.0 cm (Good Compression). Then do another ~10 compressions to verify.';
+  static const String manikinFeelLastSetAvg = 'Recent Set Average (Last 10 Strokes)';
+  static const String manikinFeelLastStroke = 'Last Stroke';
+  static const String manikinFeelStrokesInSet = 'Strokes in current set';
+  static const String manikinFeelStatusGood = 'GOOD COMPRESSION (5.0–6.0 cm)';
+  static const String manikinFeelStatusShallow =
+      'TOO SHALLOW (< 5.0 cm) — Increase K (+)';
+  static const String manikinFeelStatusDeep =
+      'TOO DEEP (> 6.0 cm) — Decrease K (-)';
+  static const String manikinFeelStatusWaiting =
+      'Waiting for compressions… Push ~10 times';
+  static const String manikinFeelSliderLabel = 'Depth Calibration Constant (K)';
+  static const String manikinFeelClearSet = 'Clear Current Strokes';
+  static const String manikinFeelFinishSave = 'Save Calibration & Finish';
+
   // -----------------------------------------------------------------------
   // Begin compression
   // -----------------------------------------------------------------------
