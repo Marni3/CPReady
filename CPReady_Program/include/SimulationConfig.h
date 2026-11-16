@@ -35,21 +35,27 @@ struct Phase {
 };
 
 /**
- * One pass through every coaching cue the firmware can give:
+ * One pass through every coaching cue the firmware can give, plus every recoil
+ * release value the production tracker classifies:
  *
  *   warm-up  - first five seconds are silenced by the prompt grace period
  *   shallow  - depth below 5 cm                         -> "push harder"
  *   deep     - depth above 6 cm                         -> "push shallower"
  *   slow     - 85 cpm                                   -> "speed up"
  *   fast     - 145 cpm                                  -> "slow down"
- *   good     - 15 s of target-range strokes             -> "good compressions"
+ *   good     - 20 s of target-range strokes             -> "good compressions"
  *
- * There is no leaning phase: leaning is a static load that accelerometers cannot
- * see, so the firmware no longer issues "release chest completely".
+ * The recoil sweep lives in RECOIL_PHASES and the separate `simulation_recoil_partial`
+ * env. Keeping it out of this profile means the cue demo does not spend its
+ * session time on recoil strokes.
  *
  * Error phases are 7 s: long enough for the six strokes or 3.5 s the tracker
  * needs to confirm an error, short enough that the 5 s prompt cooldown has not
  * expired before the next phase begins, so each error produces one prompt.
+ *
+ * This profile is used only by the `simulation` env (and the 15 s steady trial,
+ * which holds the final "good" phase). The CCF burst/continuous profiles stay at
+ * 100% recoil so their CCF values are unaffected.
  */
 constexpr Phase PHASES[] = {
     {110, 5.5f,  5000, "warm-up",    0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
@@ -57,10 +63,43 @@ constexpr Phase PHASES[] = {
     {110, 7.0f,  7000, "deep",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
     { 85, 5.5f,  7000, "slow",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
     {145, 5.5f,  7000, "fast",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
+
     {110, 5.5f, 20000, "good",       0.35f, 0.35f, 1.0f, 0.0f, 0.0f, -1.0f},
 };
 
 constexpr uint8_t PHASE_COUNT = sizeof(PHASES) / sizeof(PHASES[0]);
+
+/**
+ * Dedicated recoil sweep for the `simulation_recoil_partial` env.
+ *
+ * Every release value the bench tests use, in order. Each value runs 4 s,
+ * about eight strokes, so a 60 s session covers the whole sweep (~48 s) and
+ * loops. The final summary is one aggregate compliance percentage; the live
+ * packet carries a per-stroke Full/Partial flag.
+ *
+ * The push is deliberately longer than the release (0.55 vs 0.45 of the
+ * cycle). With the old 0.35/0.35 shape the downstroke deceleration itself was
+ * below the -0.35 g recoil threshold, so every stroke looked full and the
+ * release value never reached the live flag. A slower push keeps its
+ * deceleration above the threshold; the release then sets the trough:
+ * 30-89.9% read Partial and 91-100% read Full with the production tracker.
+ * The 89.9/90 boundary sits directly on the -0.35 g threshold, so 90 can read
+ * either way; that is the nature of a per-stroke threshold, not a bug.
+ */
+constexpr Phase RECOIL_PHASES[] = {
+    {110, 5.5f, 4000, "Recoil 30% (Very Poor)",   0.55f, 0.45f, 0.300f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 50% (Poor)",        0.55f, 0.45f, 0.500f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 70% (Marginal)",    0.55f, 0.45f, 0.700f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 80% (Marginal)",    0.55f, 0.45f, 0.800f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 85% (Borderline)",  0.55f, 0.45f, 0.850f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 89% (Just Below)",  0.55f, 0.45f, 0.890f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 89.9% (Bad)",       0.55f, 0.45f, 0.899f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 90% (OK)",          0.55f, 0.45f, 0.900f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 91% (Just Above)",  0.55f, 0.45f, 0.910f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 95% (Good)",        0.55f, 0.45f, 0.950f, 0.0f, 0.0f, -1.0f},
+    {110, 5.5f, 4000, "Recoil 100% (Perfect)",    0.55f, 0.45f, 1.000f, 0.0f, 0.0f, -1.0f},
+};
+constexpr uint8_t RECOIL_PHASE_COUNT = sizeof(RECOIL_PHASES) / sizeof(RECOIL_PHASES[0]);
 
 /**
  * Continuous target profile: 110 cpm, 5.5 cm, no pause. CCF computes to ~100%.
@@ -97,6 +136,14 @@ constexpr Phase BURST_PHASES[] = {
     {110, 0.0f, BURST_PAUSE_MS, "Hands off",    0.35f, 0.35f, 1.0f, 0.0f, 0.0f, 0.0f, -1.0f},
 };
 constexpr uint8_t BURST_PHASE_COUNT = sizeof(BURST_PHASES) / sizeof(BURST_PHASES[0]);
+
+// The CCF envs must keep full recoil: a partial release changes stroke detection
+// and would make the CCF values depend on recoil as well as on the pauses.
+static_assert(BURST_PHASES[0].recoilFraction == 1.0f &&
+              BURST_PHASES[1].recoilFraction == 1.0f,
+              "CCF burst phases must use full recoil");
+static_assert(CONTINUOUS_PHASE.recoilFraction == 1.0f,
+              "CCF continuous phase must use full recoil");
 
 /**
  * Test phases for validating specific input values through the production

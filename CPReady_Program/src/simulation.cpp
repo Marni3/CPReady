@@ -244,6 +244,9 @@ static void startSimSession(uint32_t now) {
 #elif defined(SIM_PROFILE_CONTINUOUS)
         simVest.begin(now, false, &SimConfig::CONTINUOUS_PHASE, 1);
         Serial.println("[FLOW] Session started: continuous target profile");
+#elif defined(SIM_PROFILE_RECOIL)
+        simVest.begin(now, false, SimConfig::RECOIL_PHASES, SimConfig::RECOIL_PHASE_COUNT);
+        Serial.println("[FLOW] Session started: recoil release sweep");
 #elif SIM_PAUSE_MS > 0
         simVest.begin(now, false, SimConfig::BURST_PHASES, SimConfig::BURST_PHASE_COUNT);
         Serial.printf("[FLOW] Session started: burst profile (%u ms compressions / %u ms hands-off) | duration %u s\n",
