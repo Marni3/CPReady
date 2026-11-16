@@ -15,7 +15,13 @@ import 'audio_context.dart';
 /// One voice-cue player, addressed by its audio prompt code.
 abstract class VoiceCoach {
   bool get isBusy;
-  
+
+  /// Called when a cue starts playing.
+  void Function(int cueCode)? onCueStart;
+
+  /// Called when a cue finishes playing.
+  void Function(int cueCode)? onCueComplete;
+
   /// Loads every cue so the first one starts without decode delay.
   Future<void> preload();
 
@@ -31,7 +37,13 @@ abstract class VoiceCoach {
 
 /// A coach that never makes a sound, used by tests and builds without audio.
 class SilentVoiceCoach implements VoiceCoach {
-  const SilentVoiceCoach();
+  SilentVoiceCoach();
+
+  @override
+  void Function(int cueCode)? onCueStart;
+
+  @override
+  void Function(int cueCode)? onCueComplete;
 
   @override
   Future<void> preload() async {}
@@ -69,6 +81,12 @@ class AssetVoiceCoach implements VoiceCoach {
   Future<void>? _stopFuture;
   @override
   bool get isBusy => _isSpeaking || _stopFuture != null;
+
+  @override
+  void Function(int cueCode)? onCueStart;
+
+  @override
+  void Function(int cueCode)? onCueComplete;
 
   static const String _bundlePrefix = 'assets/';
 
@@ -148,6 +166,8 @@ class AssetVoiceCoach implements VoiceCoach {
         if (kDebugMode) {
           debugPrint('Voice cue $cueCode completed');
         }
+
+        onCueComplete?.call(cueCode);
       });
 
       if (kDebugMode) {
@@ -189,6 +209,7 @@ class AssetVoiceCoach implements VoiceCoach {
     // Reserve the playback slot synchronously, before the first await.
     // This prevents simultaneous play() requests from starting together.
     _isSpeaking = true;
+    onCueStart?.call(cueCode);
 
     final int generation = ++_playGeneration;
     final Stopwatch stopwatch = Stopwatch()..start();

@@ -158,10 +158,21 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   /// Duplicate and overlap guard for the firmware's cue codes.
   late final VoiceCueGate _cueGate = VoiceCueGate(clock: widget.cueClock);
 
-  /// Cue code carried by the previous real-time packet. Older firmware repeats
-  /// a cue in every packet until the next stroke, so only a change of code is a
-  /// new cue; otherwise a pause after a cue replays it about once a second.
-  int _previousCueCode = 0;
+  /// Per-cue last-played timestamps for cooldown gating.
+  final Map<int, DateTime> _cueLastPlayedAt = <int, DateTime>{};
+
+  /// Minimum gap (seconds) between replays of the same cue code.
+  static const Map<int, int> _cueCooldownSeconds = <int, int>{
+    AppBleConfig.cuePushHarder: 3,
+    AppBleConfig.cuePushShallower: 3,
+    AppBleConfig.cueReleaseFully: 5,
+    AppBleConfig.cueSpeedUp: 4,
+    AppBleConfig.cueSlowDown: 4,
+    AppBleConfig.cueGoodJob: 15,
+  };
+
+  /// Whether a voice cue is currently speaking (used for interrupt logic).
+  bool _voicePlaying = false;
 
   @override
   void didChangeDependencies() {
@@ -173,6 +184,12 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     _controller = controller;
     _repository = AppScope.history(context);
     _coach = AppScope.voice(context);
+    _coach!.onCueStart = (cueCode) {
+      if (mounted) setState(() => _voicePlaying = true);
+    };
+    _coach!.onCueComplete = (cueCode) {
+      if (mounted) setState(() => _voicePlaying = false);
+    };
     unawaited(
       _coach!.preload().catchError((Object error) {
         debugPrint('Voice cue preload failed: $error');
@@ -633,18 +650,27 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
 
    
     // Dynamic app-side voice coaching.
-    // Only one instruction may play at a time.
-    // Continue tracking errors while audio is busy.
+    // Per-cue cooldowns allow each cue family a fair chance to play; priority
+    // ordering (Release > Rate > Depth > Praise) resolves simultaneous cues.
+    // A new cue interrupts a currently-playing cue immediately.
     if (realtime) {
+      final now = DateTime.now();
       final bool canSpeak =
           !_muted &&
           !_ending &&
           !_finished &&
-          _coach != null &&
-          !_coach!.isBusy;
+          _coach != null;
 
-      final int cue;
-      final bool newCue;
+      // Evaluate cues from the coaching controller.
+      final int controllerCue = _coachingController.evaluate(
+        metrics,
+        cadenceWarningActive: _cadenceWarning,
+        allowPrompt: canSpeak,
+      );
+
+      // Determine candidate cues from controller output and firmware cues.
+      int? primaryCue;
+      int? firmwareCue;
 
       if (metrics.audioPromptCode != 0) {
         final bool suppressLegacyDepth = _cadenceWarning &&
@@ -653,44 +679,71 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
                 metrics.audioPromptCode ==
                     AppBleConfig.cuePushShallower);
 
-        cue = suppressLegacyDepth
+        firmwareCue = suppressLegacyDepth
             ? 0
             : metrics.audioPromptCode;
-
-        newCue = cue != 0 &&
-            cue != _previousCueCode;
-
-        _previousCueCode = metrics.audioPromptCode;
       } else {
-        _previousCueCode = 0;
-
-        cue = _coachingController.evaluate(
-          metrics,
-          cadenceWarningActive: _cadenceWarning,
-          allowPrompt: canSpeak,
-        );
-
-        newCue = cue != 0;
+        primaryCue = controllerCue;
       }
 
-      if (newCue && cue != 0 && kDebugMode) {
+      // Priority resolution: Release > Rate > Depth > Praise.
+      // Only one cue may be selected per packet.
+      int? selectedCue;
+      final List<int?> candidates = <int?>[firmwareCue, primaryCue]
+        ..removeWhere((c) => c == null || c == 0);
+
+      if (candidates.isNotEmpty) {
+        // Sort by priority: Release(3) > Rate(4,5) > Depth(1,2) > Praise(6)
+        candidates.sort((a, b) {
+          final pa = _cuePriority(a!);
+          final pb = _cuePriority(b!);
+          return pa.compareTo(pb); // lower number = higher priority
+        });
+        selectedCue = candidates.first;
+      }
+
+      // Per-cue cooldown check.
+      bool cooldownOK = true;
+      if (selectedCue != null) {
+        final int cooldownSec = _cueCooldownSeconds[selectedCue] ?? 3;
+        final DateTime? lastPlayed = _cueLastPlayedAt[selectedCue];
+        if (lastPlayed != null) {
+          final elapsed = now.difference(lastPlayed).inSeconds;
+          if (elapsed < cooldownSec) {
+            cooldownOK = false;
+          }
+        }
+      }
+
+      final bool newCue = selectedCue != null &&
+          selectedCue != 0 &&
+          cooldownOK;
+
+      if (newCue && selectedCue != 0 && kDebugMode) {
         debugPrint(
-          'Voice cue $cue received at '
+          'Voice cue $selectedCue received at '
           '${DateTime.now().toIso8601String()}',
         );
       }
 
       if (newCue &&
+          selectedCue != 0 &&
           canSpeak &&
-          _cueGate.allows(cue)) {
+          _cueGate.allows(selectedCue)) {
         if (kDebugMode) {
           debugPrint(
-            'Voice cue $cue accepted at '
+            'Voice cue $selectedCue accepted at '
             '${DateTime.now().toIso8601String()}',
           );
         }
 
-       unawaited(_coach!.play(cue));
+        // Immediate interrupt: stop any currently playing cue.
+        if (_voicePlaying) {
+          unawaited(_coach?.stop());
+        }
+
+        _cueLastPlayedAt[selectedCue] = now;
+        unawaited(_coach!.play(selectedCue));
       }
     }
   }
@@ -698,6 +751,25 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   void _toggleMute() {
     setState(() => _muted = !_muted);
     if (_muted) unawaited(_coach?.stop());
+  }
+
+  /// Priority ranking for cue arbitration: lower number = higher priority.
+  /// Order: Release(3) > Rate(4,5) > Depth(1,2) > Praise(6).
+  static int _cuePriority(int cueCode) {
+    switch (cueCode) {
+      case AppBleConfig.cueReleaseFully: // 3 - Release chest completely
+        return 1;
+      case AppBleConfig.cueSpeedUp:    // 4
+      case AppBleConfig.cueSlowDown:   // 5
+        return 2;
+      case AppBleConfig.cuePushHarder: // 1
+      case AppBleConfig.cuePushShallower: // 2
+        return 3;
+      case AppBleConfig.cueGoodJob:    // 6
+        return 4;
+      default:
+        return 5;
+    }
   }
 
   /// Applies the remembered on/off choice. The first frame already shows the
