@@ -733,9 +733,9 @@ public:
         if (chestI2CAddr == 0) return false;
 
         // Select chest sensor channel
-        #if USE_DUAL_MPU
-        if (hasMultiplexer) selectMuxChannel(chestMuxChannel);
-        #endif
+       if (hasMultiplexer) {
+    selectMuxChannel(chestMuxChannel);
+}
 
         // 1. Full device reset (PWR_MGMT_1 bit 7)
         Wire.beginTransmission(chestI2CAddr);

@@ -1083,6 +1083,16 @@ public:
                     forcePostPause = false;
 
                     bool rateValid = !isPostPause && rawPeriodMs >= CPReadyConfig::MIN_VALID_PERIOD_MS;
+                    if (!rateValid) {
+    Serial.printf(
+        "[RATE DEBUG] Period: %lu ms | PostPause: %d | "
+        "ForcePause: %d | TotalStrokes: %lu\n",
+        (unsigned long)rawPeriodMs,
+        isPostPause ? 1 : 0,
+        forcePostPause ? 1 : 0,
+        (unsigned long)totalStrokeCount
+    );
+}
 
 
 
