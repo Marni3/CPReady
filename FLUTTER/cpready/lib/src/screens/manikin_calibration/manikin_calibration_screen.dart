@@ -96,6 +96,8 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
   // Subjective ("Feel") calibration state
   double _activeFirmwareK = _defaultManikinK;
   double _sliderK = _defaultManikinK;
+  double? _feelInitialK;
+  bool _feelKModified = false;
   final List<double> _feelBurstRawCm = <double>[];
   int _lastFeelStrokeCount = 0;
   DateTime? _lastFeelStrokeAt;
@@ -210,6 +212,8 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       _feelBurstRawCm.clear();
       _lastFeelStrokeCount = 0;
       _lastFeelStrokeAt = null;
+      _feelInitialK = _activeFirmwareK;
+      _feelKModified = false;
       _feelCoach.reset();
     });
 
@@ -255,6 +259,8 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       _feelBurstRawCm.clear();
       _lastFeelStrokeCount = 0;
       _lastFeelStrokeAt = null;
+      _feelInitialK = _activeFirmwareK;
+      _feelKModified = false;
       _feelCoach.reset();
       setState(() {
         _stage = _Stage.feelTuning;
@@ -457,8 +463,10 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     _feelCoach.reset();
     final BleController? controller = _controller;
     if (controller == null || !controller.isConnected) return;
+    _feelInitialK ??= _activeFirmwareK;
     try {
       await controller.sendCommand(AppBleConfig.commandSetK(clamped));
+      _feelKModified = true;
       if (mounted) {
         setState(() {
           _activeFirmwareK = clamped;
@@ -466,6 +474,21 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       }
     } catch (error) {
       debugPrint('Live SET_K failed: $error');
+    }
+  }
+
+  /// Restores the original K in firmware if the user abandons Live Feel
+  /// Calibration after sending live SET_K adjustments without tapping Save.
+  Future<void> _restoreUnsavedFeelK() async {
+    if (!_feelKModified || _feelInitialK == null) return;
+    final double restoreK = _feelInitialK!;
+    _feelKModified = false;
+    final BleController? controller = _controller;
+    if (controller == null || !controller.isConnected) return;
+    try {
+      await controller.sendCommand(AppBleConfig.commandSetK(restoreK));
+    } catch (error) {
+      debugPrint('Unsaved feel K restore failed: $error');
     }
   }
 
@@ -498,6 +521,8 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       }
       await controller.sendCommand(AppBleConfig.commandSetK(finalK));
       _activeFirmwareK = finalK;
+      _feelInitialK = finalK;
+      _feelKModified = false;
       await _restorePracticeDuration();
 
       try {
@@ -579,6 +604,7 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
       _trialActive = false;
       unawaited(_abortTrial());
     }
+    unawaited(_restoreUnsavedFeelK());
     unawaited(_restorePracticeDuration());
 
     if (!mounted) return;
@@ -725,6 +751,9 @@ class _ManikinCalibrationScreenState extends State<ManikinCalibrationScreen> {
     if (_trialActive && _controller != null && _controller!.isConnected) {
       _trialActive = false;
       unawaited(_abortTrial());
+    }
+    if (_feelKModified && _controller != null && _controller!.isConnected) {
+      unawaited(_restoreUnsavedFeelK());
     }
     if (_durationChanged && _controller != null && _controller!.isConnected) {
       unawaited(_restorePracticeDuration());

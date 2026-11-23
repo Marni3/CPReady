@@ -286,4 +286,41 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });
+
+  testWidgets('subjective feel mode restores original K if abandoned without saving', (
+    WidgetTester tester,
+  ) async {
+    final FakeBleController controller = await _controllerInTree(tester);
+
+    await tester.tap(find.text(AppStrings.manikinModeFeelTitle));
+    await tester.pump();
+    await tester.tap(find.text(AppStrings.manikinStartZeroing));
+    await tester.pump();
+    await _deliver(
+      tester,
+      controller,
+      _packet(AppBleConfig.packetCalibrationDone),
+    );
+    await tester.tap(find.text(AppStrings.manikinFeelStart));
+    await tester.pump();
+
+    // Adjust K without tapping Save Calibration & Finish
+    final Finder plusHalf = find.text('+0.50');
+    await tester.ensureVisible(plusHalf);
+    await tester.tap(plusHalf);
+    await tester.pump();
+    expect(controller.commands.last, 'SET_K:11.35');
+
+    // Leave the screen without saving -> must restore original K (10.85)
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+
+    expect(controller.commands, contains(AppBleConfig.commandStop));
+    expect(controller.commands, contains('SET_K:10.85'));
+    expect(
+      controller.commands,
+      contains(AppBleConfig.commandSetTime(AppDurations.practiceSessionSeconds)),
+    );
+    controller.dispose();
+  });
 }

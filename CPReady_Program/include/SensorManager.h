@@ -576,6 +576,7 @@ public:
         lastChestZ = -999.0f;
         lastBaseZ = -999.0f;
         lastSampleSuccessMicros = 0;
+        lastFilteredNetAccel = 0.0f;
         // Reset the sample-rate grid so calibration starts on a clean 100 Hz boundary,
         // preventing carry-over timing from previous sessions from skewing the sample count.
         lastSampleMicros = 0;
@@ -728,14 +729,16 @@ public:
 
     // Performs a full MPU6050 device reset via I2C, clearing all internal state
     // (FIFO, signal path, interrupt flags, gyro bias, DMP state, etc.) to match
-    // a hardware power cycle. Called before calibration and reinitialization.
+    // a hardware power cycle, then immediately restores the required +-4g range
+    // and 44 Hz DLPF. Used during fault recovery (reinitialize()).
     bool fullReset() {
+#ifdef FAKE_SENSORS
+        return true;
+#else
         if (chestI2CAddr == 0) return false;
 
-        // Select chest sensor channel
-        #if USE_DUAL_MPU
+        // Select chest sensor channel unconditionally whenever a multiplexer is present
         if (hasMultiplexer) selectMuxChannel(chestMuxChannel);
-        #endif
 
         // 1. Full device reset (PWR_MGMT_1 bit 7)
         Wire.beginTransmission(chestI2CAddr);
@@ -763,14 +766,17 @@ public:
         Wire.endTransmission();
         delay(10);
 
-        // 4. Wake up with PLL reference
+        // 4. Wake up with PLL reference and restore +-4g range + 44 Hz DLPF
         Wire.beginTransmission(chestI2CAddr);
         Wire.write(0x6B);  // PWR_MGMT_1
         Wire.write(0x01);  // CLKSEL = PLL with X gyro reference
         Wire.endTransmission();
         delay(10);
 
-        // If dual MPU, also reset base sensor
+        chestSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+        chestSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+
+        // If dual MPU, also reset and reconfigure base sensor
         #if USE_DUAL_MPU
         if (useDualMpu && baseSensorOnline && baseI2CAddr != 0) {
             if (hasMultiplexer) selectMuxChannel(baseMuxChannel);
@@ -804,12 +810,55 @@ public:
             Wire.endTransmission();
             delay(10);
 
+            baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+            baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+
             if (hasMultiplexer) disableMux();
         }
         #endif
 
         if (hasMultiplexer) disableMux();
         return true;
+#endif
+    }
+
+    // Lightweight, non-destructive register check/re-apply before calibration (< 1 ms).
+    // Ensures the MPU6050 is awake with the exact +-4g range and 44 Hz DLPF without
+    // issuing a 130 ms DEVICE_RESET that wipes registers or truncates the calibration window.
+    bool ensureConfigured() {
+#ifdef FAKE_SENSORS
+        return true;
+#else
+        if (chestI2CAddr == 0) return false;
+
+        if (hasMultiplexer) selectMuxChannel(chestMuxChannel);
+
+        Wire.beginTransmission(chestI2CAddr);
+        Wire.write(0x6B);  // PWR_MGMT_1
+        Wire.write(0x01);  // Wake up with PLL with X gyro reference
+        if (Wire.endTransmission() != 0) {
+            if (hasMultiplexer) disableMux();
+            return false;
+        }
+        chestSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+        chestSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+
+        #if USE_DUAL_MPU
+        if (useDualMpu && baseSensorOnline && baseI2CAddr != 0) {
+            if (hasMultiplexer) selectMuxChannel(baseMuxChannel);
+            Wire.beginTransmission(baseI2CAddr);
+            Wire.write(0x6B);
+            Wire.write(0x01);
+            if (Wire.endTransmission() == 0) {
+                baseSensor.setAccelerometerRange(MPU6050_RANGE_4_G);
+                baseSensor.setFilterBandwidth(MPU6050_BAND_44_HZ);
+            }
+        }
+        #endif
+
+        if (hasMultiplexer) disableMux();
+        return true;
+#endif
     }
 
     // Primary sampling function intended to run at configured rate (default 100 Hz).

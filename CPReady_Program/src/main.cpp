@@ -74,10 +74,13 @@ void startCalibration(uint32_t now) {
     // later GET_RESULTS can never return another trainee's results.
     tracker.reset();
     sensors.resetCalibration();
-    sensors.fullReset();  // Full MPU6050 device reset for clean calibration start
+    if (!sensors.ensureConfigured()) {
+        Serial.println("[SENSOR WARN] MPU6050 config check failed; attempting full reinitialize...");
+        sensors.reinitialize();
+    }
     telemetry.resetCounters();
-    calibrationStartMillis = now;
-    lastCalibProgressNotifyMillis = now;
+    calibrationStartMillis = millis();
+    lastCalibProgressNotifyMillis = calibrationStartMillis;
     state = DeviceState::CALIBRATING;
     ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_PROGRESS, 0));
 }
