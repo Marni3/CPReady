@@ -569,11 +569,20 @@ void loop() {
     }
 
     // 2. Process incoming BLE string commands safely in the main thread
+    bool processedCommand = false;
     while (ble.hasPendingCommand()) {
         String cmd = ble.consumeCommand();
         if (cmd.length() > 0) {
             onReceiveMessage_BLE(cmd);
+            processedCommand = true;
         }
+    }
+    if (processedCommand) {
+        // Refresh clocks after command handling so timestamps set inside
+        // commands (e.g. calibrationStartMillis = millis()) are never ahead of `now`
+        // and cannot cause uint32_t underflow in elapsed-time checks below.
+        now = millis();
+        nowMicros = micros();
     }
     uint32_t dropped = ble.consumeDroppedCommandCount();
     if (dropped > 0) {
@@ -591,14 +600,16 @@ void loop() {
         #endif
 
         // Periodically broadcast calibration progress packet (Packet Type 2)
-        if (now - lastCalibProgressNotifyMillis >= CPReadyConfig::CALIBRATION_PROGRESS_INTERVAL_MS) {
+        if (now >= lastCalibProgressNotifyMillis &&
+            (now - lastCalibProgressNotifyMillis >= CPReadyConfig::CALIBRATION_PROGRESS_INTERVAL_MS)) {
             lastCalibProgressNotifyMillis = now;
             uint16_t elapsedCalib = (uint16_t)((now - calibrationStartMillis) / 1000);
             ble.sendPacket(makeCalibrationPacket(PKT_TYPE_CALIB_PROGRESS, elapsedCalib));
         }
 
         // Check if calibration window has elapsed
-        if (now - calibrationStartMillis >= CPReadyConfig::CALIBRATION_DURATION_MS) {
+        if (now >= calibrationStartMillis &&
+            (now - calibrationStartMillis >= CPReadyConfig::CALIBRATION_DURATION_MS)) {
             #if !ENABLE_DEMO_MODE
             sensors.finalizeCalibration();
             if (!sensors.isCalibrationStable()) {
