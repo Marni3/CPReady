@@ -55,7 +55,7 @@ namespace CPReadyConfig {
     constexpr float       NOMINAL_INTEGRATOR_K                = 11.2f;     // Unscaled 1.0x integrator reference denominator
     constexpr float       DEPTH_CALIBRATION_K                 = 10.85f;    // Manikin profile default K (1-MPU ground-truth optimum)
     constexpr float       COMPRESSION_START_THRESHOLD_G       = 0.28f;     // Downstroke acceleration trigger threshold (g)
-    constexpr float       RECOIL_THRESHOLD_G                  = -0.35f;    // Upward rebound threshold to confirm release (g)
+    constexpr float       RECOIL_THRESHOLD_G                  = -0.25f;    // Upward rebound threshold to confirm release (g; 1-MPU Little Anne optimum)
 
     // Bench Testing Sensitivity Parameters (Alternative Relaxed Profile)
     constexpr float       BENCH_COMPRESSION_START_THRESHOLD_G = 0.25f;     // Relaxed start trigger for hand bench testing (g)
@@ -75,6 +75,9 @@ namespace CPReadyConfig {
     // A detection whose raw unscaled integrated motion is smaller than this is a bump (hands
     // repositioned, vest knocked), not a compression, and is not counted.
     constexpr float       MIN_STROKE_DEPTH_CM                 = 0.25f;
+    // Sub-300 ms detections shallower than this (scaled cm) are hesitation/recoil split
+    // fragments rather than real compressions and are discarded without blanking live rate.
+    constexpr float       SUB_PERIOD_BOUNCE_MIN_DEPTH_CM      = 2.0f;
 
     // Cadence Consistency
     constexpr float       MAX_CADENCE_JITTER_RATIO      = 0.25f;    // 25% period variance threshold to flag unsteady rhythm

@@ -91,6 +91,11 @@ class AppDurations {
   /// circle steady between packets instead of flickering.
   static const int compressionActiveWindowMs = 1200;
 
+  /// Hands-off idle duration after which the live Rate capsule clears to `--`.
+  /// Shorter gaps and single-stroke firmware rate=0 glitches hold the last
+  /// valid rate instead of flashing blank mid-set.
+  static const int liveRateIdleClearMs = 2500;
+
   // -----------------------------------------------------------------------
   // Voice coaching
   // -----------------------------------------------------------------------
@@ -165,6 +170,9 @@ class AppDurations {
   );
   static const Duration compressionActiveWindow = Duration(
     milliseconds: compressionActiveWindowMs,
+  );
+  static const Duration liveRateIdleClear = Duration(
+    milliseconds: liveRateIdleClearMs,
   );
   static const Duration voiceCueDuplicate = Duration(
     milliseconds: voiceCueDuplicateMs,

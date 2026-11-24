@@ -44,24 +44,33 @@ import '../../config/config.dart';
 import '../telemetry/raw_frame.dart';
 import 'cpr_metrics.dart';
 
-/// Stabilizes the live displayed depth capsule during unsteady cadence using a
-/// 3-stroke rolling median so a single transition spike does not flash an
-/// egregious number on screen while `_cadenceWarning` is active.
+/// Stabilizes the live displayed depth capsule using an always-on 3-stroke
+/// rolling median plus a 1x isolated drop guard so single-stroke bounce/split
+/// glitches (~1 cm) and stroke-to-stroke accelerometer jitter do not flash
+/// erratically on screen.
+///
+/// Purely visual: does not alter firmware telemetry, coaching evaluation, or
+/// post-session [SessionRefinementEngine] calculations.
 class LiveDepthStabilizer {
   final List<double> _recentDepthsCm = <double>[];
   int _lastStrokeCount = 0;
+  double? _lastRawDepthCm;
 
   void reset() {
     _recentDepthsCm.clear();
     _lastStrokeCount = 0;
+    _lastRawDepthCm = null;
   }
 
   /// Updates the rolling buffer when a new stroke arrives and returns the
-  /// depth (in cm) to display on the live screen.
+  /// stabilized depth (in cm) to display on the live screen.
   ///
-  /// When [unsteadyActive] is false and the stroke is steady, returns the raw
-  /// `metrics.depthCm` directly. When unsteady (or on a sub-period bounce),
-  /// returns the 3-stroke rolling median.
+  /// - Sub-period bounce fragments (`isSubPeriodBounce`) are ignored.
+  /// - A single isolated low-depth drop (`< 2.0 cm` while recent median
+  ///   `> 3.5 cm`) is ignored; if a second consecutive `< 2.0 cm` stroke arrives,
+  ///   genuine shallow compressions are admitted normally.
+  /// - Always returns the 3-stroke rolling median once at least one valid
+  ///   stroke has been recorded.
   double stabilize(CprMetrics? metrics, {required bool unsteadyActive}) {
     if (metrics == null) return 0.0;
     if (metrics.packetType != AppBleConfig.packetRealtime) {
@@ -71,7 +80,21 @@ class LiveDepthStabilizer {
     final int count = metrics.totalCompressions;
     if (count > _lastStrokeCount && metrics.depthCm > 0.0) {
       _lastStrokeCount = count;
-      if (!metrics.isSubPeriodBounce) {
+
+      double? currentMedian;
+      if (_recentDepthsCm.length >= 2) {
+        final List<double> sorted = List<double>.of(_recentDepthsCm)..sort();
+        currentMedian = sorted[sorted.length ~/ 2];
+      }
+
+      final bool isolatedLowDrop = metrics.depthCm < 2.0 &&
+          currentMedian != null &&
+          currentMedian > 3.5 &&
+          (_lastRawDepthCm == null || _lastRawDepthCm! >= 2.0);
+
+      _lastRawDepthCm = metrics.depthCm;
+
+      if (!metrics.isSubPeriodBounce && !isolatedLowDrop) {
         _recentDepthsCm.add(metrics.depthCm);
         if (_recentDepthsCm.length > 3) {
           _recentDepthsCm.removeAt(0);
@@ -83,15 +106,8 @@ class LiveDepthStabilizer {
       return metrics.depthCm;
     }
 
-    if (unsteadyActive ||
-        !metrics.isSteadyCadence ||
-        metrics.isSubPeriodBounce ||
-        metrics.isWindowClamped) {
-      final List<double> sorted = List<double>.of(_recentDepthsCm)..sort();
-      return sorted[sorted.length ~/ 2];
-    }
-
-    return metrics.depthCm;
+    final List<double> sorted = List<double>.of(_recentDepthsCm)..sort();
+    return sorted[sorted.length ~/ 2];
   }
 }
 

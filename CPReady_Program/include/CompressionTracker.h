@@ -50,6 +50,10 @@ private:
 
     bool     forcePostPause;       // Next stroke follows a resume and must not be read as a cadence
 
+    uint32_t peakAccelMillis;      // Timestamp of peakAccel during COMPRESSING (for hesitation onset flag)
+
+    bool     envelopeUnmaskedBeforeOnset; // True when accelerated idle envelope decay ran prior to onset
+
 
 
     // Depth reconstruction: raw samples by index, the current stroke's onset and the
@@ -233,6 +237,10 @@ public:
         pausedAtMillis = 0;
 
         forcePostPause = false;
+
+        peakAccelMillis = 0;
+
+        envelopeUnmaskedBeforeOnset = false;
 
 
 
@@ -862,6 +870,8 @@ public:
 
             decayFactor = CPReadyConfig::IDLE_ENVELOPE_DECAY_PER_SAMPLE;
 
+            envelopeUnmaskedBeforeOnset = true;
+
         }
 
         signalEnvelopeG *= decayFactor;
@@ -908,6 +918,8 @@ public:
 
                     strokeStartMillis = currentMillis;
 
+                    peakAccelMillis = currentMillis;
+
                     onsetSampleIndex = sampleIndex;
 
                     peakAccel = netAccel;
@@ -929,6 +941,8 @@ public:
                 if (netAccel > peakAccel) {
 
                     peakAccel = netAccel;
+
+                    peakAccelMillis = currentMillis;
 
                 }
 
@@ -994,6 +1008,8 @@ public:
 
                     bool depthKnown = false;
 
+                    bool windowClamped = false;
+
                     if (!isPostPause) {
 
                         // Fix C: Period-proportional pre-onset lookback window
@@ -1036,6 +1052,8 @@ public:
 
                             cycleStartIndex = strokeEndIndex - CPReadyConfig::MAX_CYCLE_INTEGRATION_SAMPLES;
 
+                            windowClamped = true;
+
                         }
 
                         depthKnown = depthEstimator.closedCycleDepthCm(
@@ -1065,6 +1083,19 @@ public:
                     }
 
                     if (depthKnown && physicalDepthCm < minStrokeDepthCm) {
+
+                        state = StrokeState::WAITING_FOR_DOWNSLICK;
+
+                        break;
+
+                    }
+
+                    bool isSubPeriodBounce = (!isPostPause && rawPeriodMs < CPReadyConfig::MIN_VALID_PERIOD_MS);
+
+                    if (isSubPeriodBounce && depthKnown &&
+                        (physicalDepthCm * depthScale()) < CPReadyConfig::SUB_PERIOD_BOUNCE_MIN_DEPTH_CM) {
+
+                        // Discard shallow sub-300 ms split/bounce fragment without wiping cadence history
 
                         state = StrokeState::WAITING_FOR_DOWNSLICK;
 
@@ -1132,6 +1163,12 @@ public:
 
                         }
 
+                    } else if (isSubPeriodBounce) {
+
+                        // Fast double-pump / sub-300 ms split: mark unsteady, but keep recent cadence history
+
+                        isCadenceSteady = false;
+
                     } else {
 
                         // After an idle pause or on first stroke, cadence is not yet synchronized
@@ -1146,17 +1183,30 @@ public:
 
 
 
-                    // Build Quality Flags Bitmask
+                    // Build Quality Flags Bitmask (Bits 0..7)
+
+                    bool hesitationOnset = (peakAccelMillis > strokeStartMillis) &&
+                                           ((peakAccelMillis - strokeStartMillis) > 120);
 
                     uint8_t flags = 0;
 
-                    if (isCadenceSteady) flags |= CADENCE_FLAG_STEADY;
+                    if (isCadenceSteady)             flags |= CADENCE_FLAG_STEADY;
 
-                    if (isPostPause)     flags |= CADENCE_FLAG_FIRST_STROKE;
+                    if (isPostPause)                 flags |= CADENCE_FLAG_FIRST_STROKE;
 
                     if (currentProfile == CPReadyConfig::KinematicProfile::BENCH_TEST) flags |= CADENCE_FLAG_BENCH_MODE;
 
                     if (!CPReadyConfig::RECOIL_MEASURED_BY_FORCE_SENSOR) flags |= CADENCE_FLAG_RECOIL_ESTIMATED;
+
+                    if (isSubPeriodBounce)           flags |= CADENCE_FLAG_SUB_PERIOD_BOUNCE;
+
+                    if (windowClamped)               flags |= CADENCE_FLAG_WINDOW_CLAMPED;
+
+                    if (hesitationOnset)             flags |= CADENCE_FLAG_HESITATION_ONSET;
+
+                    if (envelopeUnmaskedBeforeOnset) flags |= CADENCE_FLAG_ENVELOPE_UNMASKED;
+
+                    envelopeUnmaskedBeforeOnset = false;
 
                     reading.quality_flags = flags;
 
@@ -1166,17 +1216,19 @@ public:
 
                     // cadence, so they report no rate (0) instead of a stale value or the
 
-                    // 30-40 cpm a long gap would produce, and earn no CCF time. Otherwise
+                    // 30-40 cpm a long gap would produce, and earn no CCF time. On a
 
-                    // the rate is the median of the last few periods, so one uneven
+                    // sub-300 ms bounce/double-pump, preserve the previous valid live rate
 
-                    // stroke does not swing the display or start a "speed up" streak.
+                    // so the app does not flash '--' mid-set. Otherwise the rate is the
+
+                    // median of the last few periods.
 
                     if (rateValid) {
 
                         reading.rate_cpm = 60000.0f / medianRecentPeriodMs();
 
-                    } else {
+                    } else if (!isSubPeriodBounce) {
 
                         reading.rate_cpm = 0.0f;
 

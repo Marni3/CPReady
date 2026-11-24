@@ -21,15 +21,18 @@ CprMetrics _live({
   int count = 5,
   int flags = 0x01,
   int cue = 0,
+  int rateCpm = 110,
+  double depthCm = 5.5,
+  int recoilPercentage = 100,
   int? sequence,
 }) =>
     CprMetrics(
       packetType: AppBleConfig.packetRealtime,
-      recoilComplete: true,
-      recoilPercentage: 100,
-      rateCpm: 110,
-      depthCm: 5.5,
-      depthMm: 55,
+      recoilComplete: recoilPercentage >= AppTargets.recoilFullPercent,
+      recoilPercentage: recoilPercentage,
+      rateCpm: rateCpm,
+      depthCm: depthCm,
+      depthMm: depthCm * 10.0,
       ccfPercent: 90,
       audioPromptCode: cue,
       totalCompressions: count,
@@ -70,13 +73,13 @@ CprMetrics _status(int type, {int code = 0}) => CprMetrics(
 Widget _harness(
   FakeBleController controller,
   FakeSessionRepository repository, {
-  VoiceCoach voiceCoach = SilentVoiceCoach(),
+  VoiceCoach? voiceCoach,
   DateTime Function()? cueClock,
 }) {
   return AppScope(
     controller: controller,
     repository: repository,
-    voiceCoach: voiceCoach,
+    voiceCoach: voiceCoach ?? SilentVoiceCoach(),
     child: MaterialApp(
       theme: appThemeData().theme,
       home: LivePracticeScreen(
@@ -401,6 +404,94 @@ void main() {
 
     await _deliver(tester, controller, _live(count: 300));
     expect(find.text('300'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('live depth capsule renders stabilized median and rejects isolated ~1 cm glitch', (
+    WidgetTester tester,
+  ) async {
+    final controller = FakeBleController();
+    final repository = FakeSessionRepository();
+    await tester.pumpWidget(_harness(controller, repository));
+    await tester.pump();
+
+    await _deliver(tester, controller, _live(count: 1, depthCm: 5.4));
+    await _deliver(tester, controller, _live(count: 2, depthCm: 5.5));
+    await _deliver(tester, controller, _live(count: 3, depthCm: 5.6));
+    expect(find.text('5.50cm'), findsOneWidget);
+
+    // Isolated 1.1 cm bounce/split glitch must not flash 1.10cm on screen.
+    await _deliver(tester, controller, _live(count: 4, depthCm: 1.1));
+    expect(find.text('1.10cm'), findsNothing);
+    expect(find.text('5.50cm'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('live rate holds across brief rate=0 glitch and clears to -- after >2.5s idle pause', (
+    WidgetTester tester,
+  ) async {
+    final controller = FakeBleController();
+    final repository = FakeSessionRepository();
+    DateTime now = DateTime(2026, 11, 24, 14, 0, 0);
+    await tester.pumpWidget(
+      _harness(controller, repository, cueClock: () => now),
+    );
+    await tester.pump();
+
+    await _deliver(tester, controller, _live(count: 1, rateCpm: 112));
+    expect(find.text('112cpm'), findsOneWidget);
+
+    // Mid-set rate=0 glitch arrives 250 ms later -> holds 112cpm, never flashes --
+    now = now.add(const Duration(milliseconds: 250));
+    await _deliver(tester, controller, _live(count: 2, rateCpm: 0, flags: 0x10));
+    expect(find.text('112cpm'), findsOneWidget);
+    expect(find.text(AppStrings.liveNoValue), findsNothing);
+
+    // Genuine >2.5 s hands-off pause -> periodic tick clears Rate to --
+    now = now.add(const Duration(seconds: 3));
+    await tester.pump(AppDurations.liveTick);
+    expect(find.text('112cpm'), findsNothing);
+    expect(find.text(AppStrings.liveNoValue), findsOneWidget);
+
+    // First resume stroke arrives with rateCpm=0 -> holds 112cpm until next period
+    await _deliver(tester, controller, _live(count: 3, rateCpm: 0, flags: 0x02));
+    expect(find.text('112cpm'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('live recoil capsule debounces single partial stroke and flips on 2nd consecutive partial', (
+    WidgetTester tester,
+  ) async {
+    final controller = FakeBleController();
+    final repository = FakeSessionRepository();
+    await tester.pumpWidget(_harness(controller, repository));
+    await tester.pump();
+
+    await _deliver(tester, controller, _live(count: 1, recoilPercentage: 100));
+    expect(find.text(AppStrings.liveRecoilFull), findsOneWidget);
+
+    // Single isolated partial stroke does not flicker to Partial
+    await _deliver(tester, controller, _live(count: 2, recoilPercentage: 0));
+    expect(find.text(AppStrings.liveRecoilFull), findsOneWidget);
+    expect(find.text(AppStrings.liveRecoilPartial), findsNothing);
+
+    // 5 Hz heartbeat repeat of the same stroke must not increment partial streak
+    await _deliver(tester, controller, _live(count: 2, recoilPercentage: 0));
+    expect(find.text(AppStrings.liveRecoilFull), findsOneWidget);
+
+    // Second consecutive partial stroke flips live capsule to Partial
+    await _deliver(tester, controller, _live(count: 3, recoilPercentage: 0));
+    expect(find.text(AppStrings.liveRecoilPartial), findsOneWidget);
+
+    // Next full release immediately clears back to Full
+    await _deliver(tester, controller, _live(count: 4, recoilPercentage: 100));
+    expect(find.text(AppStrings.liveRecoilFull), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();

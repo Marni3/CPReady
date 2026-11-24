@@ -46,7 +46,7 @@ CprMetrics _stroke({
 
 void main() {
   group('LiveDepthStabilizer', () {
-    test('passes through steady depths unchanged and median-filters unsteady spikes', () {
+    test('always applies 3-stroke rolling median across steady and unsteady spikes', () {
       final stabilizer = LiveDepthStabilizer();
 
       expect(
@@ -70,6 +70,69 @@ void main() {
           unsteadyActive: true,
         ),
         closeTo(5.4, 1e-6),
+      );
+      // Even a steady single-stroke outlier (7.8 cm) is median-smoothed
+      expect(
+        stabilizer.stabilize(
+          _stroke(count: 4, depthCm: 5.5, rateCpm: 110),
+          unsteadyActive: false,
+        ),
+        closeTo(5.5, 1e-6),
+      );
+      expect(
+        stabilizer.stabilize(
+          _stroke(count: 5, depthCm: 5.6, rateCpm: 110),
+          unsteadyActive: false,
+        ),
+        closeTo(5.6, 1e-6),
+      );
+      expect(
+        stabilizer.stabilize(
+          _stroke(count: 6, depthCm: 7.8, rateCpm: 110),
+          unsteadyActive: false,
+        ),
+        closeTo(5.6, 1e-6),
+      );
+    });
+
+    test('blocks isolated ~1 cm drop glitch and sub-period bounce, but tracks sustained shallow compressions', () {
+      final stabilizer = LiveDepthStabilizer();
+
+      stabilizer.stabilize(_stroke(count: 1, depthCm: 5.4, rateCpm: 110), unsteadyActive: false);
+      stabilizer.stabilize(_stroke(count: 2, depthCm: 5.5, rateCpm: 110), unsteadyActive: false);
+      stabilizer.stabilize(_stroke(count: 3, depthCm: 5.6, rateCpm: 110), unsteadyActive: false);
+
+      // Single isolated 1.1 cm glitch (even if steady=true) is rejected by the 1x drop guard
+      expect(
+        stabilizer.stabilize(
+          _stroke(count: 4, depthCm: 1.1, rateCpm: 110, steady: true),
+          unsteadyActive: false,
+        ),
+        closeTo(5.5, 1e-6),
+      );
+
+      // Sub-period bounce fragment is always ignored
+      expect(
+        stabilizer.stabilize(
+          _stroke(count: 5, depthCm: 1.2, rateCpm: 110, steady: false, bounce: true),
+          unsteadyActive: false,
+        ),
+        closeTo(5.5, 1e-6),
+      );
+
+      // Genuine sustained shallow strokes (1.6 cm x 3): 1st guarded, 2nd & 3rd admitted -> displays 1.6 cm
+      stabilizer.stabilize(_stroke(count: 6, depthCm: 5.5, rateCpm: 110), unsteadyActive: false);
+      expect(
+        stabilizer.stabilize(_stroke(count: 7, depthCm: 1.6, rateCpm: 110), unsteadyActive: false),
+        closeTo(5.5, 1e-6),
+      );
+      expect(
+        stabilizer.stabilize(_stroke(count: 8, depthCm: 1.6, rateCpm: 110), unsteadyActive: false),
+        closeTo(5.5, 1e-6),
+      );
+      expect(
+        stabilizer.stabilize(_stroke(count: 9, depthCm: 1.6, rateCpm: 110), unsteadyActive: false),
+        closeTo(1.6, 1e-6),
       );
     });
   });

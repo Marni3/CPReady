@@ -77,27 +77,25 @@ constexpr uint8_t PHASE_COUNT = sizeof(PHASES) / sizeof(PHASES[0]);
  * loops. The final summary is one aggregate compliance percentage; the live
  * packet carries a per-stroke Full/Partial flag.
  *
- * The push is deliberately longer than the release (0.55 vs 0.45 of the
- * cycle). With the old 0.35/0.35 shape the downstroke deceleration itself was
- * below the -0.35 g recoil threshold, so every stroke looked full and the
- * release value never reached the live flag. A slower push keeps its
- * deceleration above the threshold; the release then sets the trough:
+ * The push is deliberately longer than the release (0.51 vs 0.49 of the
+ * 100 cpm, 5.0 cm cycle). A slower push keeps its deceleration above the
+ * -0.25 g recoil threshold (~-0.237 g); the release then sets the trough:
  * 30-89.9% read Partial and 91-100% read Full with the production tracker.
- * The 89.9/90 boundary sits directly on the -0.35 g threshold, so 90 can read
+ * The 89.9/90 boundary sits directly on the -0.25 g threshold, so 90 can read
  * either way; that is the nature of a per-stroke threshold, not a bug.
  */
 constexpr Phase RECOIL_PHASES[] = {
-    {110, 5.5f, 4000, "Recoil 30% (Very Poor)",   0.55f, 0.45f, 0.300f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 50% (Poor)",        0.55f, 0.45f, 0.500f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 70% (Marginal)",    0.55f, 0.45f, 0.700f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 80% (Marginal)",    0.55f, 0.45f, 0.800f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 85% (Borderline)",  0.55f, 0.45f, 0.850f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 89% (Just Below)",  0.55f, 0.45f, 0.890f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 89.9% (Bad)",       0.55f, 0.45f, 0.899f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 90% (OK)",          0.55f, 0.45f, 0.900f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 91% (Just Above)",  0.55f, 0.45f, 0.910f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 95% (Good)",        0.55f, 0.45f, 0.950f, 0.0f, 0.0f, -1.0f},
-    {110, 5.5f, 4000, "Recoil 100% (Perfect)",    0.55f, 0.45f, 1.000f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 30% (Very Poor)",   0.51f, 0.49f, 0.300f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 50% (Poor)",        0.51f, 0.49f, 0.500f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 70% (Marginal)",    0.51f, 0.49f, 0.700f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 80% (Marginal)",    0.51f, 0.49f, 0.800f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 85% (Borderline)",  0.51f, 0.49f, 0.850f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 89% (Just Below)",  0.51f, 0.49f, 0.890f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 89.9% (Bad)",       0.51f, 0.49f, 0.899f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 90% (OK)",          0.51f, 0.49f, 0.900f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 91% (Just Above)",  0.51f, 0.49f, 0.910f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 95% (Good)",        0.51f, 0.49f, 0.950f, 0.0f, 0.0f, -1.0f},
+    {100, 5.0f, 4000, "Recoil 100% (Perfect)",    0.51f, 0.49f, 1.000f, 0.0f, 0.0f, -1.0f},
 };
 constexpr uint8_t RECOIL_PHASE_COUNT = sizeof(RECOIL_PHASES) / sizeof(RECOIL_PHASES[0]);
 

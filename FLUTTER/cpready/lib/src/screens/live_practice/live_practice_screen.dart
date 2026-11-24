@@ -120,8 +120,19 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
   /// True once the run above lasted long enough to show the warning.
   bool _cadenceWarning = false;
 
-  /// Stabilized live depth (in cm) displayed on the Depth capsule during unsteady rhythm.
+  /// Stabilized live depth (in cm) displayed on the Depth capsule.
   double? _displayDepthCm;
+
+  /// Last valid live compression rate (> 0 cpm) held across brief sub-300 ms
+  /// glitches and first resume stroke so Rate does not flash `--` mid-set.
+  int? _lastValidRateCpm;
+
+  /// Consecutive strokes reporting incomplete recoil, used to debounce live
+  /// Recoil capsule flicker (requires 2 consecutive partial strokes to show red).
+  int _consecutivePartialRecoil = 0;
+
+  /// Debounced live recoil percentage (100 = Full, 0 = Partial) for display only.
+  int? _displayRecoilPercent;
 
   /// In-memory 100 Hz raw accelerometer samples buffered for post-session refinement.
   final List<RawTelemetrySample> _inMemoryRawSamples = <RawTelemetrySample>[];
@@ -520,14 +531,31 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     unawaited(_coach?.stop());
   }
 
+  DateTime _now() => widget.cueClock?.call() ?? DateTime.now();
+
   /// True while compressions are still being counted, so the counter circle
   /// reads as active rather than idle.
   bool get _compressing {
     final DateTime? at = _lastCompressionAt;
     final int count = _latest?.totalCompressions ?? 0;
     if (at == null || count <= 0) return false;
-    return DateTime.now().difference(at) <=
+    return _now().difference(at) <=
         AppDurations.compressionActiveWindow;
+  }
+
+  /// Rate shown on the live Rate capsule: holds the last valid rate across
+  /// brief glitches / first resume stroke, and clears to null (`--`) once the
+  /// trainee has been hands-off for longer than [AppDurations.liveRateIdleClear].
+  int? get _displayRateCpm {
+    final CprMetrics? latest = _latest;
+    if (latest == null || !_firstCompressionSeen) return null;
+    final DateTime? at = _lastCompressionAt;
+    if (at != null &&
+        _now().difference(at) > AppDurations.liveRateIdleClear) {
+      return null;
+    }
+    if (latest.rateCpm > 0) return latest.rateCpm;
+    return _lastValidRateCpm;
   }
 
   /// Error packets: a sensor fault ends the session; before the first live
@@ -597,9 +625,10 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
     }
 
     setState(() {
+      final bool isNewStroke = count > (_lastCount ?? 0);
       _latest = metrics;
-      if (_lastCount == null || count > _lastCount!) {
-        _lastCompressionAt = DateTime.now();
+      if (_lastCount == null || isNewStroke) {
+        _lastCompressionAt = _now();
       }
       _lastCount = count;
       if (realtime) {
@@ -613,6 +642,19 @@ class _LivePracticeScreenState extends State<LivePracticeScreen> {
           metrics,
           unsteadyActive: _cadenceWarning,
         );
+        if (metrics.rateCpm > 0) {
+          _lastValidRateCpm = metrics.rateCpm;
+        }
+        if (isNewStroke) {
+          if (metrics.recoilPercentage < AppTargets.recoilFullPercent) {
+            _consecutivePartialRecoil += 1;
+          } else {
+            _consecutivePartialRecoil = 0;
+          }
+          _displayRecoilPercent = _consecutivePartialRecoil >= 2
+              ? 0
+              : AppTargets.recoilFullPercent;
+        }
       }
     });
 
@@ -1223,8 +1265,8 @@ void _stopMetronome() {
                                       child: _MetricSection(
                                         label: AppStrings.liveRateLabel,
                                         capsule: _capsule(
-                                          rateText(latest?.rateCpm),
-                                          rateRating(latest?.rateCpm),
+                                          rateText(_displayRateCpm),
+                                          rateRating(_displayRateCpm),
                                         ),
                                       ),
                                     ),
@@ -1233,8 +1275,14 @@ void _stopMetronome() {
                                       child: _MetricSection(
                                         label: AppStrings.liveRecoilLabel,
                                         capsule: _capsule(
-                                          recoilText(latest?.recoilPercentage),
-                                          liveRecoilRating(latest?.recoilPercentage),
+                                          recoilText(
+                                            _displayRecoilPercent ??
+                                                latest?.recoilPercentage,
+                                          ),
+                                          liveRecoilRating(
+                                            _displayRecoilPercent ??
+                                                latest?.recoilPercentage,
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -1248,8 +1296,12 @@ void _stopMetronome() {
                                       _MetricSection(
                                         label: AppStrings.liveDepthLabel,
                                         capsule: _capsule(
-                                          depthText(latest?.depthCm),
-                                          depthRating(latest?.depthCm),
+                                          depthText(
+                                            _displayDepthCm ?? latest?.depthCm,
+                                          ),
+                                          depthRating(
+                                            _displayDepthCm ?? latest?.depthCm,
+                                          ),
                                         ),
                                       ),
 
