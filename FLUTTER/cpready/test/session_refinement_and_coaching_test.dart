@@ -1,6 +1,8 @@
 /// Unit tests for SessionRefinementEngine, LiveDepthStabilizer, and
 /// LiveCoachingController.
 
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cpready/src/config/config.dart';
@@ -373,6 +375,86 @@ void main() {
 
       // Active time = 6 * 550ms = 3300ms; Active window = 3*550 + 5000 + 2*550 = 7750ms -> ~43%
       expect(result.refinedSummary.ccfPercent, lessThan(60));
+    });
+
+    test('Recoil refinement: preserves firmware -0.25g recoil instead of downgrading at stale -0.35g', () {
+      // Synthesize a 100 Hz waveform (50 ms quiet baseline + 6 strokes at 100 cpm)
+      // whose upward rebound trough peaks around -0.30g (passes firmware -0.25g,
+      // would have failed the old hardcoded -0.35g check).
+      final List<RawTelemetrySample> raw = <RawTelemetrySample>[];
+      int idx = 0;
+      // 40 quiet baseline samples at +1.0g along Z
+      for (int i = 0; i < 40; i++) {
+        raw.add(RawTelemetrySample(
+          timeUs: idx * 10000,
+          sampleIndex: idx,
+          chestXMg: 0,
+          chestYMg: 0,
+          chestZMg: 1000,
+          baseXMg: 0,
+          baseYMg: 0,
+          baseZMg: 1000,
+        ));
+        idx++;
+      }
+      // 6 cycles * 60 samples (600 ms = 100 cpm): positive downstroke +0.55g, negative recoil -0.30g
+      for (int cycle = 0; cycle < 6; cycle++) {
+        for (int s = 0; s < 60; s++) {
+          double netG = 0.0;
+          if (s < 20) {
+            netG = 0.55 * math.sin(math.pi * s / 20.0);
+          } else if (s < 46) {
+            netG = -0.30 * math.sin(math.pi * (s - 20) / 26.0);
+          }
+          // rawNetG = -((cz - 1.0)) => cz = 1.0 - netG
+          final int czMg = ((1.0 - netG) * 1000.0).round();
+          raw.add(RawTelemetrySample(
+            timeUs: idx * 10000,
+            sampleIndex: idx,
+            chestXMg: 0,
+            chestYMg: 0,
+            chestZMg: czMg,
+            baseXMg: 0,
+            baseYMg: 0,
+            baseZMg: 1000,
+          ));
+          idx++;
+        }
+      }
+
+      final packets = <CprMetrics>[
+        for (int i = 1; i <= 6; i++)
+          _stroke(
+            count: i,
+            depthCm: 5.4,
+            rateCpm: i == 1 ? 0 : 100,
+            elapsedSeconds: (i * 0.6).round(),
+            firstStroke: i == 1,
+            steady: i > 1,
+            recoilOk: true,
+          ),
+      ];
+      const fwSummary = CprMetrics(
+        packetType: AppBleConfig.packetFinalSummary,
+        recoilComplete: true,
+        recoilPercentage: 100,
+        rateCpm: 100,
+        depthCm: 5.4,
+        depthMm: 54.0,
+        ccfPercent: 100,
+        audioPromptCode: 0,
+        totalCompressions: 6,
+        elapsedSeconds: 4,
+      );
+
+      final result = SessionRefinementEngine.refineSession(
+        firmwareSummary: fwSummary,
+        sessionPackets: packets,
+        rawSamples: raw,
+      );
+
+      expect(result.usedRawWaveform, isTrue);
+      expect(result.refinedSummary.recoilPercentage, 100);
     });
   });
 }

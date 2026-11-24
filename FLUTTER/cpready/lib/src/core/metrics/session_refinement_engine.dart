@@ -251,12 +251,15 @@ class SessionRefinementEngine {
     // Reconstruct 100 Hz waveform if rawSamples has sufficient continuity.
     final List<_ProcessedSample> waveform = _buildWaveform(rawSamples);
     final bool hasUsableWaveform = waveform.length >= 150;
+    final double recoilThresholdG =
+        firmwareSummary.isBenchMode ? -0.18 : -0.25;
 
     // Build initial stroke table from packets (linking sample indices if waveform exists).
     final List<_StrokeEntry> entries = _buildStrokeEntries(
       realtimeStrokes,
       waveform,
-       preset: sensitivityPreset,
+      preset: sensitivityPreset,
+      recoilThresholdG: recoilThresholdG,
     );
 
     if (entries.isEmpty) {
@@ -426,7 +429,7 @@ class SessionRefinementEngine {
                       depthMm: scaledMm,
                       rawPeriodMs: waveform[kScan].nowMs - prevMs,
                       flags: AppBleConfig.qualitySteadyCadence,
-                      recoilOk: trVal < -0.35,
+                      recoilOk: trVal < recoilThresholdG,
                     ),
                   );
                   recoveredCount++;
@@ -618,6 +621,7 @@ class SessionRefinementEngine {
     List<CprMetrics> realtimeStrokes,
     List<_ProcessedSample> waveform, {
     required String preset,
+    required double recoilThresholdG,
   }) {
     // If we have the 100 Hz waveform, run the exact state-machine index tracker
     // to obtain exact (onsetIdx, endIdx, rawPeriodMs) for each stroke while
@@ -790,7 +794,9 @@ class SessionRefinementEngine {
                 flags: pktIdx < realtimeStrokes.length
                     ? (realtimeStrokes[pktIdx].qualityFlags | flags)
                     : flags,
-                recoilOk: troughAccel < -0.35,
+                recoilOk: pktIdx < realtimeStrokes.length
+                    ? realtimeStrokes[pktIdx].recoilComplete
+                    : (troughAccel < recoilThresholdG),
               ),
             );
             state = 'WAITING';
